@@ -143,7 +143,9 @@ public class AccessControlLists {
             perms.put(username, permissions);
           }
         }
-        allPerms.put(table, perms);
+        if (table != null) {
+          allPerms.put(table, perms);
+        }
         if (!hasNext) {
           break;
         }
