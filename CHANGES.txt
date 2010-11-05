@@ -645,6 +645,11 @@ Release 0.21.0 - Unreleased
    HBASE-3151  NPE when trying to read regioninfo from .META.
    HBASE-3191  FilterList with MUST_PASS_ONE and SCVF isn't working
                (Stefan Seelmann via Stack)
+   HBASE-2471  Splitting logs, we'll make an output file though the
+               region no longer exists
+   HBASE-3095  Client needs to reconnect if it expires its zk session
+   HBASE-2935  Refactor "Corrupt Data" Tests in TestHLogSplit
+               (Alex Newman via Stack)
 
 
   IMPROVEMENTS
@@ -1096,6 +1101,7 @@ Release 0.21.0 - Unreleased
    HBASE-3180  Review periodic master logging, especially ServerManager once
                a minute
    HBASE-3189  Stagger Major Compactions (Nicolas Spiegelberg via Stack)
+   HBASE-2564  [rest] Tests use deprecated foundation
 
 
   NEW FEATURES
