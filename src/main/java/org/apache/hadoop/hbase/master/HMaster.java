@@ -166,6 +166,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   private volatile boolean balanceSwitch = true;
 
   private Thread catalogJanitorChore;
+  private LogCleaner logCleaner;
 
   /**
    * Initializes the HMaster. The steps are as follows:
@@ -279,7 +280,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       stopChores();
       // Wait for all the remaining region servers to report in IFF we were
       // running a cluster shutdown AND we were NOT aborting.
-      if (!this.abort && this.serverManager.isClusterShutdown()) {
+      if (!this.abort && this.serverManager != null &&
+          this.serverManager.isClusterShutdown()) {
         this.serverManager.letRegionServersShutdown();
       }
       stopServiceThreads();
@@ -514,8 +516,18 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
         conf.getInt("hbase.master.executor.serverops.threads", 3));
       this.executorService.startExecutorService(ExecutorType.MASTER_META_SERVER_OPERATIONS,
         conf.getInt("hbase.master.executor.serverops.threads", 2));
-      this.executorService.startExecutorService(ExecutorType.MASTER_TABLE_OPERATIONS,
-        conf.getInt("hbase.master.executor.tableops.threads", 3));
+      // We depend on there being only one instance of this executor running
+      // at a time.  To do concurrency, would need fencing of enable/disable of
+      // tables.
+      this.executorService.startExecutorService(ExecutorType.MASTER_TABLE_OPERATIONS, 1);
+
+      // Start log cleaner thread
+      String n = Thread.currentThread().getName();
+      this.logCleaner =
+        new LogCleaner(conf.getInt("hbase.master.cleaner.interval", 60 * 1000),
+          this, conf, getMasterFileSystem().getFileSystem(),
+          getMasterFileSystem().getOldLogDir());
+      Threads.setDaemonThreadRunning(logCleaner, n + ".oldLogCleaner");
 
       // Put up info server.
       int port = this.conf.getInt("hbase.master.info.port", 60010);
@@ -545,6 +557,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     }
     if (this.rpcServer != null) this.rpcServer.stop();
     // Clean up and close up shop
+    this.logCleaner.interrupt();
     if (this.infoServer != null) {
       LOG.info("Stopping infoServer");
       try {
@@ -578,7 +591,9 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     }
   }
 
-  public MapWritable regionServerStartup(final HServerInfo serverInfo)
+  @Override
+  public MapWritable regionServerStartup(final HServerInfo serverInfo,
+    final long serverCurrentTime)
   throws IOException {
     // Set the ip into the passed in serverInfo.  Its ip is more than likely
     // not the ip that the master sees here.  See at end of this method where
@@ -590,7 +605,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     serverInfo.setServerAddress(new HServerAddress(rsAddress,
       serverInfo.getServerAddress().getPort()));
     // Register with server manager
-    this.serverManager.regionServerStartup(serverInfo);
+    this.serverManager.regionServerStartup(serverInfo, serverCurrentTime);
     // Send back some config info
     MapWritable mw = createConfigurationSubset();
      mw.put(new Text("hbase.regionserver.address"), new Text(rsAddress));

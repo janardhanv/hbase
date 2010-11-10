@@ -78,16 +78,17 @@ public interface HTableInterface {
    * Method that does a batch call on Deletes, Gets and Puts.
    *
    * @param actions list of Get, Put, Delete objects
-   * @param results Empty Result[], same size as actions. Provides access to partial
+   * @param results Empty Object[], same size as actions. Provides access to partial
    *                results, in case an exception is thrown. A null in the result array means that
    *                the call for that action failed, even after retries
    * @throws IOException
    * @since 0.90.0
    */
-  void batch(final List<Row> actions, final Result[] results) throws IOException;
+  void batch(final List<Row> actions, final Object[] results) throws IOException, InterruptedException;
 
   /**
    * Method that does a batch call on Deletes, Gets and Puts.
+   *
    *
    * @param actions list of Get, Put, Delete objects
    * @return the results from the actions. A null in the return array means that
@@ -95,7 +96,7 @@ public interface HTableInterface {
    * @throws IOException
    * @since 0.90.0
    */
-  Result[] batch(final List<Row> actions) throws IOException;
+  Object[] batch(final List<Row> actions) throws IOException, InterruptedException;
 
   /**
    * Extracts certain cells from a given row.
@@ -320,7 +321,7 @@ public interface HTableInterface {
    * Executes all the buffered {@link Put} operations.
    * <p>
    * This method gets called once automatically for every {@link Put} or batch
-   * of {@link Put}s (when {@link #put(List<Put>)} is used) when
+   * of {@link Put}s (when <code>put(List<Put>)</code> is used) when
    * {@link #isAutoFlush} is {@code true}.
    * @throws IOException if a remote or network exception occurs.
    */

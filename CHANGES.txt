@@ -665,6 +665,15 @@ Release 0.90.0 - Unreleased
    HBASE-3207  If we get IOException when closing a region, we should still
                remove it from online regions and complete the close in ZK
    HBASE-3199  large response handling: some fixups and cleanups
+   HBASE-3212  More testing of enable/disable uncovered base condition not in
+               place; i.e. that only one enable/disable runs at a time
+   HBASE-2898  MultiPut makes proper error handling impossible and leads to 
+   	       corrupted data
+   HBASE-3213  If do abort of backup master will get NPE instead of graceful
+               abort
+   HBASE-3214  TestMasterFailover.testMasterFailoverWithMockedRITOnDeadRS is
+               failing (Gary via jgray)
+   HBASE-3216  Move HBaseFsck from client to util
 
 
   IMPROVEMENTS
@@ -1128,6 +1137,13 @@ Release 0.90.0 - Unreleased
                TTL to allow major even if single file
    HBASE-3194  HBase should run on both secure and vanilla versions of Hadoop 0.20
                (Gary Helmling via Stack)
+   HBASE-3209  HBASE-3209 : New Compaction Algorithm
+               (Nicolas Spiegelberg via Stack)
+   HBASE-3168  Sanity date and time check when a region server joins the
+               cluster (Jeff Whiting and jgray)
+   HBASE-3090  Don't include hbase-default in conf/ assembly
+   HBASE-3161  Provide option for Stargate to only serve GET requests
+               (Bennett Neale via Stack)
 
 
   NEW FEATURES

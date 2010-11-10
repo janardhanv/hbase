@@ -1,4 +1,4 @@
-/*
+/**
  * Copyright 2010 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
@@ -17,23 +17,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+package org.apache.hadoop.hbase;
 
-package org.apache.hadoop.hbase.rest;
+import java.io.IOException;
 
 /**
- * Common constants for org.apache.hadoop.hbase.rest
+ * This exception is thrown by the master when a region server clock skew is
+ * too high.
  */
-public interface Constants {
-  public static final String VERSION_STRING = "0.0.2";
-
-  public static final int DEFAULT_MAX_AGE = 60 * 60 * 4;  // 4 hours
-
-  public static final int DEFAULT_LISTEN_PORT = 8080;
-
-  public static final String MIMETYPE_TEXT = "text/plain";
-  public static final String MIMETYPE_HTML = "text/html";
-  public static final String MIMETYPE_XML = "text/xml";
-  public static final String MIMETYPE_BINARY = "application/octet-stream";
-  public static final String MIMETYPE_PROTOBUF = "application/x-protobuf";
-  public static final String MIMETYPE_JSON = "application/json";
+@SuppressWarnings("serial")
+public class ClockOutOfSyncException extends IOException {
+  public ClockOutOfSyncException(String message) {
+    super(message);
+  }
 }

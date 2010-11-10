@@ -1022,39 +1022,6 @@ public class HConnectionManager {
       }
     }
 
-    /**
-     * @deprecated Use HConnectionManager::processBatch instead.
-     */
-    public int processBatchOfRows(final ArrayList<Put> list, final byte[] tableName, ExecutorService pool)
-    throws IOException {
-      Result[] results = new Result[list.size()];
-      processBatch((List) list, tableName, pool, results);
-      int count = 0;
-      for (Result r : results) {
-        if (r != null) {
-          count++;
-        }
-      }
-      return (count == list.size() ? -1 : count);
-    }
-
-    /**
-     * @deprecated Use HConnectionManager::processBatch instead.
-     */
-    public int processBatchOfDeletes(final List<Delete> list,
-      final byte[] tableName, ExecutorService pool)
-    throws IOException {
-      Result[] results = new Result[list.size()];
-      processBatch((List) list, tableName, pool, results);
-      int count = 0;
-      for (Result r : results) {
-        if (r != null) {
-          count++;
-        }
-      }
-      return (count == list.size() ? -1 : count);
-    }
-
     void close(boolean stopProxy) {
       if (master != null) {
         if (stopProxy) {
@@ -1077,12 +1044,12 @@ public class HConnectionManager {
       this.closed = true;
     }
 
-    private <R> Callable<MultiResponse<R>> createCallable(
+    private <R> Callable<MultiResponse> createCallable(
         final HServerAddress address,
         final MultiAction<R> multi,
         final byte [] tableName) {
       final HConnection connection = this;
-      return new Callable<MultiResponse<R>>() {
+      return new Callable<MultiResponse>() {
   	    public MultiResponse call() throws IOException {
   	      return getRegionServerWithoutRetries(
   	          new ServerCallable<MultiResponse>(connection, tableName, null) {
@@ -1102,7 +1069,7 @@ public class HConnectionManager {
     public void processBatch(List<Row> list,
         final byte[] tableName,
         ExecutorService pool,
-        Result[] results) throws IOException {
+        Object[] results) throws IOException, InterruptedException {
 
       // results must be the same size as list
       if (results.length != list.size()) {
@@ -1178,8 +1145,8 @@ public class HConnectionManager {
         List<? extends Row> list,
         byte[] tableName,
         ExecutorService pool,
-        R[] results,
-        Batch.Callback<R> callback) throws IOException {
+        Object[] results,
+        Batch.Callback<R> callback) throws IOException, InterruptedException {
 
       // results must be the same size as list
       if (results.length != list.size()) {
@@ -1192,8 +1159,10 @@ public class HConnectionManager {
         LOG.debug("expecting "+results.length+" results");
       }
 
+      // Keep track of the most recent servers for any given item for better
+      // exceptional reporting.
+      HServerAddress [] lastServers = new HServerAddress[results.length];
       List<Row> workingList = new ArrayList<Row>(list);
-      final boolean singletonList = (list.size() == 1);
       boolean retry = true;
       Throwable singleRowCause = null;
 
@@ -1203,17 +1172,11 @@ public class HConnectionManager {
         if (tries >= 1) {
           long sleepTime = getPauseTime(tries);
           LOG.debug("Retry " +tries+ ", sleep for " +sleepTime+ "ms!");
-          try {
-            Thread.sleep(sleepTime);
-          } catch (InterruptedException ignore) {
-            LOG.debug("Interupted");
-            Thread.currentThread().interrupt();
-            break;
-          }
+          Thread.sleep(sleepTime);
         }
         // step 1: break up into regionserver-sized chunks and build the data structs
         Map<HServerAddress, MultiAction<R>> actionsByServer = new HashMap<HServerAddress, MultiAction<R>>();
-        for (int i=0; i<workingList.size(); i++) {
+        for (int i = 0; i < workingList.size(); i++) {
           Row row = workingList.get(i);
           if (row != null) {
             HRegionLocation loc = locateRegion(tableName, row.getRow(), true);
@@ -1227,14 +1190,15 @@ public class HConnectionManager {
             }
 
             Action<R> action = new Action<R>(regionName, row, i);
+            lastServers[i] = address;
             actions.add(regionName, action);
           }
         }
 
         // step 2: make the requests
 
-        Map<HServerAddress,Future<MultiResponse<R>>> futures =
-            new HashMap<HServerAddress, Future<MultiResponse<R>>>(actionsByServer.size());
+        Map<HServerAddress,Future<MultiResponse>> futures =
+            new HashMap<HServerAddress, Future<MultiResponse>>(actionsByServer.size());
 
         for (Entry<HServerAddress, MultiAction<R>> e : actionsByServer.entrySet()) {
           futures.put(e.getKey(), pool.submit(createCallable(e.getKey(), e.getValue(), tableName)));
@@ -1242,67 +1206,59 @@ public class HConnectionManager {
 
         // step 3: collect the failures and successes and prepare for retry
 
-        for (Entry<HServerAddress, Future<MultiResponse<R>>> responsePerServer : futures.entrySet()) {
+        for (Entry<HServerAddress, Future<MultiResponse>> responsePerServer : futures.entrySet()) {
           HServerAddress address = responsePerServer.getKey();
 
           try {
-            // Gather the results for one server
-            Future<MultiResponse<R>> future = responsePerServer.getValue();
-
-            // Not really sure what a reasonable timeout value is. Here's a first try.
-
-            MultiResponse<R> resp = future.get();
+            Future<MultiResponse> future = responsePerServer.getValue();
+            MultiResponse resp = future.get();
 
             if (resp == null) {
               // Entire server failed
               LOG.debug("Failed all for server: " + address + ", removing from cache");
-            } else {
-              // For each region
-              for (Entry<byte[], List<Pair<Integer,R>>> e : resp.getResults().entrySet()) {
-                byte[] regionName = e.getKey();
-                List<Pair<Integer, R>> regionResults = e.getValue();
-                for (Pair<Integer, R> regionResult : regionResults) {
-                  if (regionResult == null) {
-                    // if the first/only record is 'null' the entire region failed.
-                    LOG.debug("Failures for region: " + Bytes.toStringBinary(regionName) + ", removing from cache");
-                  } else {
-                    // success
-                    results[regionResult.getFirst()] = regionResult.getSecond();
-                    if (callback != null) {
-                      callback.update(e.getKey(),
-                          list.get(regionResult.getFirst()).getRow(),
-                          regionResult.getSecond());
-                    }
+              continue;
+            }
+
+            for (Entry<byte[], List<Pair<Integer,Object>>> e : resp.getResults().entrySet()) {
+              byte[] regionName = e.getKey();
+              List<Pair<Integer, Object>> regionResults = e.getValue();
+              for (Pair<Integer, Object> regionResult : regionResults) {
+                if (regionResult == null) {
+                  // if the first/only record is 'null' the entire region failed.
+                  LOG.debug("Failures for region: " +
+                      Bytes.toStringBinary(regionName) +
+                      ", removing from cache");
+                } else {
+                  // Result might be an Exception, including DNRIOE
+                  results[regionResult.getFirst()] = regionResult.getSecond();
+                  if (callback != null && !(regionResult.getSecond() instanceof Throwable)) {
+                    callback.update(e.getKey(),
+                        list.get(regionResult.getFirst()).getRow(),
+                        (R)regionResult.getSecond());
                   }
                 }
               }
             }
-          } catch (InterruptedException e) {
-            LOG.debug("Failed all from " + address, e);
-            Thread.currentThread().interrupt();
-            break;
           } catch (ExecutionException e) {
             LOG.debug("Failed all from " + address, e);
-
-            // Just give up, leaving the batch incomplete
-            if (e.getCause() instanceof DoNotRetryIOException) {
-              throw (DoNotRetryIOException) e.getCause();
-            }
-
-            if (singletonList) {
-              // be richer for reporting in a 1 row case.
-              singleRowCause = e.getCause();
-            }
           }
         }
+
+        // step 4: identify failures and prep for a retry (if applicable).
 
         // Find failures (i.e. null Result), and add them to the workingList (in
         // order), so they can be retried.
         retry = false;
         workingList.clear();
         for (int i = 0; i < results.length; i++) {
-          if (results[i] == null) {
+          // if null (fail) or instanceof Throwable && not instanceof DNRIOE
+          // then retry that row. else dont.
+          if (results[i] == null ||
+              (results[i] instanceof Throwable &&
+                  !(results[i] instanceof DoNotRetryIOException))) {
+
             retry = true;
+
             Row row = list.get(i);
             workingList.add(row);
             deleteCachedLocation(tableName, row.getRow());
@@ -1312,18 +1268,31 @@ public class HConnectionManager {
           }
         }
       }
-      if (Thread.currentThread().isInterrupted()) {
-        throw new IOException("Aborting attempt because of a thread interruption");
-      }
 
       if (retry) {
-        // ran out of retries and didn't successfully finish everything!
+        // Simple little check for 1 item failures.
         if (singleRowCause != null) {
           throw new IOException(singleRowCause);
-        } else {
-          throw new RetriesExhaustedException("Still had " + workingList.size()
-              + " actions left after retrying " + numRetries + " times.");
         }
+      }
+
+
+      List<Throwable> exceptions = new ArrayList<Throwable>();
+      List<Row> actions = new ArrayList<Row>();
+      List<HServerAddress> addresses = new ArrayList<HServerAddress>();
+
+      for (int i = 0 ; i < results.length; i++) {
+        if (results[i] == null || results[i] instanceof Throwable) {
+          exceptions.add((Throwable)results[i]);
+          actions.add(list.get(i));
+          addresses.add(lastServers[i]);
+        }
+      }
+
+      if (!exceptions.isEmpty()) {
+        throw new RetriesExhaustedWithDetailsException(exceptions,
+            actions,
+            addresses);
       }
     }
 
@@ -1333,16 +1302,21 @@ public class HConnectionManager {
     public void processBatchOfPuts(List<Put> list,
         final byte[] tableName,
         ExecutorService pool) throws IOException {
-      Result[] results = new Result[list.size()];
-      processBatch((List) list, tableName, pool, results);
+      Object[] results = new Object[list.size()];
+      try {
+        processBatch((List) list, tableName, pool, results);
+      } catch (InterruptedException e) {
+        throw new IOException(e);
+      } finally {
 
-      // mutate list so that it is empty for complete success, or contains only failed records
-      // results are returned in the same order as the requests in list
-      // walk the list backwards, so we can remove from list without impacting the indexes of earlier members
-      for (int i = results.length - 1; i>=0; i--) {
-        // if result is not null, it succeeded
-        if (results[i] != null) {
-          list.remove(i);
+        // mutate list so that it is empty for complete success, or contains only failed records
+        // results are returned in the same order as the requests in list
+        // walk the list backwards, so we can remove from list without impacting the indexes of earlier members
+        for (int i = results.length - 1; i>=0; i--) {
+          if (results[i] instanceof Result) {
+            // successful Puts are removed from the list here.
+            list.remove(i);
+          }
         }
       }
     }

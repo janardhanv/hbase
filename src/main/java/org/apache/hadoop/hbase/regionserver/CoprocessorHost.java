@@ -213,12 +213,14 @@ public class CoprocessorHost {
       }
 
       @Override
-      public void batch(List<Row> actions, Result[] results) throws IOException {
+      public void batch(List<Row> actions, Object[] results)
+          throws IOException, InterruptedException {
         table.batch(actions, results);
       }
 
       @Override
-      public Result[] batch(List<Row> actions) throws IOException {
+      public Object[] batch(List<Row> actions)
+          throws IOException, InterruptedException {
         return table.batch(actions);
       }
 
