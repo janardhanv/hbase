@@ -28,7 +28,7 @@ import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
+import org.apache.hadoop.hbase.coprocessor.BaseRegionObserverCoprocessor;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorException;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
@@ -40,7 +40,7 @@ import org.apache.hadoop.security.UserGroupInformation;
 import java.io.IOException;
 import java.util.*;
 
-public class AccessController extends BaseRegionObserver {
+public class AccessController extends BaseRegionObserverCoprocessor {
   public static final Log LOG = LogFactory.getLog(AccessController.class);
 
   TableAuthManager authManager = null;

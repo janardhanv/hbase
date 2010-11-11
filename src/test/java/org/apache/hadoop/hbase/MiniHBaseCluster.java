@@ -35,12 +35,12 @@ import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.apache.hadoop.hbase.master.HMaster;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.JVMClusterUtil;
 import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.io.MapWritable;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.zookeeper.KeeperException;
 
 /**
@@ -53,6 +53,7 @@ public class MiniHBaseCluster {
   static final Log LOG = LogFactory.getLog(MiniHBaseCluster.class.getName());
   private Configuration conf;
   public LocalHBaseCluster hbaseCluster;
+  private static int index;
 
   /**
    * Start a MiniHBaseCluster.
@@ -161,12 +162,12 @@ public class MiniHBaseCluster {
    */
   public static class MiniHBaseClusterRegionServer extends HRegionServer {
     private Thread shutdownThread = null;
-    private UserGroupInformation user = null;
+    private User user = null;
 
     public MiniHBaseClusterRegionServer(Configuration conf)
         throws IOException, InterruptedException {
       super(conf);
-      this.user = UserGroupInformation.getCurrentUser();
+      this.user = User.getCurrent();
     }
 
     public void setHServerInfo(final HServerInfo hsi) {
@@ -191,7 +192,7 @@ public class MiniHBaseCluster {
     @Override
     public void run() {
       try {
-        this.user.doAs(new PrivilegedAction<Object>(){
+        this.user.runAs(new PrivilegedAction<Object>(){
           public Object run() {
             runRegionServer();
             return null;
@@ -218,7 +219,7 @@ public class MiniHBaseCluster {
     }
 
     public void abort(final String reason, final Throwable cause) {
-      this.user.doAs(new PrivilegedAction<Object>() {
+      this.user.runAs(new PrivilegedAction<Object>() {
         public Object run() {
           abortRegionServer(reason, cause);
           return null;
@@ -264,10 +265,10 @@ public class MiniHBaseCluster {
 
       // manually add the regionservers as other users
       for (int i=0; i<nRegionNodes; i++) {
-        final int index = i;
-        UserGroupInformation user = HBaseTestingUtility.getDifferentUser(conf,
-            ".hfs."+i);
-        hbaseCluster.addRegionServer(index, user);
+        Configuration rsConf = HBaseConfiguration.create(conf);
+        User user = HBaseTestingUtility.getDifferentUser(rsConf,
+            ".hfs."+index++);
+        hbaseCluster.addRegionServer(rsConf, i, user);
       }
 
       hbaseCluster.startup();
@@ -275,6 +276,7 @@ public class MiniHBaseCluster {
       shutdown();
       throw e;
     } catch (Throwable t) {
+      LOG.error("Error starting cluster", t);
       shutdown();
       throw new IOException("Shutting down", t);
     }
@@ -288,17 +290,13 @@ public class MiniHBaseCluster {
    */
   public JVMClusterUtil.RegionServerThread startRegionServer()
       throws IOException {
-    int nextIndex = this.hbaseCluster.getRegionServers().size();
-    UserGroupInformation rsUser =
-        HBaseTestingUtility.getDifferentUser(conf, ".hfs."+nextIndex);
+    final Configuration newConf = HBaseConfiguration.create(conf);
+    User rsUser =
+        HBaseTestingUtility.getDifferentUser(newConf, ".hfs."+index++);
     JVMClusterUtil.RegionServerThread t =  null;
     try {
-      t = rsUser.doAs(
-          new PrivilegedExceptionAction<JVMClusterUtil.RegionServerThread>() {
-            public JVMClusterUtil.RegionServerThread run() throws Exception {
-              return hbaseCluster.addRegionServer();
-            }
-      });
+      t = hbaseCluster.addRegionServer(
+          newConf, hbaseCluster.getRegionServers().size(), rsUser);
       t.start();
       t.waitForServerOnline();
     } catch (InterruptedException ie) {
@@ -365,9 +363,18 @@ public class MiniHBaseCluster {
    * @return New RegionServerThread
    */
   public JVMClusterUtil.MasterThread startMaster() throws IOException {
-    JVMClusterUtil.MasterThread t = this.hbaseCluster.addMaster();
-    t.start();
-    t.waitForServerOnline();
+    Configuration c = HBaseConfiguration.create(conf);
+    User user =
+        HBaseTestingUtility.getDifferentUser(c, ".hfs."+index++);
+
+    JVMClusterUtil.MasterThread t = null;
+    try {
+      t = hbaseCluster.addMaster(c, hbaseCluster.getMasters().size(), user);
+      t.start();
+      t.waitForServerOnline();
+    } catch (InterruptedException ie) {
+      throw new IOException("Interrupted executing UserGroupInformation.doAs()", ie);
+    }
     return t;
   }
 

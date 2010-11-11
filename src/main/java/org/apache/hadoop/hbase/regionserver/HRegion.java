@@ -59,12 +59,12 @@ import org.apache.hadoop.hbase.DroppedSnapshotException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.UnknownScannerException;
-import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
@@ -937,7 +937,7 @@ public class HRegion implements HeapSize { // , Writable{
    * flush file.
    * @return true if the region needs compacting
    * @throws IOException
-   * @see {@link #internalFlushcache()}
+   * @see #internalFlushcache()
    */
   protected boolean internalFlushcache(final HLog wal, final long myseqid)
   throws IOException {
@@ -2552,7 +2552,6 @@ public class HRegion implements HeapSize { // , Writable{
   /**
    * Open a Region.
    * @param info Info for region to be opened.
-   * @param rootDir Root directory for HBase instance
    * @param wal HLog for region to use. This method will call
    * HLog#setSequenceNumber(long) passing the result of the call to
    * HRegion#getMinSequenceId() to ensure the log id is properly kept
@@ -2650,47 +2649,6 @@ public class HRegion implements HeapSize { // , Writable{
     } finally {
       meta.releaseRowLock(lid);
     }
-  }
-
-  /**
-   * Utility method used by HMaster marking regions offlined.
-   * @param srvr META server to be updated
-   * @param metaRegionName Meta region name
-   * @param info HRegion to update in <code>meta</code>
-   *
-   * @throws IOException
-   */
-  public static void offlineRegionInMETA(final HRegionInterface srvr,
-    final byte [] metaRegionName, final HRegionInfo info)
-  throws IOException {
-    // Puts and Deletes used to be "atomic" here.  We can use row locks if
-    // we need to keep that property, or we can expand Puts and Deletes to
-    // allow them to be committed at once.
-    byte [] row = info.getRegionName();
-    Put put = new Put(row);
-    info.setOffline(true);
-    put.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
-        Writables.getBytes(info));
-    srvr.put(metaRegionName, put);
-    cleanRegionInMETA(srvr, metaRegionName, info);
-  }
-
-  /**
-   * Clean COL_SERVER and COL_STARTCODE for passed <code>info</code> in
-   * <code>.META.</code>
-   * @param srvr
-   * @param metaRegionName
-   * @param info
-   * @throws IOException
-   */
-  public static void cleanRegionInMETA(final HRegionInterface srvr,
-    final byte [] metaRegionName, final HRegionInfo info)
-  throws IOException {
-    Delete del = new Delete(info.getRegionName());
-    del.deleteColumns(HConstants.CATALOG_FAMILY, HConstants.SERVER_QUALIFIER);
-    del.deleteColumns(HConstants.CATALOG_FAMILY,
-        HConstants.STARTCODE_QUALIFIER);
-    srvr.delete(metaRegionName, del);
   }
 
   /**
@@ -3098,7 +3056,7 @@ public class HRegion implements HeapSize { // , Writable{
     List<KeyValue> getResults = new ArrayList<KeyValue>();
 
     // pre-get CP hook
-    if ((coprocessorHost != null) && withCoprocessor) {
+    if (withCoprocessor && (coprocessorHost != null)) {
       get = coprocessorHost.preGet(get);
     }
 
@@ -3118,7 +3076,7 @@ public class HRegion implements HeapSize { // , Writable{
       results = getResults;
     }
     // post-get CP hook
-    if ((coprocessorHost != null) && withCoprocessor) {
+    if (withCoprocessor && (coprocessorHost != null)) {
       results = coprocessorHost.postGet(get, results);
     }
 

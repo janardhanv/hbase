@@ -58,4 +58,8 @@ public interface RpcServer {
   void setErrorHandler(HBaseRPCErrorHandler handler);
 
   void setQosFunction(Function<Writable, Integer> newFunc);
+
+  void openServer();
+
+  void startThreads();
 }

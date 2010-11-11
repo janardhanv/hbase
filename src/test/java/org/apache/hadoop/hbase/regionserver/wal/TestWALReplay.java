@@ -46,6 +46,7 @@ import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.regionserver.FlushRequester;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.Store;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdge;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
@@ -200,21 +201,21 @@ public class TestWALReplay {
     wal.sync();
 
     // Now 'crash' the region by stealing its wal
-    UserGroupInformation newUGI = HBaseTestingUtility.getDifferentUser(this.conf,
+    final Configuration newConf = HBaseConfiguration.create(this.conf);
+    User user = HBaseTestingUtility.getDifferentUser(newConf,
         tableNameStr);
-    newUGI.doAs(new PrivilegedExceptionAction<Object>() {
+    user.runAs(new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        runWALSplit(conf);
-        HLog wal2 = createWAL(conf);
-        HRegion region2 = new HRegion(basedir, wal2, FileSystem.get(conf),
-          conf, hri, null);
+        runWALSplit(newConf);
+        HLog wal2 = createWAL(newConf);
+        HRegion region2 = new HRegion(basedir, wal2, FileSystem.get(newConf),
+          newConf, hri, null);
         long seqid2 = region2.initialize();
         assertTrue(seqid2 > -1);
 
         // I can't close wal1.  Its been appropriated when we split.
         region2.close();
         wal2.closeAndDelete();
-
         return null;
       }
     });
@@ -294,16 +295,17 @@ public class TestWALReplay {
     // Set down maximum recovery so we dfsclient doesn't linger retrying something
     // long gone.
     HBaseTestingUtility.setMaxRecoveryErrorCount(wal2.getOutputStream(), 1);
-    UserGroupInformation newUGI = HBaseTestingUtility.getDifferentUser(this.conf,
+    final Configuration newConf = HBaseConfiguration.create(this.conf);
+    User user = HBaseTestingUtility.getDifferentUser(newConf,
       tableNameStr);
-    newUGI.doAs(new PrivilegedExceptionAction<Object>() {
+    user.runAs(new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        runWALSplit(conf);
-        FileSystem newFS = FileSystem.get(conf);
+        runWALSplit(newConf);
+        FileSystem newFS = FileSystem.get(newConf);
         // Make a new wal for new region open.
-        HLog wal3 = createWAL(conf);
+        HLog wal3 = createWAL(newConf);
         final AtomicInteger countOfRestoredEdits = new AtomicInteger(0);
-        HRegion region3 = new HRegion(basedir, wal3, newFS, conf, hri, null) {
+        HRegion region3 = new HRegion(basedir, wal3, newFS, newConf, hri, null) {
           @Override
           protected boolean restoreEdit(Store s, KeyValue kv) {
             boolean b = super.restoreEdit(s, kv);
@@ -377,10 +379,10 @@ public class TestWALReplay {
 
     // Make a new fs for the splitter and run as a new user so we can take
     // over old wal.
-    UserGroupInformation newUGI = HBaseTestingUtility.getDifferentUser(this.conf,
+    final Configuration newConf = HBaseConfiguration.create(this.conf);
+    User user = HBaseTestingUtility.getDifferentUser(newConf,
       ".replay.wal.secondtime");
-    final Configuration newConf = new Configuration(conf);
-    newUGI.doAs(new PrivilegedExceptionAction<Object>() {
+    user.runAs(new PrivilegedExceptionAction(){
       public Object run() throws Exception {
         runWALSplit(newConf);
         FileSystem newFS = FileSystem.get(newConf);
@@ -413,7 +415,6 @@ public class TestWALReplay {
         } finally {
           newWal.closeAndDelete();
         }
-
         return null;
       }
     });

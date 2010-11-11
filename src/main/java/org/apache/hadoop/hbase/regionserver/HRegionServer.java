@@ -48,12 +48,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import com.google.common.base.Function;
+import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.Chore;
+import org.apache.hadoop.hbase.ClockOutOfSyncException;
+import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
@@ -71,6 +74,7 @@ import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.UnknownRowLockException;
 import org.apache.hadoop.hbase.UnknownScannerException;
 import org.apache.hadoop.hbase.YouAreDeadException;
+import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.catalog.MetaEditor;
 import org.apache.hadoop.hbase.catalog.RootLocationEditor;
@@ -108,6 +112,7 @@ import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.HBasePolicyProvider;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CompressionTest;
+import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.InfoServer;
 import org.apache.hadoop.hbase.util.Pair;
@@ -118,6 +123,7 @@ import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.hadoop.io.MapWritable;
 import org.apache.hadoop.io.Writable;
+import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.net.DNS;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.zookeeper.KeeperException;
@@ -1400,7 +1406,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * Let the master know we're here Run initialization using parameters passed
    * us by the master.
    */
-  private MapWritable reportForDuty() {
+  private MapWritable reportForDuty() throws IOException {
     HServerAddress masterAddress = null;
     while (!stopped && (masterAddress = getMaster()) == null) {
       sleeper.sleep();
@@ -1418,8 +1424,19 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           this.serverInfo.getServerAddress());
         this.serverInfo.setLoad(buildServerLoad());
         LOG.info("Telling master at " + masterAddress + " that we are up");
-        result = this.hbaseMaster.regionServerStartup(this.serverInfo);
+        result = this.hbaseMaster.regionServerStartup(this.serverInfo,
+            EnvironmentEdgeManager.currentTimeMillis());
         break;
+      } catch (RemoteException e) {
+        IOException ioe = e.unwrapRemoteException();
+        if (ioe instanceof ClockOutOfSyncException) {
+          LOG.fatal("Master rejected startup because clock is out of sync",
+              ioe);
+          // Re-throw IOE will cause RS to abort
+          throw ioe;
+        } else {
+          LOG.warn("remote error telling master we are up", e);
+        }
       } catch (IOException e) {
         LOG.warn("error telling master we are up", e);
       } catch (KeeperException e) {
@@ -1925,7 +1942,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     String lockName = String.valueOf(lockId);
     Integer rl = rowlocks.get(lockName);
     if (rl == null) {
-      throw new IOException("Invalid row lock");
+      throw new UnknownRowLockException("Invalid row lock");
     }
     this.leases.renewLease(lockName);
     return rl;
@@ -2041,7 +2058,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * @param zk True if we are to update zk about the region close; if the close
    * was orchestrated by master, then update zk.  If the close is being run by
    * the regionserver because its going down, don't update zk.
-   * @return
+   * @return True if closed a region.
    */
   protected boolean closeRegion(HRegionInfo region, final boolean abort,
       final boolean zk) {
@@ -2414,7 +2431,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     }
   }
 
-  /** {@inheritDoc} */
   public HRegionInfo[] getRegionsAssignment() throws IOException {
     HRegionInfo[] regions = new HRegionInfo[onlineRegions.size()];
     Iterator<HRegion> ite = onlineRegions.values().iterator();
@@ -2431,7 +2447,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
   @SuppressWarnings("unchecked")
   @Override
-  public <R> MultiResponse<R> multi(MultiAction<R> multi) throws IOException {
+  public <R> MultiResponse multi(MultiAction<R> multi) throws IOException {
     MultiResponse response = new MultiResponse();
     for (Map.Entry<byte[], List<Action<R>>> e : multi.actions.entrySet()) {
       byte[] regionName = e.getKey();
@@ -2440,21 +2456,20 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       // end of a region, so that we don't have to try the rest of the
       // actions in the list.
       Collections.sort(actionsForRegion);
-      Row action = null;
+      Row action;
       List<Action> puts = new ArrayList<Action>();
-      try {
-        for (Action a : actionsForRegion) {
-          action = a.getAction();
-          // TODO catch exceptions so we can report them on a per-item basis.
+      for (Action a : actionsForRegion) {
+        action = a.getAction();
+        int originalIndex = a.getOriginalIndex();
+
+        try {
           if (action instanceof Delete) {
             delete(regionName, (Delete) action);
-            response.add(regionName, new Pair<Integer, Result>(
-                a.getOriginalIndex(), new Result()));
+            response.add(regionName, originalIndex, new Result());
           } else if (action instanceof Get) {
-            response.add(regionName, new Pair<Integer, Result>(
-                a.getOriginalIndex(), get(regionName, (Get) action)));
+            response.add(regionName, originalIndex, get(regionName, (Get) action));
           } else if (action instanceof Put) {
-            puts.add(a);
+            puts.add(a);  // wont throw.
           } else if (action instanceof Exec) {
             ExecResult result = execCoprocessor(regionName, (Exec)action);
             response.add(regionName, new Pair<Integer, Object>(
@@ -2462,54 +2477,65 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
             ));
           } else {
             LOG.debug("Error: invalid Action, row must be a Get, Delete, Put or Exec.");
-            throw new IllegalArgumentException("Invalid Action, row must be a Get, Delete, Put or Exec.");
+            throw new DoNotRetryIOException("Invalid Action, row must be a Get, Delete or Put.");
           }
+        } catch (IOException ex) {
+          response.add(regionName, originalIndex, ex);
         }
+      }
 
-        // We do the puts with result.put so we can get the batching efficiency
-        // we so need. All this data munging doesn't seem great, but at least
-        // we arent copying bytes or anything.
-        if (!puts.isEmpty()) {
+      // We do the puts with result.put so we can get the batching efficiency
+      // we so need. All this data munging doesn't seem great, but at least
+      // we arent copying bytes or anything.
+      if (!puts.isEmpty()) {
+        try {
           HRegion region = getRegion(regionName);
+
           if (!region.getRegionInfo().isMetaTable()) {
             this.cacheFlusher.reclaimMemStoreMemory();
           }
 
-          Pair<Put,Integer> [] putsWithLocks = new Pair[puts.size()];
-          int i = 0;
+          List<Pair<Put,Integer>> putsWithLocks =
+              Lists.newArrayListWithCapacity(puts.size());
           for (Action a : puts) {
             Put p = (Put) a.getAction();
 
-            Integer lock = getLockFromId(p.getLockId());
-            putsWithLocks[i++] = new Pair<Put, Integer>(p, lock);
+            Integer lock;
+            try {
+              lock = getLockFromId(p.getLockId());
+            } catch (UnknownRowLockException ex) {
+              response.add(regionName, a.getOriginalIndex(), ex);
+              continue;
+            }
+            putsWithLocks.add(new Pair<Put, Integer>(p, lock));
           }
 
           this.requestCount.addAndGet(puts.size());
 
-          OperationStatusCode[] codes = region.put(putsWithLocks);
-          for( i = 0 ; i < codes.length ; i++) {
+          OperationStatusCode[] codes =
+              region.put(putsWithLocks.toArray(new Pair[]{}));
+
+          for( int i = 0 ; i < codes.length ; i++) {
             OperationStatusCode code = codes[i];
 
             Action theAction = puts.get(i);
-            Result result = null;
+            Object result = null;
 
             if (code == OperationStatusCode.SUCCESS) {
               result = new Result();
+            } else if (code == OperationStatusCode.BAD_FAMILY) {
+              result = new NoSuchColumnFamilyException();
             }
-            // TODO turning the alternate exception into a different result
+            // FAILURE && NOT_RUN becomes null, aka: need to run again.
 
-            response.add(regionName,
-                new Pair<Integer, Result>(
-                    theAction.getOriginalIndex(), result));
+            response.add(regionName, theAction.getOriginalIndex(), result);
+          }
+        } catch (IOException ioe) {
+          // fail all the puts with the ioe in question.
+          for (Action a: puts) {
+            response.add(regionName, a.getOriginalIndex(), ioe);
           }
         }
-      } catch (IOException ioe) {
-        if (multi.size() == 1) throw ioe;
-        LOG.debug("Exception processing " +
-          org.apache.commons.lang.StringUtils.abbreviate(action.toString(), 64) +
-          "; " + ioe.getMessage());
-        response.add(regionName,null);
-        // stop processing on this region, continue to the next.
       }
     }
     return response;

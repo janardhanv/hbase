@@ -154,20 +154,18 @@ public class ServerShutdownHandler extends EventHandler {
   /**
    * Process a dead region from a dead RS.  Checks if the region is disabled
    * or if the region has a partially completed split.
-   * <p>
-   * Returns true if specified region should be assigned, false if not.
    * @param hri
    * @param result
    * @param assignmentManager
    * @param catalogTracker
-   * @return
+   * @return Returns true if specified region should be assigned, false if not.
    * @throws IOException
    */
   public static boolean processDeadRegion(HRegionInfo hri, Result result,
       AssignmentManager assignmentManager, CatalogTracker catalogTracker)
   throws IOException {
     // If table is not disabled but the region is offlined,
-    boolean disabled = assignmentManager.isTableDisabled(
+    boolean disabled = assignmentManager.getZKTable().isDisabledTable(
         hri.getTableDesc().getNameAsString());
     if (disabled) return false;
     if (hri.isOffline() && hri.isSplit()) {

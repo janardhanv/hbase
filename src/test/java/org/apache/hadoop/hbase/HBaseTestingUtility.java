@@ -55,6 +55,7 @@ import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.ReadWriteConsistencyControl;
 import org.apache.hadoop.hbase.regionserver.Store;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Threads;
@@ -67,7 +68,6 @@ import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.mapred.MiniMRCluster;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.zookeeper.ZooKeeper;
 
 /**
@@ -1136,19 +1136,20 @@ public class HBaseTestingUtility {
    * @return A new configuration instance with a different user set into it.
    * @throws IOException
    */
-  public static UserGroupInformation getDifferentUser(final Configuration c,
+  public static User getDifferentUser(final Configuration c,
     final String differentiatingSuffix)
   throws IOException {
     FileSystem currentfs = FileSystem.get(c);
     if (!(currentfs instanceof DistributedFileSystem)) {
-      return UserGroupInformation.getCurrentUser();
+      return User.getCurrent();
     }
     // Else distributed filesystem.  Make a new instance per daemon.  Below
     // code is taken from the AppendTestUtil over in hdfs.
-    String username = UserGroupInformation.getCurrentUser().getUserName() +
+    String username = User.getCurrent().getName() +
       differentiatingSuffix;
-    return UserGroupInformation.createUserForTesting(username,
+    User user = User.createUserForTesting(c, username,
         new String[]{"supergroup"});
+    return user;
   }
 
   /**

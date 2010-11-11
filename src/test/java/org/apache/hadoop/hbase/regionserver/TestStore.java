@@ -51,6 +51,7 @@ import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManagerTestHelper;
@@ -462,14 +463,12 @@ public class TestStore extends TestCase {
     LOG.info("Setting up a faulty file system that cannot write");
 
     final Configuration conf = HBaseConfiguration.create();
+    User user = User.createUserForTesting(conf,
+        "testhandleerrorsinflush", new String[]{"foo"});
     // Inject our faulty LocalFileSystem
     conf.setClass("fs.file.impl", FaultyFileSystem.class,
         FileSystem.class);
-    // Set a different UGI so we don't get the same cached LocalFS instance
-    UserGroupInformation ugi = UserGroupInformation.createUserForTesting(
-        "testhandleerrorsinflush", new String[]{"foo"});
-
-    ugi.doAs(new PrivilegedExceptionAction<Object>() {
+    user.runAs(new PrivilegedExceptionAction<Object>() {
       public Object run() throws Exception {
         // Make sure it worked (above is sensitive to caching details in hadoop core)
         FileSystem fs = FileSystem.get(conf);
@@ -503,7 +502,6 @@ public class TestStore extends TestCase {
         paths = FileUtil.stat2Paths(files);
         System.err.println("Got paths: " + Joiner.on(",").join(paths));
         assertEquals(0, paths.length);
-
         return null;
       }
     });

@@ -286,7 +286,7 @@ public class ZKUtil {
    *
    * @param zkw zk reference
    * @param znode path of node to list and watch children of
-   * @returns list of children of the specified node, an empty list if the node
+   * @return list of children of the specified node, an empty list if the node
    *          exists but has no children, and null if the node does not exist
    * @throws KeeperException if unexpected zookeeper exception
    */
@@ -713,6 +713,23 @@ public class ZKUtil {
   }
 
   /**
+   * Set data into node creating node if it doesn't yet exist.
+   * Does not set watch.
+   * @param zkw zk reference
+   * @param znode path of node
+   * @param data data to set for node
+   * @throws KeeperException 
+   */
+  public static void createSetData(final ZooKeeperWatcher zkw, final String znode,
+      final byte [] data)
+  throws KeeperException {
+    if (checkExists(zkw, znode) != -1) {
+      ZKUtil.createWithParents(zkw, znode);
+    }
+    ZKUtil.setData(zkw, znode, data);
+  }
+
+  /**
    * Sets the data of the existing znode to be the specified data.  The node
    * must exist but no checks are done on the existing data or version.
    *
@@ -857,7 +874,6 @@ public class ZKUtil {
    * @param data data of node to create
    * @param cb
    * @param ctx
-   * @return version of node created
    * @throws KeeperException if unexpected zookeeper exception
    * @throws KeeperException.NodeExistsException if node already exists
    */
@@ -902,8 +918,7 @@ public class ZKUtil {
    * @param znode path of node
    * @throws KeeperException if unexpected zookeeper exception
    */
-  public static void createWithParents(ZooKeeperWatcher zkw,
-      String znode)
+  public static void createWithParents(ZooKeeperWatcher zkw, String znode)
   throws KeeperException {
     try {
       if(znode == null) {
@@ -954,7 +969,7 @@ public class ZKUtil {
   /**
    * Deletes the specified node.  Fails silent if the node does not exist.
    * @param zkw
-   * @param joinZNode
+   * @param node
    * @throws KeeperException
    */
   public static void deleteNodeFailSilent(ZooKeeperWatcher zkw, String node)

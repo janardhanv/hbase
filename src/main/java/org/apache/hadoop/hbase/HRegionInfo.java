@@ -143,6 +143,9 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
     new HRegionInfo(1L, HTableDescriptor.META_TABLEDESC);
 
   private byte [] endKey = HConstants.EMPTY_BYTE_ARRAY;
+  // This flag is in the parent of a split while the parent is still referenced
+  // by daughter regions.  We USED to set this flag when we disabled a table
+  // but now table state is kept up in zookeeper as of 0.90.0 HBase.
   private boolean offLine = false;
   private long regionId = -1;
   private transient byte [] regionName = HConstants.EMPTY_BYTE_ARRAY;
@@ -271,7 +274,7 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
    * Make a region name of passed parameters.
    * @param tableName
    * @param startKey Can be null
-   * @param id Region id (Usually timestamp from when region was created).
+   * @param regionid Region id (Usually timestamp from when region was created).
    * @param newFormat should we create the region name in the new format
    *                  (such that it contains its encoded name?).
    * @return Region name made of passed tableName, startKey and id
@@ -350,7 +353,7 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
   /**
    * Gets the table name from the specified region name.
    * @param regionName
-   * @return
+   * @return Table name.
    */
   public static byte [] getTableName(byte [] regionName) {
     int offset = -1;
@@ -539,7 +542,9 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
   }
 
   /**
-   * @param offLine set online - offline status
+   * The parent of a region split is offline while split daughters hold
+   * references to the parent. Offlined regions are closed.
+   * @param offLine Set online/offline status.
    */
   public void setOffline(boolean offLine) {
     this.offLine = offLine;

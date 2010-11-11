@@ -32,7 +32,6 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Call;
 import org.apache.hadoop.hbase.client.coprocessor.Batch.Callback;
-import org.apache.hadoop.hbase.coprocessor.BaseEndpoint;
 import org.apache.hadoop.hbase.coprocessor.Coprocessor;
 import org.apache.hadoop.hbase.coprocessor.RegionObserver;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorEnvironment;
@@ -214,12 +213,14 @@ public class CoprocessorHost {
       }
 
       @Override
-      public void batch(List<Row> actions, Result[] results) throws IOException {
+      public void batch(List<Row> actions, Object[] results)
+          throws IOException, InterruptedException {
         table.batch(actions, results);
       }
 
       @Override
-      public Result[] batch(List<Row> actions) throws IOException {
+      public Object[] batch(List<Row> actions)
+          throws IOException, InterruptedException {
         return table.batch(actions);
       }
 
@@ -427,7 +428,9 @@ public class CoprocessorHost {
     try {
       implClass = getClass().getClassLoader().loadClass(className);
     } catch (ClassNotFoundException e) {
-      // ignore
+      LOG.info("Class " + className + " needs to be loaded from a file - " + 
+          path.toString() + ".");
+      // go ahead to load from file system.
     }
 
     // If not, load
@@ -545,7 +548,7 @@ public class CoprocessorHost {
     for (Map.Entry<ImmutableBytesWritable,ImmutableBytesWritable> e:
         region.getTableDesc().getValues().entrySet()) {
       String key = Bytes.toString(e.getKey().get());
-      if (key.startsWith("Coprocessor")) {
+      if (key.startsWith("COPROCESSOR")) {
         // found one
         try {
           String spec = Bytes.toString(e.getValue().get());

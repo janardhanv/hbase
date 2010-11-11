@@ -292,7 +292,7 @@ public class HLog implements Syncable {
    * @param conf configuration to use
    * @param listeners Listeners on WAL events. Listeners passed here will
    * be registered before we do anything else; e.g. the
-   * Constructor {@link #rollWriter().
+   * Constructor {@link #rollWriter()}.
    * @param prefix should always be hostname and port in distributed env and
    *        it will be URL encoded before being used.
    *        If prefix is null, "hlog" will be used
@@ -317,7 +317,7 @@ public class HLog implements Syncable {
    * @param conf configuration to use
    * @param listeners Listeners on WAL events. Listeners passed here will
    * be registered before we do anything else; e.g. the
-   * Constructor {@link #rollWriter().
+   * Constructor {@link #rollWriter()}.
    * @param failIfLogDirExists If true IOException will be thrown if dir already exists.
    * @param prefix should always be hostname and port in distributed env and
    *        it will be URL encoded before being used.
@@ -541,7 +541,7 @@ public class HLog implements Syncable {
    * @param fs
    * @param path
    * @param conf
-   * @return
+   * @return Writer instance
    * @throws IOException
    */
   protected Writer createWriterInstance(final FileSystem fs, final Path path,
@@ -642,7 +642,7 @@ public class HLog implements Syncable {
     if (logCount > this.maxLogs && this.outputfiles != null &&
         this.outputfiles.size() > 0) {
       // This is an array of encoded region names.
-      regions = findMemstoresWithEditsOlderThan(this.outputfiles.firstKey(),
+      regions = findMemstoresWithEditsEqualOrOlderThan(this.outputfiles.firstKey(),
         this.lastSeqWritten);
       StringBuilder sb = new StringBuilder();
       for (int i = 0; i < regions.length; i++) {
@@ -657,19 +657,19 @@ public class HLog implements Syncable {
   }
 
   /**
-   * Return regions (memstores) that have edits that are less than the passed
-   * <code>oldestWALseqid</code>.
+   * Return regions (memstores) that have edits that are equal or less than
+   * the passed <code>oldestWALseqid</code>.
    * @param oldestWALseqid
    * @param regionsToSeqids
    * @return All regions whose seqid is < than <code>oldestWALseqid</code> (Not
    * necessarily in order).  Null if no regions found.
    */
-  static byte [][] findMemstoresWithEditsOlderThan(final long oldestWALseqid,
+  static byte [][] findMemstoresWithEditsEqualOrOlderThan(final long oldestWALseqid,
       final Map<byte [], Long> regionsToSeqids) {
     //  This method is static so it can be unit tested the easier.
     List<byte []> regions = null;
     for (Map.Entry<byte [], Long> e: regionsToSeqids.entrySet()) {
-      if (e.getValue().longValue() < oldestWALseqid) {
+      if (e.getValue().longValue() <= oldestWALseqid) {
         if (regions == null) regions = new ArrayList<byte []>();
         regions.add(e.getKey());
       }
@@ -752,7 +752,7 @@ public class HLog implements Syncable {
   /**
    * This is a convenience method that computes a new filename with a given
    * file-number.
-   * @param file-number to use
+   * @param filenum to use
    * @return Path
    */
   protected Path computeFilename(long filenum) {
