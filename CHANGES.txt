@@ -674,6 +674,10 @@ Release 0.90.0 - Unreleased
    HBASE-3214  TestMasterFailover.testMasterFailoverWithMockedRITOnDeadRS is
                failing (Gary via jgray)
    HBASE-3216  Move HBaseFsck from client to util
+   HBASE-3219  Split parents are reassigned on restart and on disable/enable
+   HBASE-3222  Regionserver region listing in UI is no longer ordered
+   HBASE-3221  Race between splitting and disabling
+   HBASE-3224  NPE in KeyValue$KVComparator.compare when compacting
 
 
   IMPROVEMENTS
@@ -1144,6 +1148,11 @@ Release 0.90.0 - Unreleased
    HBASE-3090  Don't include hbase-default in conf/ assembly
    HBASE-3161  Provide option for Stargate to only serve GET requests
                (Bennett Neale via Stack)
+   HBASE-3218  Shell help cleanup/cosmetics/edit
+   HBASE-3079  Shell displaying uninformative exceptions
+   HBASE-3227  Edit of log messages before branching.
+   HBASE-3230  Refresh our hadoop jar and update zookeeper to
+               just-released 3.3.2
 
 
   NEW FEATURES
@@ -1204,6 +1213,7 @@ Release 0.90.0 - Unreleased
    HBASE-3013  Tool to verify data in two clusters
    HBASE-2896  Retain assignment information between cluster
                shutdown/startup
+   HBASE-3211  Key (Index) Only Fetches
 
 
   OPTIMIZATIONS

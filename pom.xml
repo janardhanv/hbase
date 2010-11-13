@@ -7,12 +7,18 @@
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
     <version>7</version>
+    <!-- Building 'site', you'll see a complaint about parent
+    pom not being found.  To fix, I've downloaded apache's pom
+    from here https://repository.apache.org/content/repositories/releases/org/apache/apache/7/apache-7.pom
+    saving it as 'pom.xml' into a directory named 'apache-7.pom'.  I then uncommented the below.
+    -->
+    <relativePath>../apache-7.pom/</relativePath>
   </parent>
 
   <groupId>org.apache.hbase</groupId>
   <artifactId>hbase</artifactId>
   <packaging>jar</packaging>
-  <version>0.89.0-security-SNAPSHOT</version>
+  <version>0.90.0-security-SNAPSHOT</version>
   <name>HBase</name>
   <description>
     HBase is the &amp;lt;a href="http://hadoop.apache.org"&amp;rt;Hadoop&lt;/a&amp;rt; database. Use it when you need
@@ -137,8 +143,19 @@
   <repositories>
     <repository>
       <id>temp-hadoop</id>
-      <name>Hadoop 0.20.1/2 packaging, thrift, zk</name>
+      <name>Hadoop 0.20-append</name>
       <url>http://people.apache.org/~rawson/repo/</url>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+    </repository>
+    <repository>
+      <id>apache-rsync</id>
+      <name>Apache ibiblio rsync repository</name>
+      <url>http://people.apache.org/repo/m2-ibiblio-rsync-repository/</url>
       <snapshots>
         <enabled>false</enabled>
       </snapshots>
@@ -294,6 +311,7 @@
           <sectionAutolabel>true</sectionAutolabel>
           <sectionLabelIncludesComponentLabel>true</sectionLabelIncludesComponentLabel>
           <targetDirectory>${basedir}/target/site/</targetDirectory>
+          <htmlStylesheet>css/freebsd_docbook.css</htmlStylesheet>
         </configuration>
       </plugin>
       <plugin>
@@ -301,8 +319,7 @@
         <configuration>
           <tarLongFileMode>gnu</tarLongFileMode>
           <descriptors>
-            <descriptor>src/assembly/bin.xml</descriptor>
-            <descriptor>src/assembly/src.xml</descriptor>
+            <descriptor>src/assembly/all.xml</descriptor>
           </descriptors>
         </configuration>
       </plugin>
@@ -534,7 +551,7 @@
       <version>${hadoop.version}</version>
     </dependency>
     <dependency>
-      <groupId>org.apache.hadoop</groupId>
+      <groupId>org.apache.zookeeper</groupId>
       <artifactId>zookeeper</artifactId>
       <version>${zookeeper.version}</version>
     </dependency>

@@ -950,8 +950,8 @@ public class HRegion implements HeapSize { // , Writable{
       return false;
     }
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Started memstore flush for region " + this +
-        "; current region memstore size " +
+      LOG.debug("Started memstore flush for " + this +
+        ", current region memstore size " +
         StringUtils.humanReadableInt(this.memstoreSize.get()) +
         ((wal != null)? "": "; wal is null, using passed sequenceid=" + myseqid));
     }
@@ -1505,8 +1505,10 @@ public class HRegion implements HeapSize { // , Writable{
         lastIndexExclusive++;
         numReadyToWrite++;
       }
+      // Nothing to put -- an exception in the above such as NoSuchColumnFamily? 
+      if (numReadyToWrite <= 0) return 0L;
+
       // We've now grabbed as many puts off the list as we can
-      assert numReadyToWrite > 0;
 
       // ------------------------------------
       // STEP 2. Update any LATEST_TIMESTAMP timestamps

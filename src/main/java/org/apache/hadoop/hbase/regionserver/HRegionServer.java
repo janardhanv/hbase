@@ -2144,6 +2144,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         list.add(e.getValue().getRegionInfo());
       }
     }
+    Collections.sort(list);
     return list;
   }
 
