@@ -1105,7 +1105,7 @@ public class AssignmentManager extends ZooKeeperListener {
 
     // Scan META for all user regions, skipping any disabled tables
     Map<HRegionInfo,HServerAddress> allRegions =
-      MetaReader.fullScan(catalogTracker, this.zkTable.getDisabledTables());
+      MetaReader.fullScan(catalogTracker, this.zkTable.getDisabledTables(), true);
     if (allRegions == null || allRegions.isEmpty()) return;
 
     // Determine what type of assignment to do on startup
@@ -1620,6 +1620,16 @@ public class AssignmentManager extends ZooKeeperListener {
     regionOffline(parent);
     regionOnline(a, hsi);
     regionOnline(b, hsi);
+
+    // There's a possibility that the region was splitting while a user asked
+    // the master to disable, we need to make sure we close those regions in
+    // that case. This is not racing with the region server itself since RS
+    // report is done after the split transaction completed.
+    if (this.zkTable.isDisablingOrDisabledTable(
+        parent.getTableDesc().getNameAsString())) {
+      unassign(a);
+      unassign(b);
+    }
   }
 
   /**

@@ -62,6 +62,7 @@ import org.apache.hadoop.hbase.filter.CompareFilter;
 import org.apache.hadoop.hbase.filter.DependentColumnFilter;
 import org.apache.hadoop.hbase.filter.FirstKeyOnlyFilter;
 import org.apache.hadoop.hbase.filter.InclusiveStopFilter;
+import org.apache.hadoop.hbase.filter.KeyOnlyFilter;
 import org.apache.hadoop.hbase.filter.PageFilter;
 import org.apache.hadoop.hbase.filter.PrefixFilter;
 import org.apache.hadoop.hbase.filter.QualifierFilter;
@@ -203,6 +204,9 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
     // coprocessor execution
     addToMap(Exec.class, code++);
     addToMap(Increment.class, code++);
+
+    addToMap(KeyOnlyFilter.class, code++);
+
   }
 
   private Class<?> declaredClass;
