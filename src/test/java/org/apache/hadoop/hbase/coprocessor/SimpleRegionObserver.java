@@ -107,15 +107,18 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
       List<KeyValue> kvs = familyMap.get(TestRegionObserverInterface.A);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.A));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.A));
       kvs = familyMap.get(TestRegionObserverInterface.B);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.B));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.B));
       kvs = familyMap.get(TestRegionObserverInterface.C);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.C));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.C));
       hadPrePut = true;
     }
     return familyMap;
@@ -129,15 +132,18 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
         TestRegionObserverInterface.TEST_TABLE)) {
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.A));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.A));
       kvs = familyMap.get(TestRegionObserverInterface.B);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.B));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.B));
       kvs = familyMap.get(TestRegionObserverInterface.C);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.C));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.C));
       hadPostPut = true;
     }
   }
@@ -188,7 +194,8 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void postScannerOpen(CoprocessorEnvironment e, Scan scan, long scannerId) {
+  public void postScannerOpen(CoprocessorEnvironment e, Scan scan,
+      long scannerId) {
     // not tested -- need to go through the RS to get here
   }
 

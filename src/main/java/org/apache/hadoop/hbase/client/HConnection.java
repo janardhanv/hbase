@@ -271,16 +271,22 @@ public interface HConnection extends Abortable {
 
 
   /**
-   * Executes the given {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Call} callable for each row in the
-   * given list and invokes {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Callback#update(byte[], byte[], Object)}
+   * Executes the given
+   * {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Call}
+   * callable for each row in the given list and invokes
+   * {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Callback#update(byte[], byte[], Object)}
    * for each result returned.
    *
    * @param protocol the protocol interface being called
    * @param rows a list of row keys for which the callable should be invoked
    * @param tableName table name for the coprocessor invoked
    * @param pool ExecutorService used to submit the calls per row
-   * @param call instance on which to invoke {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Call#call(Object)} for each row
-   * @param callback instance on which to invoke {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Callback#update(byte[], byte[], Object)} for each result
+   * @param call instance on which to invoke
+   * {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Call#call(Object)}
+   * for each row
+   * @param callback instance on which to invoke
+   * {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Callback#update(byte[], byte[], Object)}
+   * for each result
    * @param <T> the protocol interface type
    * @param <R> the callable's return type
    * @throws IOException

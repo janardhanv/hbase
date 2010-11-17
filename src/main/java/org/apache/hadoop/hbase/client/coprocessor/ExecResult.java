@@ -28,14 +28,16 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 /**
- * Represents the return value from a {@link org.apache.hadoop.hbase.client.coprocessor.Exec} invocation.  This simply
- * wraps the value for easier {@link org.apache.hadoop.hbase.io.HbaseObjectWritable}
+ * Represents the return value from a
+ * {@link org.apache.hadoop.hbase.client.coprocessor.Exec} invocation.
+ * This simply wraps the value for easier
+ * {@link org.apache.hadoop.hbase.io.HbaseObjectWritable}
  * serialization.
  *
  * <p>
  * This class is used internally by the HBase client code to properly serialize
- * responses from {@link org.apache.hadoop.hbase.ipc.CoprocessorProtocol} method
- * invocations.  It should not be used directly by clients.
+ * responses from {@link org.apache.hadoop.hbase.ipc.CoprocessorProtocol}
+ * method invocations.  It should not be used directly by clients.
  * </p>
  *
  * @see Exec

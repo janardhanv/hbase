@@ -1331,7 +1331,8 @@ public class HTable implements HTableInterface {
   }
 
   @Override
-  public <T extends CoprocessorProtocol> T coprocessorProxy(Class<T> protocol, byte[] row) {
+  public <T extends CoprocessorProtocol> T coprocessorProxy(
+      Class<T> protocol, byte[] row) {
     return (T)Proxy.newProxyInstance(this.getClass().getClassLoader(),
         new Class[]{protocol},
         new ExecRPCInvoker(configuration,
@@ -1343,11 +1344,14 @@ public class HTable implements HTableInterface {
 
   @Override
   public <T extends CoprocessorProtocol, R> Map<byte[],R> coprocessorExec(
-      Class<T> protocol, byte[] startKey, byte[] endKey, Batch.Call<T,R> callable)
+      Class<T> protocol, byte[] startKey, byte[] endKey,
+      Batch.Call<T,R> callable)
       throws IOException, Throwable {
 
-    final Map<byte[],R> results = new TreeMap<byte[],R>(Bytes.BYTES_COMPARATOR);
-    coprocessorExec(protocol, startKey, endKey, callable, new Batch.Callback<R>(){
+    final Map<byte[],R> results = new TreeMap<byte[],R>(
+        Bytes.BYTES_COMPARATOR);
+    coprocessorExec(protocol, startKey, endKey, callable,
+        new Batch.Callback<R>(){
       public void update(byte[] region, byte[] row, R value) {
         results.put(region, value);
       }
@@ -1363,10 +1367,12 @@ public class HTable implements HTableInterface {
 
     // get regions covered by the row range
     List<byte[]> keys = getStartKeysInRange(startKey, endKey);
-    connection.processExecs(protocol, keys, tableName, pool, callable, callback);
+    connection.processExecs(protocol, keys, tableName, pool, callable,
+        callback);
   }
 
-  private List<byte[]> getStartKeysInRange(byte[] start, byte[] end) throws IOException {
+  private List<byte[]> getStartKeysInRange(byte[] start, byte[] end)
+  throws IOException {
     Pair<byte[][],byte[][]> startEndKeys = getStartEndKeys();
     byte[][] startKeys = startEndKeys.getFirst();
     byte[][] endKeys = startEndKeys.getSecond();

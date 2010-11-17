@@ -40,7 +40,8 @@ import java.lang.reflect.Method;
  * will be callable by clients.
  *
  * <p>
- * This class is used internally by {@link org.apache.hadoop.hbase.client.HTable#coprocessorExec(Class, byte[], byte[], org.apache.hadoop.hbase.client.coprocessor.Batch.Call, org.apache.hadoop.hbase.client.coprocessor.Batch.Callback)}
+ * This class is used internally by
+ * {@link org.apache.hadoop.hbase.client.HTable#coprocessorExec(Class, byte[], byte[], org.apache.hadoop.hbase.client.coprocessor.Batch.Call, org.apache.hadoop.hbase.client.coprocessor.Batch.Callback)}
  * to wrap the {@code CoprocessorProtocol} method invocations requested in
  * RPC calls.  It should not be used directly by HBase clients.
  * </p>

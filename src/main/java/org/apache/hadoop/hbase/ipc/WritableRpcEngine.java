@@ -65,8 +65,8 @@ class WritableRpcEngine implements RpcEngine {
         SocketFactory factory) {
       // Construct & cache client.  The configuration is only used for timeout,
       // and Clients have connection pools.  So we can either (a) lose some
-      // connection pooling and leak sockets, or (b) use the same timeout for all
-      // configurations.  Since the IPC is usually intended globally, not
+      // connection pooling and leak sockets, or (b) use the same timeout for
+      // all configurations.  Since the IPC is usually intended globally, not
       // per-job, we choose (a).
       HBaseClient client = clients.get(factory);
       if (client == null) {
@@ -227,9 +227,11 @@ class WritableRpcEngine implements RpcEngine {
                           Class<?>[] ifaces,
                           String bindAddress, int port,
                           int numHandlers,
-                          int metaHandlerCount, boolean verbose, Configuration conf, int highPriorityLevel)
+                          int metaHandlerCount, boolean verbose,
+                          Configuration conf, int highPriorityLevel)
     throws IOException {
-    return new Server(instance, ifaces, conf, bindAddress, port, numHandlers, metaHandlerCount, verbose, highPriorityLevel);
+    return new Server(instance, ifaces, conf, bindAddress, port, numHandlers,
+        metaHandlerCount, verbose, highPriorityLevel);
   }
 
   /** An RPC Server. */
@@ -259,8 +261,11 @@ class WritableRpcEngine implements RpcEngine {
      */
     public Server(Object instance, final Class<?>[] ifaces,
                   Configuration conf, String bindAddress,  int port,
-                  int numHandlers, int metaHandlerCount, boolean verbose, int highPriorityLevel) throws IOException {
-      super(bindAddress, port, Invocation.class, numHandlers, metaHandlerCount, conf, classNameBase(instance.getClass().getName()), highPriorityLevel);
+                  int numHandlers, int metaHandlerCount, boolean verbose,
+                  int highPriorityLevel) throws IOException {
+      super(bindAddress, port, Invocation.class, numHandlers, metaHandlerCount,
+          conf, classNameBase(instance.getClass().getName()),
+          highPriorityLevel);
       this.instance = instance;
       this.implementation = instance.getClass();
       this.verbose = verbose;
@@ -271,8 +276,8 @@ class WritableRpcEngine implements RpcEngine {
       this.rpcMetrics.createMetrics(this.ifaces);
 
       this.authorize =
-        conf.getBoolean(ServiceAuthorizationManager.SERVICE_AUTHORIZATION_CONFIG,
-                        false);
+        conf.getBoolean(
+            ServiceAuthorizationManager.SERVICE_AUTHORIZATION_CONFIG, false);
     }
 
     @Override

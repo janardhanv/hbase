@@ -47,7 +47,8 @@ public class MultiResponse implements Writable {
   // map of regionName to list of (Results paired to the original index for that
   // Result)
   private Map<byte[], List<Pair<Integer, Object>>> results =
-      new TreeMap<byte[], List<Pair<Integer, Object>>>(Bytes.BYTES_COMPARATOR);
+      new TreeMap<byte[], List<Pair<Integer, Object>>>
+        (Bytes.BYTES_COMPARATOR);
 
   public MultiResponse() {
   }

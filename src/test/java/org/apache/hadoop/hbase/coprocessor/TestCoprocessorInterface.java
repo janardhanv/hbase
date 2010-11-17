@@ -46,7 +46,8 @@ import static org.mockito.Mockito.when;
 public class TestCoprocessorInterface extends HBaseTestCase {
   static final Log LOG = LogFactory.getLog(TestCoprocessorInterface.class);
   static final String DIR = "test/build/data/TestCoprocessorInterface/";
-  private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
+  private static final HBaseTestingUtility TEST_UTIL = 
+    new HBaseTestingUtility();
 
   public static class CoprocessorImpl implements Coprocessor {
 
@@ -214,14 +215,18 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     // Always compact if there is more than one store file.
     TEST_UTIL.getConfiguration().setInt("hbase.hstore.compactionThreshold", 2);
     // Make lease timeout longer, lease checks less frequent
-    TEST_UTIL.getConfiguration().setInt("hbase.master.lease.thread.wakefrequency", 5 * 1000);
-    TEST_UTIL.getConfiguration().setInt("hbase.regionserver.lease.period", 10 * 1000);
+    TEST_UTIL.getConfiguration().setInt(
+        "hbase.master.lease.thread.wakefrequency", 5 * 1000);
+    TEST_UTIL.getConfiguration().setInt(
+        "hbase.regionserver.lease.period", 10 * 1000);
     // Increase the amount of time between client retries
     TEST_UTIL.getConfiguration().setLong("hbase.client.pause", 15 * 1000);
     // This size should make it so we always split using the addContent
     // below.  After adding all data, the first region is 1.3M
-    TEST_UTIL.getConfiguration().setLong("hbase.hregion.max.filesize", 1024 * 128);
-    TEST_UTIL.getConfiguration().setBoolean("hbase.testing.nocluster", true);
+    TEST_UTIL.getConfiguration().setLong("hbase.hregion.max.filesize",
+        1024 * 128);
+    TEST_UTIL.getConfiguration().setBoolean("hbase.testing.nocluster",
+        true);
 
     return TEST_UTIL.getConfiguration();
   }
@@ -240,7 +245,8 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     }
     try {
       Server mockServer = Mockito.mock(Server.class);
-      when(mockServer.getConfiguration()).thenReturn(TEST_UTIL.getConfiguration());
+      when(mockServer.getConfiguration()).thenReturn(
+          TEST_UTIL.getConfiguration());
       PairOfSameType<HRegion> daughters = st.execute(mockServer, null);
       for (HRegion each_daughter: daughters) {
         regions[i] = each_daughter;
@@ -248,11 +254,13 @@ public class TestCoprocessorInterface extends HBaseTestCase {
       }
     }
     catch (IOException ioe) {
-      LOG.info("Split transaction of " + r.getRegionNameAsString() + " failed:" + ioe.getMessage());
+      LOG.info("Split transaction of " + r.getRegionNameAsString() +
+          " failed:" + ioe.getMessage());
       assertTrue(false);
     }
     catch (RuntimeException e) {
-      LOG.info("Failed rollback of failed split of " + r.getRegionNameAsString() + e.getMessage());
+      LOG.info("Failed rollback of failed split of " +
+          r.getRegionNameAsString() + e.getMessage());
     }
 
     assertTrue(i == 2);

@@ -61,7 +61,8 @@ public class TestCoprocessorEndpoint {
 
     HTable table = util.createTable(TEST_TABLE, TEST_FAMILY);
     util.createMultiRegions(util.getConfiguration(), table, TEST_FAMILY,
-        new byte[][]{ HConstants.EMPTY_BYTE_ARRAY, ROWS[rowSeperator1], ROWS[rowSeperator2]});
+        new byte[][]{ HConstants.EMPTY_BYTE_ARRAY, ROWS[rowSeperator1],
+      ROWS[rowSeperator2]});
 
     for(int i = 0; i < ROWSIZE; i++) {
       Put put = new Put(ROWS[i]);
@@ -89,7 +90,8 @@ public class TestCoprocessorEndpoint {
         ROWS[rowSeperator1 - 1],
         ROWS[rowSeperator2 + 1],
         new Batch.Call<ColumnAggregationProtocol,Long>() {
-          public Long call(ColumnAggregationProtocol instance) throws IOException{
+          public Long call(ColumnAggregationProtocol instance)
+          throws IOException{
             return instance.sum(TEST_FAMILY, TEST_QUALIFIER);
           }
         });
@@ -110,7 +112,8 @@ public class TestCoprocessorEndpoint {
         ROWS[rowSeperator1 + 1],
         ROWS[rowSeperator2 + 1],
         new Batch.Call<ColumnAggregationProtocol,Long>() {
-          public Long call(ColumnAggregationProtocol instance) throws IOException{
+          public Long call(ColumnAggregationProtocol instance)
+          throws IOException{
             return instance.sum(TEST_FAMILY, TEST_QUALIFIER);
           }
         });

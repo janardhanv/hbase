@@ -2472,8 +2472,10 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
                 a.getOriginalIndex(), result.getValue()
             ));
           } else {
-            LOG.debug("Error: invalid Action, row must be a Get, Delete, Put or Exec.");
-            throw new DoNotRetryIOException("Invalid Action, row must be a Get, Delete or Put.");
+            LOG.debug("Error: invalid Action, row must be a Get, Delete, " +
+                "Put or Exec.");
+            throw new DoNotRetryIOException("Invalid Action, row must be a " +
+                "Get, Delete or Put.");
           }
         } catch (IOException ex) {
           response.add(regionName, originalIndex, ex);
@@ -2558,7 +2560,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   /**
    * Executes a single {@link org.apache.hadoop.hbase.ipc.CoprocessorProtocol}
    * method using the registered protocol handlers.
-   * {@link CoprocessorProtocol} implementations must be registered per-region via the
+   * {@link CoprocessorProtocol} implementations must be registered per-region
+   * via the
    * {@link org.apache.hadoop.hbase.regionserver.HRegion#registerProtocol(Class, org.apache.hadoop.hbase.ipc.CoprocessorProtocol)}
    * method before they are available.
    *
