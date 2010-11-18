@@ -1209,18 +1209,18 @@ public class HConnectionManager {
         // step 2: make the requests
 
         Map<HServerAddress,Future<MultiResponse>> futures =
-            new HashMap<HServerAddress, Future<MultiResponse>>
-              (actionsByServer.size());
+            new HashMap<HServerAddress, Future<MultiResponse>>(
+                actionsByServer.size());
 
-        for (Entry<HServerAddress, MultiAction<R>>
-        e : actionsByServer.entrySet()) {
+        for (Entry<HServerAddress, MultiAction<R>> e
+             : actionsByServer.entrySet()) {
           futures.put(e.getKey(), pool.submit(createCallable(e.getKey(), e.getValue(), tableName)));
         }
 
         // step 3: collect the failures and successes and prepare for retry
 
-        for (Entry<HServerAddress, Future<MultiResponse>>
-        responsePerServer : futures.entrySet()) {
+        for (Entry<HServerAddress, Future<MultiResponse>> responsePerServer
+             : futures.entrySet()) {
           HServerAddress address = responsePerServer.getKey();
 
           try {
