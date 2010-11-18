@@ -371,7 +371,7 @@ public interface HTableInterface {
   <T extends CoprocessorProtocol> T coprocessorProxy(Class<T> protocol, byte[] row);
 
   /**
-   * Invoke the passed 
+   * Invoke the passed
    * {@link org.apache.hadoop.hbase.client.coprocessor.Batch.Call} against
    * the {@link CoprocessorProtocol} instances running in the selected regions.
    * All regions beginning with the region containing the <code>startKey</code>

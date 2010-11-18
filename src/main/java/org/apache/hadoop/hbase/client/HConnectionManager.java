@@ -1050,21 +1050,21 @@ public class HConnectionManager {
         final byte [] tableName) {
       final HConnection connection = this;
       return new Callable<MultiResponse>() {
-  	    public MultiResponse call() throws IOException {
-  	      return getRegionServerWithoutRetries(
-  	          new ServerCallable<MultiResponse>(connection, tableName, null) {
-  	            public MultiResponse call() throws IOException {
-  	              return server.multi(multi);
-  	            }
-  	            @Override
-  	            public void instantiateServer(boolean reload) throws IOException {
-  	              server = connection.getHRegionConnection(address);
-  	            }
-  	          }
-  	      );
-  	    }
-  	  };
-  	}
+       public MultiResponse call() throws IOException {
+         return getRegionServerWithoutRetries(
+             new ServerCallable<MultiResponse>(connection, tableName, null) {
+               public MultiResponse call() throws IOException {
+                 return server.multi(multi);
+               }
+               @Override
+               public void instantiateServer(boolean reload) throws IOException {
+                 server = connection.getHRegionConnection(address);
+               }
+             }
+         );
+       }
+     };
+   }
 
     public void processBatch(List<Row> list,
         final byte[] tableName,
@@ -1154,7 +1154,7 @@ public class HConnectionManager {
         byte[] tableName,
         ExecutorService pool,
         Object[] results,
-        Batch.Callback<R> callback) 
+        Batch.Callback<R> callback)
     throws IOException, InterruptedException {
 
       // results must be the same size as list
@@ -1185,7 +1185,7 @@ public class HConnectionManager {
           Thread.sleep(sleepTime);
         }
         // step 1: break up into regionserver-sized chunks and build the data structs
-        Map<HServerAddress, MultiAction<R>> actionsByServer = 
+        Map<HServerAddress, MultiAction<R>> actionsByServer =
           new HashMap<HServerAddress, MultiAction<R>>();
         for (int i = 0; i < workingList.size(); i++) {
           Row row = workingList.get(i);
