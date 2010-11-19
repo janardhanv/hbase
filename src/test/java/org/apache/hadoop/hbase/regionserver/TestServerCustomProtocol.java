@@ -174,7 +174,7 @@ public class TestServerCustomProtocol {
     HTable table = new HTable(util.getConfiguration(), TEST_TABLE);
 
     // test empty range
-    Map<byte[],String> results = table.coprocessorExec(PingProtocol.class, 
+    Map<byte[],String> results = table.coprocessorExec(PingProtocol.class,
         null, null, new Batch.Call<PingProtocol,String>() {
           public String call(PingProtocol instance) {
             return instance.ping();
@@ -267,7 +267,7 @@ public class TestServerCustomProtocol {
   }
 
   private void verifyRegionResults(HTable table,
-      Map<byte[],String> results, String expected, byte[] row) 
+      Map<byte[],String> results, String expected, byte[] row)
   throws Exception {
     HRegionLocation loc = table.getRegionLocation(row);
     byte[] region = loc.getRegionInfo().getRegionName();

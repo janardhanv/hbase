@@ -624,7 +624,7 @@ public class RemoteHTable implements HTableInterface {
   @Override
   public <T extends CoprocessorProtocol> T coprocessorProxy(Class<T> protocol,
       byte[] row) {
-    throw new 
+    throw new
     UnsupportedOperationException("coprocessorProxy not implemented");
   }
 
