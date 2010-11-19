@@ -24,9 +24,9 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 
 /**
  * This abstract class provides default implementation of an Endpoint.
- * It also maintains a CoprocessorEnvironment object which can be 
+ * It also maintains a CoprocessorEnvironment object which can be
  * used to access region resource.
- * 
+ *
  * It's recommended to use this abstract class to implement your Endpoint.
  * However you still can just implement the interface CoprocessorProtocol
  * and Coprocessor to develop an Endpoint. But you won't be able to access
@@ -60,7 +60,7 @@ public abstract class BaseEndpointCoprocessor implements Coprocessor,
 
   /**
    * It initializes the coprocessor resources. If you need to override this
-   * method, please remember to call super(e). 
+   * method, please remember to call super(e).
    */
   @Override
   public void postOpen(CoprocessorEnvironment e) {

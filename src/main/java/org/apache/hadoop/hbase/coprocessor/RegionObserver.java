@@ -243,7 +243,7 @@ public interface RegionObserver {
       final byte [] row, final byte [] family, final byte [] qualifier,
       final long amount, final boolean writeToWAL, final long result)
     throws IOException;
-  
+
   /**
    * Called before incrementColumnValue
    * @param e the environment provided by the region server

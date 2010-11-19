@@ -45,7 +45,7 @@ import static org.junit.Assert.*;
  */
 public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   static final Log LOG = LogFactory.getLog(TestRegionObserverInterface.class);
-  
+
   boolean beforeDelete = true;
   boolean scannerOpened = false;
   boolean hadPreGet = false;
@@ -58,7 +58,7 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   boolean hadPostGetClosestRowBefore = false;
   boolean hadPreIncrement = false;
   boolean hadPostIncrement = false;
-  
+
 
   // Overriden RegionObserver methods
   @Override
@@ -169,7 +169,7 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preGetClosestRowBefore(final CoprocessorEnvironment e, 
+  public void preGetClosestRowBefore(final CoprocessorEnvironment e,
       final byte[] row, final byte[] family) {
     if (beforeDelete && e.getRegion().getTableDesc().getName().equals(
         TestRegionObserverInterface.TEST_TABLE)) {
@@ -259,7 +259,7 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   boolean hadPostPut() {
     return hadPostPut;
   }
-  
+
   boolean hadDelete() {
     return !beforeDelete;
   }

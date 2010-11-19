@@ -46,7 +46,7 @@ import static org.mockito.Mockito.when;
 public class TestCoprocessorInterface extends HBaseTestCase {
   static final Log LOG = LogFactory.getLog(TestCoprocessorInterface.class);
   static final String DIR = "test/build/data/TestCoprocessorInterface/";
-  private static final HBaseTestingUtility TEST_UTIL = 
+  private static final HBaseTestingUtility TEST_UTIL =
     new HBaseTestingUtility();
 
   public static class CoprocessorImpl implements Coprocessor {

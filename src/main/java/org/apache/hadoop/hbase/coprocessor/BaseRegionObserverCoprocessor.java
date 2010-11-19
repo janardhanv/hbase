@@ -177,14 +177,14 @@ public abstract class BaseRegionObserverCoprocessor implements Coprocessor,
   }
 
   @Override
-  public Increment preIncrement(final CoprocessorEnvironment e, 
-      final Increment increment) 
+  public Increment preIncrement(final CoprocessorEnvironment e,
+      final Increment increment)
   throws IOException {
     return increment;
   }
 
   @Override
-  public Result postIncrement(final CoprocessorEnvironment e, 
+  public Result postIncrement(final CoprocessorEnvironment e,
       final Increment increment,
       final Result result) throws IOException {
     return result;
@@ -197,7 +197,7 @@ public abstract class BaseRegionObserverCoprocessor implements Coprocessor,
   }
 
   @Override
-  public void postScannerOpen(final CoprocessorEnvironment e, 
+  public void postScannerOpen(final CoprocessorEnvironment e,
       final Scan scan,
       final long scannerId) throws IOException { }
 

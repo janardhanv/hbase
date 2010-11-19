@@ -428,7 +428,7 @@ public class CoprocessorHost {
     try {
       implClass = getClass().getClassLoader().loadClass(className);
     } catch (ClassNotFoundException e) {
-      LOG.info("Class " + className + " needs to be loaded from a file - " + 
+      LOG.info("Class " + className + " needs to be loaded from a file - " +
           path.toString() + ".");
       // go ahead to load from file system.
     }
