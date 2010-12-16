@@ -34,10 +34,7 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.util.Bytes;
-
-import static org.junit.Assert.*;
 
 /**
  * A sample region observer that tests the RegionObserver interface.
@@ -45,7 +42,7 @@ import static org.junit.Assert.*;
  */
 public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   static final Log LOG = LogFactory.getLog(TestRegionObserverInterface.class);
-  
+
   boolean beforeDelete = true;
   boolean scannerOpened = false;
   boolean hadPreGet = false;
@@ -58,23 +55,27 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   boolean hadPostGetClosestRowBefore = false;
   boolean hadPreIncrement = false;
   boolean hadPostIncrement = false;
-  
 
-  // Overriden RegionObserver methods
   @Override
-  public Get preGet(CoprocessorEnvironment e, Get get) {
+  public void preGet(final CoprocessorEnvironment e, final Get get,
+      final List<KeyValue> results) throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(get);
+    assertNotNull(results);
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE)) {
       hadPreGet = true;
-      assertNotNull(e);
-      assertNotNull(e.getRegion());
     }
-    return get;
   }
 
   @Override
-  public List<KeyValue> postGet(CoprocessorEnvironment e, Get get,
-      List<KeyValue> results) {
+  public void postGet(final CoprocessorEnvironment e, final Get get,
+      final List<KeyValue> results) {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(get);
+    assertNotNull(results);
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE)) {
       boolean foundA = false;
@@ -96,65 +97,80 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
       assertTrue(foundC);
       hadPostGet = true;
     }
-    return results;
   }
 
   @Override
-  public Map<byte[], List<KeyValue>> prePut(CoprocessorEnvironment e,
-      Map<byte[], List<KeyValue>> familyMap) {
+  public void prePut(final CoprocessorEnvironment e, final Map<byte[],
+      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(familyMap);
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE)) {
       List<KeyValue> kvs = familyMap.get(TestRegionObserverInterface.A);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.A));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.A));
       kvs = familyMap.get(TestRegionObserverInterface.B);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.B));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.B));
       kvs = familyMap.get(TestRegionObserverInterface.C);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.C));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.C));
       hadPrePut = true;
     }
-    return familyMap;
   }
 
   @Override
-  public void postPut(CoprocessorEnvironment e,
-      Map<byte[], List<KeyValue>> familyMap) {
+  public void postPut(final CoprocessorEnvironment e, final Map<byte[],
+      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(familyMap);
     List<KeyValue> kvs = familyMap.get(TestRegionObserverInterface.A);
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE)) {
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.A));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.A));
       kvs = familyMap.get(TestRegionObserverInterface.B);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.B));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.B));
       kvs = familyMap.get(TestRegionObserverInterface.C);
       assertNotNull(kvs);
       assertNotNull(kvs.get(0));
-      assertTrue(Bytes.equals(kvs.get(0).getQualifier(), TestRegionObserverInterface.C));
+      assertTrue(Bytes.equals(kvs.get(0).getQualifier(),
+          TestRegionObserverInterface.C));
       hadPostPut = true;
     }
   }
 
   @Override
-  public Map<byte[], List<KeyValue>> preDelete(CoprocessorEnvironment e,
-      Map<byte[], List<KeyValue>> familyMap) {
+  public void preDelete(final CoprocessorEnvironment e, final Map<byte[],
+      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(familyMap);
     if (beforeDelete && e.getRegion().getTableDesc().getName().equals(
         TestRegionObserverInterface.TEST_TABLE)) {
       hadPreDeleted = true;
     }
-    return familyMap;
   }
 
   @Override
-  public void postDelete(CoprocessorEnvironment e,
-      Map<byte[], List<KeyValue>> familyMap) {
+  public void postDelete(final CoprocessorEnvironment e, final Map<byte[],
+      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(familyMap);
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE)) {
       beforeDelete = false;
@@ -163,8 +179,13 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preGetClosestRowBefore(final CoprocessorEnvironment e, 
-      final byte[] row, final byte[] family) {
+  public void preGetClosestRowBefore(final CoprocessorEnvironment e,
+      final byte[] row, final byte[] family, final Result result)
+      throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(row);
+    assertNotNull(result);
     if (beforeDelete && e.getRegion().getTableDesc().getName().equals(
         TestRegionObserverInterface.TEST_TABLE)) {
       hadPreGetClosestRowBefore = true;
@@ -172,69 +193,35 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public Result postGetClosestRowBefore(final CoprocessorEnvironment e,
-      final byte[] row, final byte[] family, Result result) {
+  public void postGetClosestRowBefore(final CoprocessorEnvironment e,
+      final byte[] row, final byte[] family, final Result result)
+      throws IOException {
+    assertNotNull(e);
+    assertNotNull(e.getRegion());
+    assertNotNull(row);
+    assertNotNull(result);
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE)) {
       hadPostGetClosestRowBefore = true;
     }
-    return result;
   }
 
   @Override
-  public Scan preScannerOpen(CoprocessorEnvironment e, Scan scan) {
-    // not tested -- need to go through the RS to get here
-    return scan;
-  }
-
-  @Override
-  public void postScannerOpen(CoprocessorEnvironment e, Scan scan, long scannerId) {
-    // not tested -- need to go through the RS to get here
-  }
-
-  @Override
-  public void preScannerNext(final CoprocessorEnvironment e,
-      final long scannerId) {
-    // not tested -- need to go through the RS to get here
-  }
-
-  @Override
-  public List<KeyValue> postScannerNext(final CoprocessorEnvironment e,
-      final long scannerId, List<KeyValue> results) {
-    // not tested -- need to go through the RS to get here
-    return results;
-  }
-
-  @Override
-  public void preScannerClose(final CoprocessorEnvironment e,
-      final long scannerId) {
-    // not tested -- need to go through the RS to get here
-  }
-
-  @Override
-  public void postScannerClose(final CoprocessorEnvironment e,
-      final long scannerId) {
-    // not tested -- need to go through the RS to get here
-  }
-
-  @Override
-  public Increment preIncrement(CoprocessorEnvironment e, Increment increment)
-      throws IOException {
+  public void preIncrement(final CoprocessorEnvironment e,
+      final Increment increment, final Result result) throws IOException {
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE_2)) {
       hadPreIncrement = true;
     }
-    return increment;
   }
 
   @Override
-  public Result postIncrement(CoprocessorEnvironment e, Increment increment,
-      Result result) throws IOException {
+  public void postIncrement(final CoprocessorEnvironment e,
+      final Increment increment, final Result result) throws IOException {
     if (Arrays.equals(e.getRegion().getTableDesc().getName(),
         TestRegionObserverInterface.TEST_TABLE_2)) {
       hadPostIncrement = true;
     }
-    return result;
   }
 
   boolean hadPreGet() {
@@ -252,7 +239,7 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   boolean hadPostPut() {
     return hadPostPut;
   }
-  
+
   boolean hadDelete() {
     return !beforeDelete;
   }

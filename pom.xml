@@ -2,6 +2,10 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
+  <!--To build a release I do this:
+
+    $ mvn clean site install assembly:single
+   -->
 
   <parent>
     <groupId>org.apache</groupId>
@@ -18,7 +22,7 @@
   <groupId>org.apache.hbase</groupId>
   <artifactId>hbase</artifactId>
   <packaging>jar</packaging>
-  <version>0.90.0-security-SNAPSHOT</version>
+  <version>0.91.0-security-SNAPSHOT</version>
   <name>HBase</name>
   <description>
     HBase is the &amp;lt;a href="http://hadoop.apache.org"&amp;rt;Hadoop&lt;/a&amp;rt; database. Use it when you need
@@ -91,6 +95,14 @@
       <organizationUrl>http://www.trendmicro.com</organizationUrl>
     </developer>
     <developer>
+      <id>garyh</id>
+      <name>Gary Helmling</name>
+      <email>garyh@apache.org</email>
+      <timezone>-8</timezone>
+      <organization>Trend Micro</organization>
+      <organizationUrl>http://www.trendmicro.com</organizationUrl>
+    </developer>
+    <developer>
       <id>jdcryans</id>
       <name>Jean-Daniel Cryans</name>
       <email>jdcryans@apache.org</email>
@@ -111,8 +123,16 @@
       <name>Lars George</name>
       <email>larsgeorge@apache.org</email>
       <timezone>+1</timezone>
-      <organization>WorldLingo</organization>
-      <organizationUrl>http://www.worldlingo.com/</organizationUrl>
+      <organization>Cloudera</organization>
+      <organizationUrl>http://www.cloudera.com/</organizationUrl>
+    </developer>
+    <developer>
+      <id>nspiegelberg</id>
+      <name>Nicolas Spiegelberg</name>
+      <email>nspiegelberg@fb.com</email>
+      <timezone>-8</timezone>
+      <organization>Facebook</organization>
+      <organizationUrl>http://www.facebook.com</organizationUrl>
     </developer>
     <developer>
       <id>rawson</id>
@@ -142,20 +162,9 @@
 
   <repositories>
     <repository>
-      <id>temp-hadoop</id>
-      <name>Hadoop 0.20-append</name>
+      <id>temp-thrift</id>
+      <name>Thrift 0.2.0</name>
       <url>http://people.apache.org/~rawson/repo/</url>
-      <snapshots>
-        <enabled>false</enabled>
-      </snapshots>
-      <releases>
-        <enabled>true</enabled>
-      </releases>
-    </repository>
-    <repository>
-      <id>apache-rsync</id>
-      <name>Apache ibiblio rsync repository</name>
-      <url>http://people.apache.org/repo/m2-ibiblio-rsync-repository/</url>
       <snapshots>
         <enabled>false</enabled>
       </snapshots>
@@ -318,6 +327,7 @@
         <artifactId>maven-assembly-plugin</artifactId>
         <configuration>
           <tarLongFileMode>gnu</tarLongFileMode>
+          <appendAssemblyId>false</appendAssemblyId>
           <descriptors>
             <descriptor>src/assembly/all.xml</descriptor>
           </descriptors>
@@ -487,7 +497,7 @@
     <slf4j.version>1.5.8</slf4j.version><!-- newer version available -->
     <stax-api.version>1.0.1</stax-api.version>
     <thrift.version>0.2.0</thrift.version><!-- newer version available -->
-    <zookeeper.version>3.3.1</zookeeper.version>
+    <zookeeper.version>3.3.2</zookeeper.version>
   </properties>
 
   <!-- Sorted by groups of dependencies then groupId and artifactId -->

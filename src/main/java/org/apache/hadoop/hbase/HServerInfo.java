@@ -114,6 +114,7 @@ public class HServerInfo implements WritableComparable<HServerInfo> {
 
   public synchronized void setServerAddress(HServerAddress serverAddress) {
     this.serverAddress = serverAddress;
+    this.hostname = serverAddress.getHostname();
     this.serverName = null;
   }
 

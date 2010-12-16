@@ -39,18 +39,18 @@ Multiple types of coprocessors are provided to provide sufficient flexibility
 for potential use cases. Right now there are:
 <p>
 <ul>
-<li>Coprocessor: provides region lifecycle management hooks, e.g., region 
+<li>Coprocessor: provides region lifecycle management hooks, e.g., region
 open/close/split/flush/compact operations.</li>
-<li>RegionObserver: provides hook for monitor table operations from 
+<li>RegionObserver: provides hook for monitor table operations from
 client side, such as table get/put/scan/delete, etc.</li>
 <li>Endpoint: provides on demand triggers for any arbitrary function
-executed at a region. One use case is column aggregation at region 
+executed at a region. One use case is column aggregation at region
 server. </li>
 </ul>
 
 <h2><a name="coprocessor">Coprocessor</a></h2>
 A coprocessor is required to
-implement <code>Coprocessor</code> interface so that coprocessor framework 
+implement <code>Coprocessor</code> interface so that coprocessor framework
 can manage it internally.
 <p>
 Another design goal of this interface is to provide simple features for
@@ -85,7 +85,7 @@ requests (get, put, scan, etc.) and administrative actions (flush, compact,
 split, etc.). Coprocessors can piggyback administrative actions via:
 <p>
 <ul>
-  <li>preFlush, postFlush: Called before and after the memstore is flushed 
+  <li>preFlush, postFlush: Called before and after the memstore is flushed
   into a new store file.</li><p>
   <li>preCompact, postCompact: Called before and after compaction.</li><p>
   <li>preSplit, postSplit: Called after the region is split.</li><p>
@@ -99,39 +99,39 @@ problems. Coprocessors can piggyback this event. If the server is aborting
 an indication to this effect will be passed as an argument.
 <p>
 <ul>
-  <li>preClose and postClose: Called before and after the region is 
+  <li>preClose and postClose: Called before and after the region is
   reported as closed to the master.</li><p>
 </ul>
 <p>
 
 <h2><a name="regionobserver">RegionObserver</a></h2>
-If the coprocessor implements the <code>RegionObserver</code> interface it can 
+If the coprocessor implements the <code>RegionObserver</code> interface it can
 observe and mediate client actions on the region:
 <p>
 <ul>
-  <li>preGet, postGet: Called before and after a client makes a Get 
+  <li>preGet, postGet: Called before and after a client makes a Get
   request.</li><p>
-  <li>preExists, postExists: Called before and after the client tests 
+  <li>preExists, postExists: Called before and after the client tests
   for existence using a Get.</li><p>
   <li>prePut and postPut: Called before and after the client stores a value.
   </li><p>
-  <li>preDelete and postDelete: Called before and after the client 
+  <li>preDelete and postDelete: Called before and after the client
   deletes a value.</li><p>
-  <li>preScannerOpen postScannerOpen: Called before and after the client 
+  <li>preScannerOpen postScannerOpen: Called before and after the client
   opens a new scanner.</li><p>
-  <li>preScannerNext, postScannerNext: Called before and after the client 
+  <li>preScannerNext, postScannerNext: Called before and after the client
   asks for the next row on a scanner.</li><p>
-  <li>preScannerClose, postScannerClose: Called before and after the client 
+  <li>preScannerClose, postScannerClose: Called before and after the client
   closes a scanner.</li><p>
-  <li>preCheckAndPut, postCheckAndPut: Called before and after the client 
+  <li>preCheckAndPut, postCheckAndPut: Called before and after the client
   calls checkAndPut().</li><p>
-  <li>preCheckAndDelete, postCheckAndDelete: Called before and after the client 
+  <li>preCheckAndDelete, postCheckAndDelete: Called before and after the client
   calls checkAndDelete().</li><p>
 </ul>
-You can also extend abstract class <code>BaseRegionObserverCoprocessor</code> 
+You can also extend abstract class <code>BaseRegionObserverCoprocessor</code>
 which
-implements both <code>Coprocessor</code> and <code>RegionObserver</code>. 
-In addition, it overrides all methods with default behaviors so you don't 
+implements both <code>Coprocessor</code> and <code>RegionObserver</code>.
+In addition, it overrides all methods with default behaviors so you don't
 have to override all of them.
 <p>
 Here's an example of what a simple RegionObserver might look like. This
@@ -157,8 +157,8 @@ public class AccessControlCoprocessor extends BaseRegionObserverCoprocessor {
   @Override
   public Get preGet(CoprocessorEnvironment e, Get get)
       throws CoprocessorException {
-    
-    // check permissions.. 
+
+    // check permissions..
     if (access_not_allowed)  {
       throw new AccessDeniedException(&quot;User is not allowed to access.&quot;);
     }
@@ -171,12 +171,12 @@ public class AccessControlCoprocessor extends BaseRegionObserverCoprocessor {
 </div>
 
 <h2><a name="commandtarget">Endpoint</a></h2>
-<code>Coprocessor</code> and <code>RegionObserver</code> provide certain hooks 
-for injecting user code running at each region. The user code will be triggerd 
-by existing <code>HTable</code> and <code>HBaseAdmin</code> operations at 
-the certain hook points. 
+<code>Coprocessor</code> and <code>RegionObserver</code> provide certain hooks
+for injecting user code running at each region. The user code will be triggerd
+by existing <code>HTable</code> and <code>HBaseAdmin</code> operations at
+the certain hook points.
 <p>
-Through Endpoint and dynamic RPC protocol, you can define your own 
+Through Endpoint and dynamic RPC protocol, you can define your own
 interface communicated between client and region server,
 i.e., you can create a new method, specify passed parameters and return types
 for this new method.
@@ -186,11 +186,11 @@ calling client side dynamic RPC functions -- <code>HTable.coprocessorExec(...)
 <p>
 To implement a Endpoint, you need to:
 <ul>
-<li>Extend <code>CoprocessorProtocol</code>: the interface defines 
-communication protocol for the new Endpoint, and will be 
+<li>Extend <code>CoprocessorProtocol</code>: the interface defines
+communication protocol for the new Endpoint, and will be
 served as the RPC protocol between client and region server.</li>
-<li>Extend both <code>BaseEndpointCoprocessor</code> abstract class, 
-and the above extended <code>CoprocessorProtocol</code> interface: 
+<li>Extend both <code>BaseEndpointCoprocessor</code> abstract class,
+and the above extended <code>CoprocessorProtocol</code> interface:
 the actually implemented class running at region server.</li>
 </ul>
 <p>
@@ -198,20 +198,20 @@ Here's an example of performing column aggregation at region server:
 <div style="background-color: #cccccc; padding: 2px">
 <blockquote><pre>
 // A sample protocol for performing aggregation at regions.
-public static interface ColumnAggregationProtocol 
+public static interface ColumnAggregationProtocol
 extends CoprocessorProtocol {
-  // Perform aggregation for a given column at the region. The aggregation 
+  // Perform aggregation for a given column at the region. The aggregation
   // will include all the rows inside the region. It can be extended to
   // allow passing start and end rows for a fine-grained aggregation.
   public int sum(byte[] family, byte[] qualifier) throws IOException;
 }
 // Aggregation implementation at a region.
-public static class ColumnAggregationEndpoint extends BaseEndpointCoprocessor 
+public static class ColumnAggregationEndpoint extends BaseEndpointCoprocessor
 implements ColumnAggregationProtocol {
   @Override
    // Scan the region by the given family and qualifier. Return the aggregation
    // result.
-  public int sum(byte[] family, byte[] qualifier) 
+  public int sum(byte[] family, byte[] qualifier)
   throws IOException {
     // aggregate at each region
     Scan scan = new Scan();
@@ -237,7 +237,7 @@ implements ColumnAggregationProtocol {
 </pre></blockquote>
 </div>
 <p>
-Client invocations are performed through <code>HTable</code>, 
+Client invocations are performed through <code>HTable</code>,
 which has the following methods added by dynamic RPC protocol:
 
 <div style="background-color: #cccccc; padding: 2px">
@@ -255,7 +255,7 @@ public &lt;T extends CoprocessorProtocol, R&gt; void coprocessorExec(
 </div>
 
 <p>
-Here is a client side example of invoking 
+Here is a client side example of invoking
 <code>ColumnAggregationEndpoint</code>:
 <div style="background-color: #cccccc; padding: 2px">
 <blockquote><pre>
@@ -279,7 +279,7 @@ for (Map.Entry&lt;byte[], Integer&gt; e : results.entrySet()) {
 </pre></blockquote>
 </div>
 <h2><a name="load">Coprocess loading</a></h2>
-A customized coprocessor can be loaded by two different ways, by configuration, 
+A customized coprocessor can be loaded by two different ways, by configuration,
 or by <code>HTableDescriptor</code> for a newly created table.
 <p>
 (Currently we don't really have an on demand coprocessor loading machanism for
@@ -297,25 +297,25 @@ default coprocessors. The classes must be included in the classpath already.
     &lt;name&gt;hbase.coprocessor.default.classes&lt;/name&gt;
     &lt;value&gt;org.apache.hadoop.hbase.coprocessor.AccessControllCoprocessor, org.apache.hadoop.hbase.coprocessor.ColumnAggregationProtocol&lt;/value&gt;
     &lt;description&gt;A comma-separated list of Coprocessors that are loaded by
-    default. For any override coprocessor method from RegionObservor or 
-    Coprocessor, these classes' implementation will be called 
+    default. For any override coprocessor method from RegionObservor or
+    Coprocessor, these classes' implementation will be called
     in order. After implement your own
     Coprocessor, just put it in HBase's classpath and add the fully
-    qualified class name here. 
+    qualified class name here.
     &lt;/description&gt;
-  &lt;/property&gt; 
+  &lt;/property&gt;
 </pre></blockquote>
 </div>
 <p>
-The first defined coprocessor will be assigned 
-<code>Coprocessor.Priority.SYSTEM</code> as priority. And each following 
-coprocessor's priority will be incremented by one. Coprocessors are executed 
-in order according to the natural ordering of the int. 
+The first defined coprocessor will be assigned
+<code>Coprocessor.Priority.SYSTEM</code> as priority. And each following
+coprocessor's priority will be incremented by one. Coprocessors are executed
+in order according to the natural ordering of the int.
 
 <h3>Load from table attribute</h3>
-Coprocessor classes can also be configured at table attribute. The 
+Coprocessor classes can also be configured at table attribute. The
 attribute key must start with "Coprocessor" and values of the form is
-&lt;path&gt;:&lt;class&gt;:&lt;priority&gt;, so that the framework can 
+&lt;path&gt;:&lt;class&gt;:&lt;priority&gt;, so that the framework can
 recognize and load it.
 <p>
 <div style="background-color: #cccccc; padding: 2px">
@@ -325,23 +325,23 @@ recognize and load it.
 </pre></blockquote>
 </div>
 <p>
-&lt;path&gt; must point to a jar, can be on any filesystem supported by the 
+&lt;path&gt; must point to a jar, can be on any filesystem supported by the
 Hadoop </code>FileSystem</code> object.
 <p>
-&lt;class&gt; is the coprocessor implementation class. A jar can contain 
-more than one coprocessor implementation, but only one can be specified 
+&lt;class&gt; is the coprocessor implementation class. A jar can contain
+more than one coprocessor implementation, but only one can be specified
 at a time in each table attribute.
 <p>
-&lt;priority&gt; is an integer. Coprocessors are executed in order according 
-to the natural ordering of the int. Coprocessors can optionally abort 
-actions. So typically one would want to put authoritative CPs (security 
-policy implementations, perhaps) ahead of observers. 
+&lt;priority&gt; is an integer. Coprocessors are executed in order according
+to the natural ordering of the int. Coprocessors can optionally abort
+actions. So typically one would want to put authoritative CPs (security
+policy implementations, perhaps) ahead of observers.
 <p>
 <div style="background-color: #cccccc; padding: 2px">
 <blockquote><pre>
   Path path = new Path(fs.getUri() + Path.SEPARATOR +
     "TestClassloading.jar");
-  
+
   // create a table that references the jar
   HTableDescriptor htd = new HTableDescriptor(getClass().getName());
   htd.addFamily(new HColumnDescriptor("test"));
@@ -354,8 +354,8 @@ policy implementations, perhaps) ahead of observers.
 
 <h3>Chain of RegionObservers</h3>
 As described above, multiple coprocessors can be loaded at one region at the
-same time. In case of RegionObserver, you can have more than one 
-RegionObservers register to one same hook point, i.e, preGet(), etc. 
+same time. In case of RegionObserver, you can have more than one
+RegionObservers register to one same hook point, i.e, preGet(), etc.
 When a region reach the
 hook point, the framework will invoke each registered RegionObserver by the
 order of assigned priority.

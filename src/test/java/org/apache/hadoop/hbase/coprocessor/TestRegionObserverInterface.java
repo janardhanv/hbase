@@ -59,14 +59,14 @@ public class TestRegionObserverInterface {
   public static final byte[] TEST_TABLE_2 = Bytes.toBytes("TestTable2");
   public static final byte[] TEST_FAMILY = Bytes.toBytes("TestFamily");
   public static final byte[] TEST_QUALIFIER = Bytes.toBytes("TestQualifier");
-  
+
   public final static byte[] A = Bytes.toBytes("a");
   public final static byte[] B = Bytes.toBytes("b");
   public final static byte[] C = Bytes.toBytes("c");
   public final static byte[] ROW = Bytes.toBytes("testrow");
   public final static byte[] ROW1 = Bytes.toBytes("testrow1");
   public final static byte[] ROW2 = Bytes.toBytes("testrow2");
-  
+
   private static final int ROWSIZE = 20;
   private static byte [][] ROWS = makeN(ROW, ROWSIZE);
 
@@ -139,7 +139,7 @@ public class TestRegionObserverInterface {
     delete.deleteColumn(A, A);
     delete.deleteColumn(B, B);
     delete.deleteColumn(C, C);
-    
+
     for (JVMClusterUtil.RegionServerThread t : cluster.getRegionServerThreads()) {
       for (HRegionInfo r : t.getRegionServer().getOnlineRegions()) {
         if (!Arrays.equals(r.getTableDesc().getName(), TEST_TABLE)) {
@@ -167,7 +167,7 @@ public class TestRegionObserverInterface {
 
     Increment inc = new Increment(Bytes.toBytes(0));
     inc.addColumn(TEST_FAMILY, TEST_QUALIFIER, 1);
-    
+
     table.increment(inc);
 
     for (JVMClusterUtil.RegionServerThread t : cluster.getRegionServerThreads()) {

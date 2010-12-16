@@ -46,7 +46,8 @@ public class TestServerCustomProtocol {
   }
 
   /* Test protocol implementation */
-  private static class PingHandler implements PingProtocol, HBaseRPCProtocolVersion {
+  private static class PingHandler implements PingProtocol,
+  HBaseRPCProtocolVersion {
     private int counter = 0;
     @Override
     public String ping() {
@@ -105,7 +106,8 @@ public class TestServerCustomProtocol {
     // TODO: use a test coprocessor for registration (once merged with CP code)
     // sleep here is an ugly hack to allow region transitions to finish
     Thread.sleep(5000);
-    for (JVMClusterUtil.RegionServerThread t : cluster.getRegionServerThreads()) {
+    for (JVMClusterUtil.RegionServerThread t :
+      cluster.getRegionServerThreads()) {
       for (HRegionInfo r : t.getRegionServer().getOnlineRegions()) {
         t.getRegionServer().getOnlineRegion(r.getRegionName())
             .registerProtocol(PingProtocol.class, new PingHandler());
@@ -151,7 +153,8 @@ public class TestServerCustomProtocol {
     List<? extends Row> rows = Lists.newArrayList(
         new Get(ROW_A), new Get(ROW_B), new Get(ROW_C));
 
-    Batch.Call<PingProtocol,String> call =  Batch.forMethod(PingProtocol.class, "ping");
+    Batch.Call<PingProtocol,String> call =  Batch.forMethod(PingProtocol.class,
+        "ping");
     Map<byte[],String> results =
         table.coprocessorExec(PingProtocol.class, ROW_A, ROW_C, call);
 
@@ -160,7 +163,8 @@ public class TestServerCustomProtocol {
     verifyRegionResults(table, results, ROW_B);
     verifyRegionResults(table, results, ROW_C);
 
-    Batch.Call<PingProtocol,String> helloCall =  Batch.forMethod(PingProtocol.class, "hello", "NAME");
+    Batch.Call<PingProtocol,String> helloCall =
+      Batch.forMethod(PingProtocol.class, "hello", "NAME");
     results =
         table.coprocessorExec(PingProtocol.class, ROW_A, ROW_C, helloCall);
 
@@ -175,8 +179,8 @@ public class TestServerCustomProtocol {
     HTable table = new HTable(util.getConfiguration(), TEST_TABLE);
 
     // test empty range
-    Map<byte[],String> results = table.coprocessorExec(PingProtocol.class, null, null,
-        new Batch.Call<PingProtocol,String>() {
+    Map<byte[],String> results = table.coprocessorExec(PingProtocol.class,
+        null, null, new Batch.Call<PingProtocol,String>() {
           public String call(PingProtocol instance) {
             return instance.ping();
           }
@@ -249,7 +253,8 @@ public class TestServerCustomProtocol {
   public void testCompountCall() throws Throwable {
     HTable table = new HTable(util.getConfiguration(), TEST_TABLE);
 
-    Map<byte[],String> results = table.coprocessorExec(PingProtocol.class, ROW_A, ROW_C,
+    Map<byte[],String> results = table.coprocessorExec(PingProtocol.class,
+        ROW_A, ROW_C,
         new Batch.Call<PingProtocol,String>() {
           public String call(PingProtocol instance) {
             return instance.hello(instance.ping());
@@ -267,7 +272,8 @@ public class TestServerCustomProtocol {
   }
 
   private void verifyRegionResults(HTable table,
-      Map<byte[],String> results, String expected, byte[] row) throws Exception {
+      Map<byte[],String> results, String expected, byte[] row)
+  throws Exception {
     HRegionLocation loc = table.getRegionLocation(row);
     byte[] region = loc.getRegionInfo().getRegionName();
     assertNotNull("Results should contain region " +

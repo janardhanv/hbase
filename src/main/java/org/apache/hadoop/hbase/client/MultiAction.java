@@ -40,7 +40,8 @@ import java.util.TreeMap;
 public final class MultiAction<R> implements Writable {
 
   // map of regions to lists of puts/gets/deletes for that region.
-  public Map<byte[], List<Action<R>>> actions = new TreeMap<byte[], List<Action<R>>>(
+  public Map<byte[], List<Action<R>>> actions =
+    new TreeMap<byte[], List<Action<R>>>(
       Bytes.BYTES_COMPARATOR);
 
   public MultiAction() {

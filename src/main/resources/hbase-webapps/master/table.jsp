@@ -46,28 +46,20 @@
 <p><hr><p>
 <%
   if (action.equals("split")) {
-  /*
     if (key != null && key.length() > 0) {
-      Writable[] arr = new Writable[1];
-      arr[0] = new ImmutableBytesWritable(Bytes.toBytes(key));
-      master.modifyTable(Bytes.toBytes(tableName), HConstants.Modify.TABLE_SPLIT, arr);
+      hbadmin.split(key);
     } else {
-      master.modifyTable(Bytes.toBytes(tableName), HConstants.Modify.TABLE_SPLIT);
+      hbadmin.split(tableName);
     }
-    */
     
-    %> Split request accepted -- BUT CURRENTLY A NOOP -- FIX!. <%
+    %> Split request accepted. <%
   } else if (action.equals("compact")) {
-  /*
     if (key != null && key.length() > 0) {
-      Writable[] arr = new Writable[1];
-      arr[0] = new ImmutableBytesWritable(Bytes.toBytes(key));
-      master.modifyTable(Bytes.toBytes(tableName), HConstants.Modify.TABLE_COMPACT, arr);
+      hbadmin.compact(key);
     } else {
-      master.modifyTable(Bytes.toBytes(tableName), HConstants.Modify.TABLE_COMPACT, null);
+      hbadmin.compact(tableName);
     }
-    */
-    %> Compact request accepted  -- BUT CURRENTLY A NOOP -- FIX! <%
+    %> Compact request accepted. <%
   }
 %>
 <p>Reload.
@@ -146,21 +138,44 @@
 <%=     tableHeader %>
 <%
   for(Map.Entry<HRegionInfo, HServerAddress> hriEntry : regions.entrySet()) {
-    int infoPort = master.getServerManager().getHServerInfo(hriEntry.getValue()).getInfoPort();
-    String urlRegionServer =
-        "http://" + hriEntry.getValue().getHostname().toString() + ":" + infoPort + "/";
+    HRegionInfo regionInfo = hriEntry.getKey();
+    HServerAddress addr = hriEntry.getValue();
+
+    int infoPort = 0;
+    String urlRegionServer = null;
+
+    if (addr != null) {
+      HServerInfo info = master.getServerManager().getHServerInfo(addr);
+      if (info != null) {
+        infoPort = info.getInfoPort();
+        urlRegionServer =
+            "http://" + addr.getHostname().toString() + ":" + infoPort + "/";
+      }
+    }
 %>
 <tr>
-  <td><%= Bytes.toStringBinary(hriEntry.getKey().getRegionName())%></td>
-  <td><a href="<%= urlRegionServer %>"><%= hriEntry.getValue().getHostname().toString() + ":" + infoPort %></a></td>
-  <td><%= Bytes.toStringBinary(hriEntry.getKey().getStartKey())%></td>
-  <td><%= Bytes.toStringBinary(hriEntry.getKey().getEndKey())%></td>
+  <td><%= Bytes.toStringBinary(regionInfo.getRegionName())%></td>
+  <%
+  if (urlRegionServer != null) {
+  %>
+  <td>
+    <a href="<%= urlRegionServer %>"><%= addr.getHostname().toString() + ":" + infoPort %></a>
+  </td>
+  <%
+  } else {
+  %>
+  <td class="undeployed-region">not deployed</td>
+  <%
+  }
+  %>
+  <td><%= Bytes.toStringBinary(regionInfo.getStartKey())%></td>
+  <td><%= Bytes.toStringBinary(regionInfo.getEndKey())%></td>
 </tr>
 <% } %>
 </table>
 <% }
 } catch(Exception ex) {
-  ex.printStackTrace();
+  ex.printStackTrace(System.err);
 }
 } // end else
 %>
