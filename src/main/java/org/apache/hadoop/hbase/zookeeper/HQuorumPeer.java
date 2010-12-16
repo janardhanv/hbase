@@ -83,7 +83,7 @@ public class HQuorumPeer {
     return address.equals("localhost") || address.equals("127.0.0.1");
   }
 
-  private static void writeMyID(Properties properties) throws IOException {
+  static void writeMyID(Properties properties) throws IOException {
     long myId = -1;
 
     Configuration conf = HBaseConfiguration.create();
@@ -124,6 +124,10 @@ public class HQuorumPeer {
         }
       }
     }
+
+    // Set the max session timeout from the provided client-side timeout
+    properties.setProperty("maxSessionTimeout",
+        conf.get("zookeeper.session.timeout", "180000"));
 
     if (myId == -1) {
       throw new IOException("Could not find my address: " + myAddress +

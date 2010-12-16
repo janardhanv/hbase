@@ -121,7 +121,6 @@ public class HMasterCommandLine extends ServerCommandLine {
         if (zkClientPort == 0) {
           throw new IOException("No config value for hbase.zookeeper.property.clientPort");
         }
-        zooKeeperCluster.setTickTime(conf.getInt("hbase.zookeeper.property.tickTime", 3000));
         zooKeeperCluster.setClientPort(zkClientPort);
         int clientPort = zooKeeperCluster.startup(zkDataPath);
         if (clientPort != zkClientPort) {
@@ -158,6 +157,9 @@ public class HMasterCommandLine extends ServerCommandLine {
   private int stopMaster() {
     HBaseAdmin adm = null;
     try {
+      Configuration conf = getConf();
+      // Don't try more than once
+      conf.setInt("hbase.client.retries.number", 1);
       adm = new HBaseAdmin(getConf());
     } catch (MasterNotRunningException e) {
       LOG.error("Master not running");
