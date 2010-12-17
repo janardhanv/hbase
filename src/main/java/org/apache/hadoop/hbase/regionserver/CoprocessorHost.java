@@ -9,7 +9,7 @@
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
  *
- *     http://www.apache.org/licenses/LICENSE-2.0
+ * http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -61,7 +61,7 @@ public class CoprocessorHost {
    * Environment priority comparator.
    * Coprocessors are chained in sorted order.
    */
-  static class EnvironmentPriorityComparator implements Comparator<Environment> {
+  class EnvironmentPriorityComparator implements Comparator<Environment> {
     public int compare(Environment env1, Environment env2) {
       if (env1.priority.intValue() < env2.priority.intValue()) {
         return -1;
@@ -257,6 +257,8 @@ public class CoprocessorHost {
     Map<Object,Object> vars = new ConcurrentHashMap<Object,Object>();
     /** Chaining priority */
     Coprocessor.Priority priority = Coprocessor.Priority.USER;
+    /** Current coprocessor state */
+    Coprocessor.State state = Coprocessor.State.UNINSTALLED;
     /** Accounting for tables opened by the coprocessor */
     List<HTableInterface> openTables =
       Collections.synchronizedList(new ArrayList<HTableInterface>());
@@ -271,10 +273,40 @@ public class CoprocessorHost {
     public Environment(final Coprocessor impl, Coprocessor.Priority priority) {
       this.impl = impl;
       this.priority = priority;
+      state = Coprocessor.State.INSTALLED;
+    }
+
+    /** Initialize the environment */
+    void startup() {
+      if (state == Coprocessor.State.INSTALLED ||
+          state == Coprocessor.State.STOPPED) {
+        state = Coprocessor.State.STARTING;
+        try {
+          impl.start(this);
+          state = Coprocessor.State.ACTIVE;
+        } catch (IOException ioe) {
+          LOG.error("Error starting coprocessor "+impl.getClass().getName(), ioe);
+        }
+      } else {
+        LOG.warn("Not starting coprocessor "+impl.getClass().getName()+
+            " because not inactive (state="+state.toString()+")");
+      }
     }
 
     /** Clean up the environment */
     void shutdown() {
+      if (state == Coprocessor.State.ACTIVE) {
+        state = Coprocessor.State.STOPPING;
+        try {
+          impl.stop(this);
+          state = Coprocessor.State.STOPPED;
+        } catch (IOException ioe) {
+          LOG.error("Error stopping coprocessor "+impl.getClass().getName(), ioe);
+        }
+      } else {
+        LOG.warn("Not stopping coprocessor "+impl.getClass().getName()+
+            " because not active (state="+state.toString()+")");
+      }
       // clean up any table references
       for (HTableInterface table: openTables) {
         try {
@@ -352,13 +384,21 @@ public class CoprocessorHost {
   final ReentrantReadWriteLock coprocessorLock = new ReentrantReadWriteLock();
   final Set<Environment> coprocessors =
     new TreeSet<Environment>(new EnvironmentPriorityComparator());
-  final AtomicBoolean bypass = new AtomicBoolean(false);
-  final AtomicBoolean complete = new AtomicBoolean(false);
+  static final ThreadLocal<Boolean> bypass = new ThreadLocal<Boolean>() {
+    @Override protected Boolean initialValue() {
+      return Boolean.FALSE;
+    }
+  };
+  static final ThreadLocal<Boolean> complete = new ThreadLocal<Boolean>() {
+    @Override protected Boolean initialValue() {
+      return Boolean.FALSE;
+    }
+  };
 
   /**
    * Constructor
-   * @param server the regionServer
    * @param region the region
+   * @param rsServices an interface provide access to region server facilities
    * @param conf the configuration
    */
   public CoprocessorHost(final HRegion region,
@@ -495,6 +535,7 @@ public class CoprocessorHost {
     }
     // create the environment
     Environment env = new Environment(impl, priority);
+    env.startup();
 
     // Check if it's an Endpoint.
     // Due to current dynamic protocol design, Endpoint
@@ -578,9 +619,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.preOpen(env);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).preOpen(env);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -595,9 +638,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.postOpen(env);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).postOpen(env);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -613,7 +658,9 @@ public class CoprocessorHost {
     try {
       coprocessorLock.writeLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.preClose(env, abortRequested);
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).preClose(env, abortRequested);
+        }
       }
     } finally {
       coprocessorLock.writeLock().unlock();
@@ -628,7 +675,9 @@ public class CoprocessorHost {
     try {
       coprocessorLock.writeLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.postClose(env, abortRequested);
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).postClose(env, abortRequested);
+        }
         env.shutdown();
       }
     } finally {
@@ -644,9 +693,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.preCompact(env, willSplit);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).preCompact(env, willSplit);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -662,9 +713,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.postCompact(env, willSplit);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).postCompact(env, willSplit);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -679,9 +732,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.preFlush(env);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).preFlush(env);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -696,9 +751,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.postFlush(env);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).postFlush(env);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -713,9 +770,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.preSplit(env);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).preSplit(env);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -732,9 +791,11 @@ public class CoprocessorHost {
     try {
       coprocessorLock.readLock().lock();
       for (Environment env: coprocessors) {
-        env.impl.postSplit(env, l, r);
-        if (env.shouldComplete()) {
-          break;
+        if (env.impl instanceof RegionObserver) {
+          ((RegionObserver)env.impl).postSplit(env, l, r);
+          if (env.shouldComplete()) {
+            break;
+          }
         }
       }
     } finally {
@@ -1182,7 +1243,6 @@ public class CoprocessorHost {
 
   /**
    * @param increment increment object
-   * @param writeToWAL true if the change should be written to the WAL
    * @return result to return to client if default operation should be
    * bypassed, null otherwise
    * @throws IOException if an error occurred on the coprocessor
@@ -1210,7 +1270,6 @@ public class CoprocessorHost {
 
   /**
    * @param increment increment object
-   * @param writeToWAL true if the change should be written to the WAL
    * @param result the result returned by incrementColumnValue
    * @throws IOException if an error occurred on the coprocessor
    */
@@ -1259,7 +1318,7 @@ public class CoprocessorHost {
 
   /**
    * @param scan the Scan specification
-   * @param scannerId the scanner id allocated by the region server
+   * @param s the scanner
    * @return the scanner instance to use
    * @exception IOException Exception
    */
