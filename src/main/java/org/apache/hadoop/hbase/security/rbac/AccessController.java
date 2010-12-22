@@ -33,6 +33,7 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserverCoprocessor;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorEnvironment;
+import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
@@ -48,7 +49,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   TableAuthManager authManager = null;
   boolean isMetaRegion = false;
 
-  void openMetaRegion(CoprocessorEnvironment e) throws IOException {
+  void openMetaRegion(RegionCoprocessorEnvironment e) throws IOException {
     final HRegion region = e.getRegion();
 
     Map<byte[],ListMultimap<String,TablePermission>> tables =
@@ -67,7 +68,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
     }
   }
 
-  void updateACL(CoprocessorEnvironment e,
+  void updateACL(RegionCoprocessorEnvironment e,
       final Map<byte[], List<KeyValue>> familyMap) {
     Set<String> tableSet = new HashSet<String>();
     for (Map.Entry<byte[], List<KeyValue>> f : familyMap.entrySet()) {
@@ -98,7 +99,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
     }
   }
 
-  void updateACL(CoprocessorEnvironment e, final KeyValue kv) {
+  void updateACL(RegionCoprocessorEnvironment e, final KeyValue kv) {
     if (Bytes.compareTo(kv.getBuffer(), kv.getFamilyOffset(),
         kv.getFamilyLength(), HConstants.ACL_FAMILY, 0,
         HConstants.ACL_FAMILY.length) == 0) {
@@ -120,7 +121,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   boolean permissionGranted(TablePermission.Action permRequest,
-      CoprocessorEnvironment e, Collection<byte[]> families) {
+      RegionCoprocessorEnvironment e, Collection<byte[]> families) {
     HRegionInfo hri = e.getRegion().getRegionInfo();
     HTableDescriptor htd = hri.getTableDesc();
 
@@ -199,7 +200,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   public void requirePermission(TablePermission.Action perm,
-        CoprocessorEnvironment env, Collection<byte[]> families)
+        RegionCoprocessorEnvironment env, Collection<byte[]> families)
       throws IOException {
     if (!permissionGranted(perm, env,families)) {
       throw new AccessDeniedException("Insufficient permissions (table=" +
@@ -209,7 +210,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void postOpen(CoprocessorEnvironment e) {
+  public void postOpen(RegionCoprocessorEnvironment e) {
     final HRegion region = e.getRegion();
     HRegionInfo regionInfo = null;
     HTableDescriptor tableDesc = null;
@@ -242,7 +243,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preGetClosestRowBefore(final CoprocessorEnvironment e,
+  public void preGetClosestRowBefore(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final Result result)
       throws IOException {
     requirePermission(TablePermission.Action.READ, e,
@@ -250,27 +251,27 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preGet(final CoprocessorEnvironment e, final Get get,
+  public void preGet(final RegionCoprocessorEnvironment e, final Get get,
       final List<KeyValue> result) throws IOException {
     requirePermission(TablePermission.Action.READ, e, get.familySet());
   }
 
   @Override
-  public boolean preExists(final CoprocessorEnvironment e, final Get get,
+  public boolean preExists(final RegionCoprocessorEnvironment e, final Get get,
       final boolean exists) throws IOException {
     requirePermission(TablePermission.Action.READ, e, get.familySet());
     return exists;
   }
 
   @Override
-  public void prePut(final CoprocessorEnvironment e,
+  public void prePut(final RegionCoprocessorEnvironment e,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
     requirePermission(TablePermission.Action.WRITE, e, familyMap.keySet());
   }
 
   @Override
-  public void postPut(final CoprocessorEnvironment e,
+  public void postPut(final RegionCoprocessorEnvironment e,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL) {
     if (isMetaRegion) {
       updateACL(e, familyMap);
@@ -278,14 +279,14 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preDelete(final CoprocessorEnvironment e,
+  public void preDelete(final RegionCoprocessorEnvironment e,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
     requirePermission(TablePermission.Action.WRITE, e, familyMap.keySet());
   }
 
   @Override
-  public void postDelete(final CoprocessorEnvironment e,
+  public void postDelete(final RegionCoprocessorEnvironment e,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
     if (isMetaRegion) {
@@ -294,7 +295,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public boolean preCheckAndPut(final CoprocessorEnvironment e,
+  public boolean preCheckAndPut(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
       final byte [] value, final Put put, final boolean result)
       throws IOException {
@@ -304,7 +305,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public boolean preCheckAndDelete(final CoprocessorEnvironment e,
+  public boolean preCheckAndDelete(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
       final byte [] value, final Delete delete, final boolean result)
       throws IOException {
@@ -314,7 +315,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public long preIncrementColumnValue(final CoprocessorEnvironment e,
+  public long preIncrementColumnValue(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
       final long amount, final boolean writeToWAL)
       throws IOException {
@@ -324,7 +325,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preIncrement(final CoprocessorEnvironment e,
+  public void preIncrement(final RegionCoprocessorEnvironment e,
       final Increment increment, final Result result)
       throws IOException {
     requirePermission(TablePermission.Action.READ, e,
@@ -332,7 +333,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public InternalScanner preScannerOpen(final CoprocessorEnvironment e,
+  public InternalScanner preScannerOpen(final RegionCoprocessorEnvironment e,
       final Scan scan, final InternalScanner s) throws IOException {
     requirePermission(TablePermission.Action.READ, e,
         Arrays.asList(scan.getFamilies()));
@@ -340,7 +341,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public boolean preScannerNext(final CoprocessorEnvironment e,
+  public boolean preScannerNext(final RegionCoprocessorEnvironment e,
       final InternalScanner s, final List<KeyValue> result,
       final int limit, final boolean hasNext) throws IOException {
     requirePermission(TablePermission.Action.READ, e, null);
@@ -348,7 +349,7 @@ public class AccessController extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preScannerClose(final CoprocessorEnvironment e,
+  public void preScannerClose(final RegionCoprocessorEnvironment e,
       final InternalScanner s) throws IOException {
     requirePermission(TablePermission.Action.READ, e, null);
   }
