@@ -97,7 +97,7 @@ public class OpenRegionHandler extends EventHandler {
     if (tickleOpening("post_region_open")) {
       if (updateMeta(region)) failed = false;
     }
-    if (failed) {
+    if (failed || this.server.isStopped() || this.rsServices.isStopping()) {
       cleanupFailedOpen(region);
       return;
     }
@@ -119,6 +119,9 @@ public class OpenRegionHandler extends EventHandler {
    * Caller must cleanup region if this fails.
    */
   private boolean updateMeta(final HRegion r) {
+    if (this.server.isStopped() || this.rsServices.isStopping()) {
+      return false;
+    }
     // Object we do wait/notify on.  Make it boolean.  If set, we're done.
     // Else, wait.
     final AtomicBoolean signaller = new AtomicBoolean(false);
@@ -156,12 +159,22 @@ public class OpenRegionHandler extends EventHandler {
     // Is thread still alive?  We may have left above loop because server is
     // stopping or we timed out the edit.  Is so, interrupt it.
     if (t.isAlive()) {
-      LOG.debug("Interrupting thread " + t);
-      t.interrupt();
+      if (!signaller.get()) {
+        // Thread still running; interrupt
+        LOG.debug("Interrupting thread " + t);
+        t.interrupt();
+      }
+      try {
+        t.join();
+      } catch (InterruptedException ie) {
+        LOG.warn("Interrupted joining " +
+          r.getRegionInfo().getRegionNameAsString(), ie);
+        Thread.currentThread().interrupt();
+      }
     }
     // Was there an exception opening the region?  This should trigger on
     // InterruptedException too.  If so, we failed.
-    return t.getException() == null;
+    return !t.interrupted() && t.getException() == null;
   }
 
   /**

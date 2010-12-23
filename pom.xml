@@ -10,13 +10,7 @@
   <parent>
     <groupId>org.apache</groupId>
     <artifactId>apache</artifactId>
-    <version>7</version>
-    <!-- Building 'site', you'll see a complaint about parent
-    pom not being found.  To fix, I've downloaded apache's pom
-    from here https://repository.apache.org/content/repositories/releases/org/apache/apache/7/apache-7.pom
-    saving it as 'pom.xml' into a directory named 'apache-7.pom'.  I then uncommented the below.
-    -->
-    <relativePath>../apache-7.pom/</relativePath>
+    <version>8</version>
   </parent>
 
   <groupId>org.apache.hbase</groupId>
@@ -477,10 +471,11 @@
     <hadoop.version>0.20-append-r1044525</hadoop.version>
     <jasper.version>5.5.23</jasper.version>
     <jaxb-api.version>2.1</jaxb-api.version>
-    <jetty.version>6.1.25</jetty.version>
+    <jetty.version>6.1.26</jetty.version>
     <jetty.jspapi.version>6.1.14</jetty.jspapi.version>
     <jersey.version>1.4</jersey.version>
-    <jruby.version>1.5.2</jruby.version>
+    <!--JRuby > 1.0.x has *GPL jars in it so we can't upgrade. See HBASE-3374-->
+    <jruby.version>1.0.3</jruby.version>
     <jsr311.version>1.1.1</jsr311.version>
     <junit.version>4.8.1</junit.version>
     <log4j.version>1.2.16</log4j.version>
@@ -745,14 +740,6 @@
   $ mvn -s /my/path/settings.xml deploy
 
   -->
-  <distributionManagement>
-    <!-- Private Site Repository -->
-    <!-- TODO -->
-    <site>
-      <id>HBase Site</id>
-      <url>scp://people.apache.org/home/psmith/public_html/hbase/sandbox/hbase/</url>
-    </site>
-  </distributionManagement>
 
   <!-- See http://jira.codehaus.org/browse/MSITE-443 why the settings need to be here and not in pluginManagement. -->
   <reporting>
