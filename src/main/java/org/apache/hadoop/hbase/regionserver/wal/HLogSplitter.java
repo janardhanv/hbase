@@ -106,10 +106,11 @@ public class HLogSplitter {
    * <code>hbase.hlog.splitter.impl</code> property to derived the instance
    * class to use.
    *
+   * @param conf
    * @param rootDir hbase directory
    * @param srcDir logs directory
    * @param oldLogDir directory where processed logs are archived to
-   * @param logfiles the list of log files to split
+   * @param fs FileSystem
    */
   public static HLogSplitter createLogSplitter(Configuration conf,
       final Path rootDir, final Path srcDir,
@@ -258,6 +259,10 @@ public class HLogSplitter {
         try {
           recoverFileLease(fs, logPath, conf);
           parseHLog(log, entryBuffers, fs, conf);
+          processedLogs.add(logPath);
+        } catch (EOFException eof) {
+          // truncated files are expected if a RS crashes (see HBASE-2643)
+          LOG.info("EOF from hlog " + logPath + ".  continuing");
           processedLogs.add(logPath);
         } catch (IOException e) {
           // If the IOE resulted from bad file format,
