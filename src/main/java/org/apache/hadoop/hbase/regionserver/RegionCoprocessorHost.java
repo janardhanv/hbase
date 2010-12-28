@@ -96,14 +96,6 @@ public class RegionCoprocessorHost
     public void shutdown() {
       super.shutdown();
     }
-
-    public boolean shouldBypass() {
-      return bypass.getAndSet(false);
-    }
-
-    public boolean shouldComplete() {
-      return complete.getAndSet(false);
-    }
   }
 
   static final Pattern attrSpecMatch = Pattern.compile("(.+):(.+):(.+)");

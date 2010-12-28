@@ -1569,7 +1569,6 @@ public class HRegion implements HeapSize { // , Writable{
       long addedSize = 0;
       for (int i = firstIndex; i < lastIndexExclusive; i++) {
         if (batchOp.retCodes[i] != OperationStatusCode.NOT_RUN) continue;
-
         addedSize += applyFamilyMapToMemstore(familyMaps[i]);
         batchOp.retCodes[i] = OperationStatusCode.SUCCESS;
       }
@@ -3099,8 +3098,7 @@ public class HRegion implements HeapSize { // , Writable{
   throws IOException {
     Scan scan = new Scan(get);
 
-    List<KeyValue> results = null;
-    List<KeyValue> getResults = new ArrayList<KeyValue>();
+    List<KeyValue> results = new ArrayList<KeyValue>();
 
     // pre-get CP hook
     if (withCoprocessor && (coprocessorHost != null)) {
@@ -3112,7 +3110,7 @@ public class HRegion implements HeapSize { // , Writable{
     InternalScanner scanner = null;
     try {
       scanner = getScanner(scan);
-      scanner.next(getResults);
+      scanner.next(results);
     } finally {
       if (scanner != null)
         scanner.close();
