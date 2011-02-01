@@ -74,9 +74,9 @@ public class RegionCoprocessorHost
      * @param priority chaining priority
      */
     public RegionEnvironment(final Coprocessor impl,
-        Coprocessor.Priority priority, final HRegion region,
-        final RegionServerServices services) {
-      super(impl, priority);
+        Coprocessor.Priority priority, final Configuration conf,
+        final HRegion region, final RegionServerServices services) {
+      super(impl, priority, conf);
       this.region = region;
       this.rsServices = services;
     }
@@ -113,6 +113,7 @@ public class RegionCoprocessorHost
    */
   public RegionCoprocessorHost(final HRegion region,
       final RegionServerServices rsServices, final Configuration conf) {
+    super(conf);
     this.rsServices = rsServices;
     this.region = region;
     this.pathPrefix = this.region.getRegionNameAsString().replace(',', '_');
@@ -169,7 +170,7 @@ public class RegionCoprocessorHost
       }
     }
 
-    return new RegionEnvironment(instance, priority, region, rsServices);
+    return new RegionEnvironment(instance, priority, conf, region, rsServices);
   }
 
   /**

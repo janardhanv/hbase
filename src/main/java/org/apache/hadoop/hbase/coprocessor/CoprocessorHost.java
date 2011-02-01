@@ -56,10 +56,12 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
   protected final ReentrantReadWriteLock coprocessorLock = new ReentrantReadWriteLock();
   protected Set<E> coprocessors =
     new TreeSet<E>(new EnvironmentPriorityComparator());
+  protected Configuration conf;
   // unique file prefix to use for local copies of jars when classloading
   protected String pathPrefix;
 
-  public CoprocessorHost() {
+  public CoprocessorHost(Configuration conf) {
+    this.conf = conf;
     pathPrefix = UUID.randomUUID().toString();
   }
 
@@ -445,14 +447,18 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       }
     };
 
+    protected Configuration envConf;
+
     /**
      * Constructor
      * @param impl the coprocessor instance
      * @param priority chaining priority
      */
-    public Environment(final Coprocessor impl, Coprocessor.Priority priority) {
+    public Environment(final Coprocessor impl, Coprocessor.Priority priority,
+        final Configuration conf) {
       this.impl = impl;
       this.priority = priority;
+      this.envConf = conf;
       this.state = Coprocessor.State.INSTALLED;
     }
 
@@ -542,6 +548,11 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
     @Override
     public HTableInterface getTable(byte[] tableName) throws IOException {
       return new HTableWrapper(tableName);
+    }
+
+    @Override
+    public Configuration getConf() {
+      return envConf;
     }
 
     @Override

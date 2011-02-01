@@ -24,6 +24,7 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
+import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -72,6 +73,7 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.security.HBasePolicyProvider;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.InfoServer;
 import org.apache.hadoop.hbase.util.Pair;
@@ -767,13 +769,19 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     } else {
       dest = this.serverManager.getServerInfo(new String(destServerName));
 
-      if (this.cpHost != null) {
-        this.cpHost.preMove(p.getFirst(), p.getSecond(), dest);
-      }
-      RegionPlan rp = new RegionPlan(p.getFirst(), p.getSecond(), dest);
-      this.assignmentManager.balance(rp);
-      if (this.cpHost != null) {
-        this.cpHost.postMove(p.getFirst(), p.getSecond(), dest);
+      try {
+        if (this.cpHost != null) {
+          this.cpHost.preMove(p.getFirst(), p.getSecond(), dest);
+        }
+        RegionPlan rp = new RegionPlan(p.getFirst(), p.getSecond(), dest);
+        this.assignmentManager.balance(rp);
+        if (this.cpHost != null) {
+          this.cpHost.postMove(p.getFirst(), p.getSecond(), dest);
+        }
+      } catch (UnknownRegionException ure) {
+        throw ure;
+      } catch (IOException ioe) {
+        LOG.error("move() aborted by IOException", ioe);
       }
     }
   }

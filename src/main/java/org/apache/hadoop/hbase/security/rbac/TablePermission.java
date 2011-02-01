@@ -20,47 +20,24 @@
 
 package org.apache.hadoop.hbase.security.rbac;
 
-import com.google.common.collect.Maps;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.io.VersionedWritable;
 
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.Arrays;
-import java.util.Map;
 
 /**
  * Represents an authorization for access for the given actions, optionally
  * restricted to the given column family, over the given table.  If the family
  * property is <code>null</code>, it implies full table access.
  */
-public class TablePermission extends VersionedWritable {
+public class TablePermission extends Permission {
   private static Log LOG = LogFactory.getLog(TablePermission.class);
-  private static final byte VERSION = 0;
-  public enum Action {
-    READ('R'), WRITE('W');
-
-    private byte code;
-    Action(char code) {
-      this.code = (byte)code;
-    }
-
-    public byte code() { return code; }
-  }
-
-  private static Map<Byte,Action> ACTION_BY_CODE = Maps.newHashMap();
-  static {
-    for (Action a : Action.values()) {
-      ACTION_BY_CODE.put(a.code(), a);
-    }
-  }
 
   private byte[] table;
   private byte[] family;
-  private Action[] actions;
 
   /** Nullary constructor for Writable, do not use */
   public TablePermission() {
@@ -74,12 +51,9 @@ public class TablePermission extends VersionedWritable {
    * @param assigned the list of allowed actions
    */
   public TablePermission(byte[] table, byte[] family, Action... assigned) {
-    super();
+    super(assigned);
     this.table = table;
     this.family = family;
-    if (assigned != null && assigned.length > 0) {
-      actions = Arrays.copyOf(assigned, assigned.length);
-    }
   }
 
   /**
@@ -89,23 +63,9 @@ public class TablePermission extends VersionedWritable {
    * @param actionCodes the list of allowed action codes
    */
   public TablePermission(byte[] table, byte[] family, byte[] actionCodes) {
-    super();
+    super(actionCodes);
     this.table = table;
     this.family = family;
-
-    if (actionCodes != null) {
-      this.actions = new Action[actionCodes.length];
-      for (int i=0; i<actionCodes.length; i++) {
-        byte b = actionCodes[i];
-        Action a = ACTION_BY_CODE.get(b);
-        if (a == null) {
-          LOG.error("Ignoring unknown action code '"+
-              Bytes.toStringBinary(new byte[]{b})+"'");
-          continue;
-        }
-        this.actions[i] = a;
-      }
-    }
   }
 
   public byte[] getTable() {
@@ -114,10 +74,6 @@ public class TablePermission extends VersionedWritable {
 
   public byte[] getFamily() {
     return family;
-  }
-
-  public Action[] getActions() {
-    return actions;
   }
 
   /**
@@ -140,15 +96,8 @@ public class TablePermission extends VersionedWritable {
       return false;
     }
 
-    if (this.actions != null) {
-      for (Action a : this.actions) {
-        if (a == action) {
-          return true;
-        }
-      }
-    }
-
-    return false;
+    // check actions
+    return super.implies(action);
   }
 
   public boolean equals(Object obj) {
@@ -165,29 +114,11 @@ public class TablePermission extends VersionedWritable {
     }
 
     // check actions
-    if (actions == null && other.getActions() == null) {
-      return true;
-    } else if (actions != null && other.getActions() != null) {
-      Action[] otherActions = other.getActions();
-      if (actions.length != otherActions.length) {
-        return false;
-      }
-
-      outer:
-      for (Action a : actions) {
-        for (Action oa : otherActions) {
-          if (a == oa) continue outer;
-        }
-        return false;
-      }
-      return true;
-    }
-
-    return false;
+    return super.equals(other);
   }
 
   public String toString() {
-    StringBuilder str = new StringBuilder("[Permission: ")
+    StringBuilder str = new StringBuilder("[TablePermission: ")
         .append("table=").append(Bytes.toString(table))
         .append(", family=").append(Bytes.toString(family))
         .append(", actions=");
@@ -206,33 +137,12 @@ public class TablePermission extends VersionedWritable {
     return str.toString();
   }
 
-  /** @return the object version number */
-  public byte getVersion() {
-    return VERSION;
-  }
-
   @Override
   public void readFields(DataInput in) throws IOException {
     super.readFields(in);
     table = Bytes.readByteArray(in);
     if (in.readBoolean()) {
       family = Bytes.readByteArray(in);
-    }
-    int length = (int)in.readByte();
-    if (length > 0) {
-      actions = new Action[length];
-      for (int i = 0; i < length; i++) {
-        byte b = in.readByte();
-        Action a = ACTION_BY_CODE.get(b);
-        if (a == null) {
-          LOG.error("Ignoring unknown action code '"+
-              Bytes.toStringBinary(new byte[]{b})+"'");
-          continue;
-        }
-        this.actions[i] = a;
-      }
-    } else {
-      actions = new Action[0];
     }
   }
 
@@ -243,12 +153,6 @@ public class TablePermission extends VersionedWritable {
     out.writeBoolean(family != null);
     if (family != null) {
       Bytes.writeByteArray(out, family);
-    }
-    out.writeByte(actions != null ? actions.length : 0);
-    if (actions != null) {
-      for (Action a: actions) {
-        out.writeByte(a.code());
-      }
     }
   }
 }

@@ -22,6 +22,7 @@ package org.apache.hadoop.hbase.security.rbac;
 
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
+import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -31,6 +32,7 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.zookeeper.KeeperException;
 
 import java.io.*;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -40,9 +42,16 @@ import java.util.concurrent.ConcurrentSkipListMap;
  * Performs authorization checks for a given user's assigned permissions
  */
 public class TableAuthManager {
+  /** Key for the user and group cache maps for globally assigned permissions */
+  private static final String GLOBAL_CACHE_KEY = ".rbac.";
   private static Log LOG = LogFactory.getLog(TableAuthManager.class);
 
   private static TableAuthManager instance;
+
+  /** Cache of global user permissions */
+  private ListMultimap<String,Permission> USER_CACHE = ArrayListMultimap.create();
+  /** Cache of global group permissions */
+  private ListMultimap<String,Permission> GROUP_CACHE = ArrayListMultimap.create();
 
   private ConcurrentSkipListMap<byte[], ListMultimap<String,TablePermission>> TABLE_USER_CACHE =
       new ConcurrentSkipListMap<byte[], ListMultimap<String,TablePermission>>(Bytes.BYTES_COMPARATOR);
@@ -60,6 +69,33 @@ public class TableAuthManager {
       this.zkperms.start();
     } catch (KeeperException ke) {
       LOG.error("ZooKeeper initialization failed", ke);
+    }
+
+    // initialize global permissions based on configuration
+    initGlobal(conf);
+  }
+
+  private void initGlobal(Configuration conf) {
+    String currentUser = null;
+    try {
+      currentUser = UserGroupInformation.getCurrentUser().getShortUserName();
+    } catch (IOException ioe) {
+      LOG.warn("Unable to get current user!", ioe);
+    }
+
+    // the system user is always included
+    List<String> superusers = Lists.asList(currentUser, conf.getStrings(
+        AccessControlLists.SUPERUSER_CONF_KEY, new String[0]));
+    if (superusers != null) {
+      List<Permission.Action> allActions = Arrays.asList(Permission.Action.values());
+      for (String name : superusers) {
+        if (AccessControlLists.isGroupPrincipal(name)) {
+          GROUP_CACHE.put(AccessControlLists.getGroupName(name),
+              new Permission(Permission.Action.values()));
+        } else {
+          USER_CACHE.put(name, new Permission(Permission.Action.values()));
+        }
+      }
     }
   }
 
@@ -90,7 +126,7 @@ public class TableAuthManager {
 
     if (tablePerms != null) {
       for (Map.Entry<String,TablePermission> entry : tablePerms.entries()) {
-        if (entry.getKey().startsWith(AccessControlLists.GROUP_PREFIX)) {
+        if (AccessControlLists.isGroupPrincipal(entry.getKey())) {
           groupPerms.put(
               entry.getKey().substring(AccessControlLists.GROUP_PREFIX.length()),
               entry.getValue());
@@ -121,8 +157,55 @@ public class TableAuthManager {
     return null;
   }
 
+  /**
+   * Authorizes a global permission
+   * @param perms
+   * @param action
+   * @return
+   */
+  public boolean authorize(List<Permission> perms, Permission.Action action) {
+    if (perms != null) {
+      for (Permission p : perms) {
+        if (p.implies(action)) {
+          return true;
+        }
+      }
+    } else if (LOG.isDebugEnabled()) {
+      LOG.debug("No permissions found");
+    }
+
+    return false;
+  }
+
+  /**
+   * Authorize a global permission based on ACLs for the given user and the
+   * user's groups.
+   * @param user
+   * @param action
+   * @return
+   */
+  public boolean authorize(UserGroupInformation user, Permission.Action action) {
+    if (user == null) {
+      return false;
+    }
+
+    if (authorize(USER_CACHE.get(user.getShortUserName()), action)) {
+      return true;
+    }
+
+    String[] groups = user.getGroupNames();
+    if (groups != null) {
+      for (String group : groups) {
+        if (authorize(GROUP_CACHE.get(group), action)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   public boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
-      TablePermission.Action action) {
+      Permission.Action action) {
     if (perms != null) {
       for (TablePermission p : perms) {
         if (p.implies(table, family, action)) {
@@ -137,6 +220,14 @@ public class TableAuthManager {
   }
 
   /**
+   * Checks global authorization for a specific action for a user, based on the
+   * stored user permissions.
+   */
+  public boolean authorizeUser(String username, Permission.Action action) {
+    return authorize(USER_CACHE.get(username), action);
+  }
+
+  /**
    * Checks authorization to a given table and column family for a user, based on the
    * stored user permissions.
    *
@@ -147,8 +238,20 @@ public class TableAuthManager {
    * @return
    */
   public boolean authorizeUser(String username, byte[] table, byte[] family,
-      TablePermission.Action action) {
+      Permission.Action action) {
+    // global authorization supercedes table level
+    if (authorizeUser(username, action)) {
+      return true;
+    }
     return authorize(getUserPermissions(username, table), table, family, action);
+  }
+
+  /**
+   * Checks authorization for a given action for a group, based on the stored
+   * permissions.
+   */
+  public boolean authorizeGroup(String groupName, Permission.Action action) {
+    return authorize(GROUP_CACHE.get(groupName), action);
   }
 
   /**
@@ -161,12 +264,16 @@ public class TableAuthManager {
    * @return
    */
   public boolean authorizeGroup(String groupName, byte[] table, byte[] family,
-      TablePermission.Action action) {
+      Permission.Action action) {
+    // global authorization supercedes table level
+    if (authorizeGroup(groupName, action)) {
+      return true;
+    }
     return authorize(getGroupPermissions(groupName, table), table, family, action);
   }
 
   public boolean authorize(UserGroupInformation user, byte[] table, byte[] family,
-      TablePermission.Action action) {
+      Permission.Action action) {
     if (authorizeUser(user.getShortUserName(), table, family, action)) {
       return true;
     }
@@ -240,7 +347,7 @@ public class TableAuthManager {
     zkperms.writeToZookeeper(Bytes.toString(table), serialized);
   }
 
-  static Map<ZooKeeperWatcher,TableAuthManager> managerMap = 
+  static Map<ZooKeeperWatcher,TableAuthManager> managerMap =
     new HashMap<ZooKeeperWatcher,TableAuthManager>();
 
   public synchronized static TableAuthManager get(

@@ -18,6 +18,7 @@ package org.apache.hadoop.hbase.coprocessor;
 
 import java.io.IOException;
 
+import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.client.HTableInterface;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.RegionServerServices;
@@ -44,6 +45,11 @@ public interface CoprocessorEnvironment {
    * @throws IOException
    */
   public HTableInterface getTable(byte[] tableName) throws IOException;
+
+  /**
+   * @return the current configuration
+   */
+  public Configuration getConf();
 
   /* Control flow changes */
 

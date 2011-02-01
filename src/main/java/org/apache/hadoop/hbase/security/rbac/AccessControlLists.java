@@ -31,7 +31,6 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
-import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.filter.CompareFilter;
 import org.apache.hadoop.hbase.filter.RegexStringComparator;
@@ -63,6 +62,8 @@ public class AccessControlLists {
   public static final String GROUP_PREFIX = "@";
   /** column qualifier for table owner */
   public static final byte[] OWNER_QUALIFIER = Bytes.toBytes("owner");
+  /** Configuration key for superusers */
+  public static final String SUPERUSER_CONF_KEY = "hbase.superuser";
 
   private static Log LOG = LogFactory.getLog(AccessControlLists.class);
 
@@ -136,7 +137,7 @@ public class AccessControlLists {
             table = Bytes.toBytes( rowkey.substring(0, rowkey.indexOf(',')) );
           }
           Pair<String,TablePermission> permissionsOfUserOnTable =
-              parsePermissionRecord(table,kv);
+              parseTablePermissionRecord(table, kv);
           if (permissionsOfUserOnTable != null) {
             String username = permissionsOfUserOnTable.getFirst();
             TablePermission permissions = permissionsOfUserOnTable.getSecond();
@@ -190,7 +191,7 @@ public class AccessControlLists {
         HRegionInfo regionInfo = Writables.getHRegionInfo(
             row.getValue(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER));
         ListMultimap<String,TablePermission> resultPerms =
-            parsePermissions(regionInfo.getTableDesc().getName(), row);
+            parseTablePermissions(regionInfo.getTableDesc().getName(), row);
         allPerms.put(regionInfo.getTableDesc().getName(), resultPerms);
       }
     } finally {
@@ -241,7 +242,7 @@ public class AccessControlLists {
     ListMultimap<String,TablePermission> perms = null;
     try {
       Result acls = metaServer.next(scannerId);
-      perms = parsePermissions(tableName, acls);
+      perms = parseTablePermissions(tableName, acls);
     } finally {
       metaServer.close(scannerId);
     }
@@ -249,14 +250,15 @@ public class AccessControlLists {
     return perms;
   }
 
-  private static ListMultimap<String,TablePermission> parsePermissions(
+  private static ListMultimap<String,TablePermission> parseTablePermissions(
       byte[] table, Result result) {
     ListMultimap<String,TablePermission> perms = ArrayListMultimap.create();
     if (result != null && result.size() > 0) {
       byte[] lastKey = null;
       for (KeyValue kv : result.sorted()) {
 
-        Pair<String,TablePermission> permissionsOfUserOnTable = parsePermissionRecord(table,kv);
+        Pair<String,TablePermission> permissionsOfUserOnTable =
+            parseTablePermissionRecord(table, kv);
 
         if (permissionsOfUserOnTable != null) {
           String username = permissionsOfUserOnTable.getFirst();
@@ -268,8 +270,8 @@ public class AccessControlLists {
     return perms;
   }
 
-  private static Pair<String,TablePermission> parsePermissionRecord(
-                                                                    byte[] table, KeyValue kv) {
+  private static Pair<String,TablePermission> parseTablePermissionRecord(
+      byte[] table, KeyValue kv) {
     // return X given a set of permissions encoded in the permissionRecord kv.
     byte[] family = kv.getFamily();
 
@@ -298,7 +300,8 @@ public class AccessControlLists {
       username = username.substring(0, idx);
     }
 
-    return new Pair<String,TablePermission>(username,new TablePermission(table,permFamily,value));
+    return new Pair<String,TablePermission>(username,
+        new TablePermission(table, permFamily, value));
   }
 
   /**
@@ -310,7 +313,7 @@ public class AccessControlLists {
    * @throws IOException
    */
   public static void writePermissions(DataOutput out,
-      ListMultimap<String,TablePermission> perms, Configuration conf)
+      ListMultimap<String,? extends Permission> perms, Configuration conf)
   throws IOException {
     Set<String> keys = perms.keySet();
     out.writeInt(keys.size());
@@ -325,7 +328,7 @@ public class AccessControlLists {
    * and returns the resulting byte array.
    */
   public static byte[] writePermissionsAsBytes(
-      ListMultimap<String,TablePermission> perms, Configuration conf) {
+      ListMultimap<String,? extends Permission> perms, Configuration conf) {
     try {
       ByteArrayOutputStream bos = new ByteArrayOutputStream();
       writePermissions(new DataOutputStream(bos), perms, conf);
@@ -346,17 +349,29 @@ public class AccessControlLists {
    * @return
    * @throws IOException
    */
-  public static ListMultimap<String,TablePermission> readPermissions(
+  public static <T extends Permission> ListMultimap<String,T> readPermissions(
       DataInput in, Configuration conf) throws IOException {
-    ListMultimap<String,TablePermission> perms = ArrayListMultimap.create();
+    ListMultimap<String,T> perms = ArrayListMultimap.create();
     int length = in.readInt();
     for (int i=0; i<length; i++) {
       String user = Text.readString(in);
-      List<TablePermission> userPerms =
+      List<T> userPerms =
           (List)HbaseObjectWritable.readObject(in, conf);
       perms.putAll(user, userPerms);
     }
 
     return perms;
+  }
+
+  public static boolean isGroupPrincipal(String name) {
+    return name != null && name.startsWith(GROUP_PREFIX);
+  }
+
+  public static String getGroupName(String aclKey) {
+    if (!isGroupPrincipal(aclKey)) {
+      return aclKey;
+    }
+
+    return aclKey.substring(GROUP_PREFIX.length());
   }
 }

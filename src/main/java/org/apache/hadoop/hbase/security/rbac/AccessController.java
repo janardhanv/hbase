@@ -20,10 +20,13 @@ import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
@@ -33,6 +36,8 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserverCoprocessor;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorEnvironment;
+import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
+import org.apache.hadoop.hbase.coprocessor.MasterObserver;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.regionserver.HRegion;
@@ -43,7 +48,8 @@ import org.apache.hadoop.security.UserGroupInformation;
 import java.io.IOException;
 import java.util.*;
 
-public class AccessController extends BaseRegionObserverCoprocessor {
+public class AccessController extends BaseRegionObserverCoprocessor
+    implements MasterObserver {
   public static final Log LOG = LogFactory.getLog(AccessController.class);
 
   TableAuthManager authManager = null;
@@ -199,15 +205,196 @@ public class AccessController extends BaseRegionObserverCoprocessor {
     return result;
   }
 
-  public void requirePermission(TablePermission.Action perm,
-        RegionCoprocessorEnvironment env, Collection<byte[]> families)
-      throws IOException {
-    if (!permissionGranted(perm, env,families)) {
-      throw new AccessDeniedException("Insufficient permissions (table=" +
-        env.getRegion().getTableDesc().getNameAsString()+", action=" +
-        perm.toString());
+  public void requirePermission(Permission.Action perm,
+      MasterCoprocessorEnvironment env) throws IOException {
+    UserGroupInformation user = RequestContext.getRequestUser();
+    if (!RequestContext.isInRequestContext()) {
+      // for non-rpc handling, fallback to system user
+      user = UserGroupInformation.getCurrentUser();
+    }
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Checking authorization of user '" +
+          (user != null ? user.getShortUserName() : "NULL") + "' for action " +
+          perm.toString());
+    }
+    if (!authManager.authorize(user, perm)) {
+      throw new AccessDeniedException("Insufficient permissions for user '" +
+          (user != null ? user.getShortUserName() : "null") +"' (global, action=" +
+          perm.toString() + ")");
     }
   }
+
+  /**
+   * Authorizes that the current user has permission to perform the given
+   * action on the set of table column families.
+   * @param perm Action that is required
+   * @param env The current coprocessor environment
+   * @param families The set of column families present/required in the request
+   * @throws AccessDeniedException if the authorization check failed
+   */
+  public void requirePermission(Permission.Action perm,
+        RegionCoprocessorEnvironment env, Collection<byte[]> families)
+      throws IOException {
+    if (!permissionGranted(perm, env, families)) {
+      throw new AccessDeniedException("Insufficient permissions (table=" +
+        env.getRegion().getTableDesc().getNameAsString()+", action=" +
+        perm.toString() + ")");
+    }
+  }
+
+  /* ---- MasterObserver implementation ---- */
+  public void start(CoprocessorEnvironment env) {
+    // if running on HMaster
+    if (env instanceof MasterCoprocessorEnvironment) {
+      MasterCoprocessorEnvironment e = (MasterCoprocessorEnvironment)env;
+      this.authManager = TableAuthManager.get(
+          e.getMasterServices().getZooKeeperWatcher(),
+          e.getConf());
+    }
+  }
+
+  public void stop(CoprocessorEnvironment env) {
+
+  }
+
+  @Override
+  public void preCreateTable(MasterCoprocessorEnvironment env,
+      HTableDescriptor desc, byte[][] splitKeys) throws IOException {
+    requirePermission(Permission.Action.CREATE, env);
+  }
+  @Override
+  public void postCreateTable(MasterCoprocessorEnvironment env,
+      HRegionInfo[] regions, boolean sync) throws IOException {}
+
+  @Override
+  public void preDeleteTable(MasterCoprocessorEnvironment env, byte[] tableName)
+      throws IOException {
+    requirePermission(Permission.Action.CREATE, env);
+  }
+  @Override
+  public void postDeleteTable(MasterCoprocessorEnvironment env,
+      byte[] tableName) throws IOException {}
+
+
+  @Override
+  public void preModifyTable(MasterCoprocessorEnvironment env, byte[] tableName,
+      HTableDescriptor htd) throws IOException {
+    requirePermission(Permission.Action.CREATE, env);
+  }
+  @Override
+  public void postModifyTable(MasterCoprocessorEnvironment env,
+      byte[] tableName, HTableDescriptor htd) throws IOException {}
+
+
+  @Override
+  public void preAddColumn(MasterCoprocessorEnvironment env, byte[] tableName,
+      HColumnDescriptor column) throws IOException {
+    requirePermission(Permission.Action.CREATE, env);
+  }
+  @Override
+  public void postAddColumn(MasterCoprocessorEnvironment env, byte[] tableName,
+      HColumnDescriptor column) throws IOException {}
+
+
+  @Override
+  public void preModifyColumn(MasterCoprocessorEnvironment env,
+      byte[] tableName, HColumnDescriptor descriptor) throws IOException {
+    requirePermission(Permission.Action.CREATE, env);
+  }
+  @Override
+  public void postModifyColumn(MasterCoprocessorEnvironment env,
+      byte[] tableName, HColumnDescriptor descriptor) throws IOException {}
+
+
+  @Override
+  public void preDeleteColumn(MasterCoprocessorEnvironment env,
+      byte[] tableName, byte[] c) throws IOException {
+    requirePermission(Permission.Action.CREATE, env);
+  }
+  @Override
+  public void postDeleteColumn(MasterCoprocessorEnvironment env,
+      byte[] tableName, byte[] c) throws IOException {}
+
+
+  @Override
+  public void preEnableTable(MasterCoprocessorEnvironment env, byte[] tableName)
+      throws IOException {
+    // TODO: enable/disable required to alter a table, should ADMIN be required here?
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+  @Override
+  public void postEnableTable(MasterCoprocessorEnvironment env,
+      byte[] tableName) throws IOException {}
+
+  @Override
+  public void preDisableTable(MasterCoprocessorEnvironment env,
+      byte[] tableName) throws IOException {
+    // TODO: enable/disable required to alter a table, should ADMIN be required here?
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+  @Override
+  public void postDisableTable(MasterCoprocessorEnvironment env,
+      byte[] tableName) throws IOException {}
+
+  @Override
+  public void preMove(MasterCoprocessorEnvironment env, HRegionInfo region,
+      HServerInfo srcServer, HServerInfo destServer)
+    throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+  @Override
+  public void postMove(MasterCoprocessorEnvironment env, HRegionInfo region,
+      HServerInfo srcServer, HServerInfo destServer)
+    throws UnknownRegionException {}
+
+  @Override
+  public void preAssign(MasterCoprocessorEnvironment env, byte[] regionName,
+      boolean force) throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+  @Override
+  public void postAssign(MasterCoprocessorEnvironment env,
+      HRegionInfo regionInfo) throws IOException {}
+
+  @Override
+  public void preUnassign(MasterCoprocessorEnvironment env, byte[] regionName,
+      boolean force) throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+  @Override
+  public void postUnassign(MasterCoprocessorEnvironment env,
+      HRegionInfo regionInfo, boolean force) throws IOException {}
+
+  @Override
+  public void preBalance(MasterCoprocessorEnvironment env) throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+  @Override
+  public void postBalance(MasterCoprocessorEnvironment env)
+      throws IOException {}
+
+  @Override
+  public boolean preBalanceSwitch(MasterCoprocessorEnvironment env,
+      boolean newValue) throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+    return newValue;
+  }
+  @Override
+  public void postBalanceSwitch(MasterCoprocessorEnvironment env,
+      boolean oldValue, boolean newValue) throws IOException {}
+
+  @Override
+  public void preShutdown(MasterCoprocessorEnvironment env) throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+
+  @Override
+  public void preStopMaster(MasterCoprocessorEnvironment env)
+      throws IOException {
+    requirePermission(Permission.Action.ADMIN, env);
+  }
+
+  /* ---- RegionObserver implementation ---- */
 
   @Override
   public void postOpen(RegionCoprocessorEnvironment e) {

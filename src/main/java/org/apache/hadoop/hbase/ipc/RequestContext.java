@@ -1,3 +1,23 @@
+/*
+ * Copyright 2011 The Apache Software Foundation
+ *
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ * http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.hadoop.hbase.ipc;
 
 import org.apache.hadoop.ipc.VersionedProtocol;
@@ -23,6 +43,7 @@ public class RequestContext {
     return instance.get();
   }
 
+
   /**
    * Returns the user credentials associated with the current RPC request or
    * <code>null</code> if no credentials were provided.
@@ -34,6 +55,18 @@ public class RequestContext {
       return ctx.getUser();
     }
     return null;
+  }
+
+  /**
+   * Indicates whether or not the current thread is within scope of executing
+   * an RPC request.
+   */
+  public static boolean isInRequestContext() {
+    RequestContext ctx = instance.get();
+    if (ctx != null) {
+      return ctx.isInRequest();
+    }
+    return false;
   }
 
   /**
@@ -49,6 +82,7 @@ public class RequestContext {
     ctx.user = user;
     ctx.remoteAddress = remoteAddress;
     ctx.protocol = protocol;
+    ctx.inRequest = true;
   }
 
   /**
@@ -59,11 +93,14 @@ public class RequestContext {
     ctx.user = null;
     ctx.remoteAddress = null;
     ctx.protocol = null;
+    ctx.inRequest = false;
   }
 
   private UserGroupInformation user;
   private InetAddress remoteAddress;
   private Class<? extends VersionedProtocol> protocol;
+  // indicates we're within a RPC request invocation
+  private boolean inRequest;
 
   private RequestContext(UserGroupInformation user, InetAddress remoteAddr,
       Class<? extends VersionedProtocol> protocol) {
@@ -82,5 +119,9 @@ public class RequestContext {
 
   public Class<? extends VersionedProtocol> getProtocol() {
     return protocol;
+  }
+
+  public boolean isInRequest() {
+    return inRequest;
   }
 }

@@ -139,7 +139,7 @@ public interface MasterObserver extends Coprocessor {
    */
   void preMove(MasterCoprocessorEnvironment env, final HRegionInfo region,
       final HServerInfo srcServer, final HServerInfo destServer)
-    throws UnknownRegionException;
+    throws IOException;
 
   /**
    * Called after the region move has been requested.

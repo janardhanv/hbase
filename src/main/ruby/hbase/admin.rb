@@ -33,7 +33,7 @@ module Hbase
       zk = @zk_wrapper.getZooKeeper()
       @zk_main = org.apache.zookeeper.ZooKeeperMain.new(zk)
       @formatter = formatter
-      @meta = HTable.new(HConstants::META_TABLE_NAME)
+      @meta = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
     end
 
     #----------------------------------------------------------------------------------------------
@@ -221,8 +221,8 @@ module Hbase
     def grant(user,rights,table_name)
       region_name = get_first_region(table_name)
       put = Put.new(Bytes.toBytes(region_name))
-      put.add(HConstants::ACL_FAMILY,Bytes.toBytes(user),Bytes.toBytes(rights));
-      meta = HTable.new(HConstants::META_TABLE_NAME)
+      put.add(org.apache.hadoop.hbase.HConstants::ACL_FAMILY,Bytes.toBytes(user),Bytes.toBytes(rights));
+      meta = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
       meta.put(put)
     end
 
