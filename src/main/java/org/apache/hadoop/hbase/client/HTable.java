@@ -1330,6 +1330,14 @@ public class HTable implements HTableInterface {
     getRegionCachePrefetch(tableName);
   }
 
+  /**
+   * Explicitly clears the region cache to fetch the latest value from META.
+   * This is a power user function: avoid unless you know the ramifications.
+   */
+  public void clearRegionCache() {
+    this.connection.clearRegionCache();
+  }
+
   @Override
   public <T extends CoprocessorProtocol> T coprocessorProxy(
       Class<T> protocol, byte[] row) {

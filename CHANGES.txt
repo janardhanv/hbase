@@ -22,6 +22,18 @@ Release 0.91.0 - Unreleased
    HBASE-3337  Restore HBCK fix of unassignment and dupe assignment for new
                master
    HBASE-3332  Regions stuck in transition after RS failure
+   HBASE-3418  Increment operations can break when qualifiers are split
+               between memstore/snapshot and storefiles
+   HBASE-3403  Region orphaned after failure during split
+   HBASE-3387  Pair does not deep check arrays for equality -- REVERT THIS PATCH
+   HBASE-3449  Server shutdown handlers deadlocked waiting for META
+   HBASE-3456  Fix hardcoding of 20 second socket timeout down in HBaseClient
+   HBASE-3476  HFile -m option need not scan key values
+               (Prakash Khemani via Lars George)
+   HBASE-3481  max seq id in flushed file can be larger than its correct value 
+   	           causing data loss during recovery
+   HBASE-3493  HMaster sometimes hangs during initialization due to missing
+               notify call (Bruno Dumon via Stack)
 
 
   IMPROVEMENTS
@@ -40,6 +52,14 @@ Release 0.91.0 - Unreleased
                function
    HBASE-3260  Coprocessors: Add explicit lifecycle management
    HBASE-3377  Upgrade Jetty to 6.1.26
+   HBASE-3387  Pair does not deep check arrays for equality
+               (Jesse Yates via Stack)
+   HBASE-3393  Update Avro gateway to use Avro 1.4.1 and the new
+               server.join() method (Jeff Hammerbacher via Stack)
+   HBASE-3437  Support Explict Split Points from the Shell
+   HBASE-3433  KeyValue API to explicitly distinguish between deep & shallow copies
+   HBASE-3305  Allow round-robin distribution for table created with
+               multiple regions (ted yu via jgray)
 
 
   NEW FEATURES
@@ -47,9 +67,15 @@ Release 0.91.0 - Unreleased
                hfile close
    HBASE-3335  Add BitComparator for filtering (Nathaniel Cook via Stack)
    HBASE-3256  Coprocessors: Coprocessor host and observer for HMaster
+   HBASE-3448  RegionSplitter, utility class to manually split tables
+
+Release 0.90.1 - Unreleased
+
+  BUG FIXES
+   HBASE-3483  Memstore lower limit should trigger asynchronous flushes
 
 
-Release 0.90.0 - Unreleased
+Release 0.90.0 - January 19th, 2011
   INCOMPATIBLE CHANGES
    HBASE-1822  Remove the deprecated APIs
    HBASE-1848  Fixup shell for HBASE-1822
@@ -807,6 +833,18 @@ Release 0.90.0 - Unreleased
                doing rolling-restart.sh
    HBASE-3383  [0.90RC1] bin/hbase script displays "no such file" warning on
                target/cached_classpath.txt
+   HBASE-3344  Master aborts after RPC to server that was shutting down
+   HBASE-3408  AssignmentManager NullPointerException
+   HBASE-3402  Web UI shows two META regions
+   HBASE-3409  Failed server shutdown processing when retrying hlog split
+   HBASE-3412  HLogSplitter should handle missing HLogs
+   HBASE-3420  Handling a big rebalance, we can queue multiple instances of
+               a Close event; messes up state
+   HBASE-3423  hbase-env.sh over-rides HBASE_OPTS incorrectly (Ted Dunning via
+               Andrew Purtell)
+   HBASE-3407  hbck should pause between fixing and re-checking state
+   HBASE-3401  Region IPC operations should be high priority
+   HBASE-3430  hbase-daemon.sh should clean up PID files on process stop
 
 
   IMPROVEMENTS
@@ -1292,6 +1330,8 @@ Release 0.90.0 - Unreleased
    HBASE-2467  Concurrent flushers in HLog sync using HDFS-895
    HBASE-3349  Pass HBase configuration to HttpServer
    HBASE-3372  HRS shouldn't print a full stack for ServerNotRunningException
+   HBASE-3392  Update backport of InputSampler to reflect MAPREDUCE-1820
+   HBASE-3405  Allow HBaseRpcMetrics to register custom interface methods
 
 
   NEW FEATURES

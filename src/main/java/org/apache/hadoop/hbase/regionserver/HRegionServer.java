@@ -21,9 +21,12 @@ package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
 import java.lang.Thread.UncaughtExceptionHandler;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
 import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.net.BindException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
@@ -99,6 +102,7 @@ import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.HBaseRPCErrorHandler;
 import org.apache.hadoop.hbase.ipc.HBaseRPCProtocolVersion;
+import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.ipc.Invocation;
@@ -353,7 +357,26 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   private static final int QOS_THRESHOLD = 10;  // the line between low and high qos
   private static final int HIGH_QOS = 100;
 
+  @Retention(RetentionPolicy.RUNTIME)
+  private @interface QosPriority {
+    int priority() default 0;
+  }
+
   class QosFunction implements Function<Writable,Integer> {
+    private final Map<String, Integer> annotatedQos;
+
+    public QosFunction() {
+      Map<String, Integer> qosMap = new HashMap<String, Integer>();
+      for (Method m : HRegionServer.class.getMethods()) {
+        QosPriority p = m.getAnnotation(QosPriority.class);
+        if (p != null) {
+          qosMap.put(m.getName(), p.priority());
+        }
+      }
+      
+      annotatedQos = qosMap;
+    }
+
     public boolean isMetaRegion(byte[] regionName) {
       HRegion region;
       try {
@@ -370,6 +393,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
       Invocation inv = (Invocation) from;
       String methodName = inv.getMethodName();
+      
+      Integer priorityByAnnotation = annotatedQos.get(methodName);
+      if (priorityByAnnotation != null) {
+        return priorityByAnnotation;
+      }
 
       // scanner methods...
       if (methodName.equals("next") || methodName.equals("close")) {
@@ -391,13 +419,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
             return HIGH_QOS;
           }
         }
-      } else if (methodName.equals("getHServerInfo")
-          || methodName.equals("getRegionsAssignment")
-          || methodName.equals("unlockRow")
-          || methodName.equals("getProtocolVersion")
-          || methodName.equals("getClosestRowBefore")) {
-        // LOG.debug("High priority method: " + methodName);
-        return HIGH_QOS;
       } else if (inv.getParameterClasses().length == 0) {
        // Just let it through.  This is getOnlineRegions, etc.
       } else if (inv.getParameterClasses()[0] == byte[].class) {
@@ -1344,6 +1365,14 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   /**
+   * Return a reference to the metrics instance used for counting RPC calls.
+   * @return
+   */
+  public HBaseRpcMetrics getRpcMetrics() {
+    return server.getRpcMetrics();
+  }
+
+  /**
    * Cause the server to exit without closing the regions it is serving, the log
    * it is using and without notifying the master. Used unit testing and on
    * catastrophic events such as HDFS is yanked out from under hbase or we OOME.
@@ -1572,6 +1601,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public HRegionInfo getRegionInfo(final byte[] regionName)
   throws NotServingRegionException {
     requestCount.incrementAndGet();
@@ -2013,6 +2043,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     return rl;
   }
 
+  @Override
+  @QosPriority(priority=HIGH_QOS)
   public void unlockRow(byte[] regionName, long lockId) throws IOException {
     checkOpen();
     NullPointerException npe = null;
@@ -2077,6 +2109,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   // Region open/close direct RPCs
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public void openRegion(HRegionInfo region)
   throws RegionServerStoppedException {
     LOG.info("Received request to open region: " +
@@ -2092,6 +2125,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public void openRegions(List<HRegionInfo> regions)
   throws RegionServerStoppedException {
     LOG.info("Received request to open " + regions.size() + " region(s)");
@@ -2099,12 +2133,14 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public boolean closeRegion(HRegionInfo region)
   throws NotServingRegionException {
     return closeRegion(region, true);
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public boolean closeRegion(HRegionInfo region, final boolean zk)
   throws NotServingRegionException {
     LOG.info("Received close region: " + region.getRegionNameAsString());
@@ -2145,6 +2181,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   // Manual remote region administration RPCs
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public void flushRegion(HRegionInfo regionInfo)
       throws NotServingRegionException, IOException {
     LOG.info("Flushing " + regionInfo.getRegionNameAsString());
@@ -2153,6 +2190,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public void splitRegion(HRegionInfo regionInfo)
       throws NotServingRegionException, IOException {
     splitRegion(regionInfo, null);
@@ -2172,6 +2210,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public void compactRegion(HRegionInfo regionInfo, boolean major)
       throws NotServingRegionException, IOException {
     HRegion region = getRegion(regionInfo.getRegionName());
@@ -2211,6 +2250,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public List<HRegionInfo> getOnlineRegions() {
     List<HRegionInfo> list = new ArrayList<HRegionInfo>();
     synchronized(this.onlineRegions) {
@@ -2411,6 +2451,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     return regionsToCheck;
   }
 
+  @Override
+  @QosPriority(priority=HIGH_QOS)
   public long getProtocolVersion(final String protocol, final long clientVersion)
       throws IOException {
     if (protocol.equals(HRegionInterface.class.getName())) {
@@ -2546,6 +2588,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   /** {@inheritDoc} */
+  @Override
+  @QosPriority(priority=HIGH_QOS)
   public HServerInfo getHServerInfo() throws IOException {
     return serverInfo;
   }

@@ -21,8 +21,8 @@ package org.apache.hadoop.hbase.master;
 
 import java.io.DataInput;
 import java.io.DataOutput;
-import java.io.IOException;
 import java.io.EOFException;
+import java.io.IOException;
 import java.net.ConnectException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -588,6 +588,7 @@ public class AssignmentManager extends ZooKeeperListener {
         " on " + hsi);
       this.regions.put(regionInfo, serverInfo);
       addToServers(serverInfo, regionInfo);
+      this.regions.notifyAll();
     }
     // Remove plan if one.
     clearRegionPlan(regionInfo);
@@ -1005,8 +1006,9 @@ public class AssignmentManager extends ZooKeeperListener {
     RegionPlan existingPlan = null;
     synchronized (this.regionPlans) {
       existingPlan = this.regionPlans.get(encodedName);
-      if (existingPlan == null || forceNewPlan ||
-          (existingPlan != null && existingPlan.getDestination().equals(serverToExclude))) {
+      if (forceNewPlan || existingPlan == null 
+              || existingPlan.getDestination() == null 
+              || existingPlan.getDestination().equals(serverToExclude)) {
         newPlan = true;
         this.regionPlans.put(encodedName, randomPlan);
       }
@@ -1122,6 +1124,10 @@ public class AssignmentManager extends ZooKeeperListener {
         // Failed to close, so pass through and reassign
         LOG.debug("Server " + server + " returned " + ioe + " for " +
           region.getEncodedName());
+      } else if (ioe instanceof EOFException) {
+        // Failed to close, so pass through and reassign
+        LOG.debug("Server " + server + " returned " + ioe + " for " +
+          region.getEncodedName());
       } else {
         this.master.abort("Remote unexpected exception", ioe);
       }
@@ -1178,6 +1184,28 @@ public class AssignmentManager extends ZooKeeperListener {
   }
 
   /**
+   * Assigns list of user regions in round-robin fashion, if any exist.
+   * <p>
+   * This is a synchronous call and will return once every region has been
+   * assigned.  If anything fails, an exception is thrown
+   * @throws InterruptedException
+   * @throws IOException
+   */
+  public void assignUserRegions(List<HRegionInfo> regions, List<HServerInfo> servers) throws IOException, InterruptedException {
+    if (regions == null)
+      return;
+    Map<HServerInfo, List<HRegionInfo>> bulkPlan = null;
+    // Generate a round-robin bulk assignment plan
+    bulkPlan = LoadBalancer.roundRobinAssignment(regions, servers);
+    LOG.info("Bulk assigning " + regions.size() + " region(s) round-robin across " +
+               servers.size() + " server(s)");
+    // Use fixed count thread pool assigning.
+    BulkAssigner ba = new BulkStartupAssigner(this.master, bulkPlan, this);
+    ba.bulkAssign();
+    LOG.info("Bulk assigning done");
+  }
+
+  /**
    * Assigns all user regions, if any exist.  Used during cluster startup.
    * <p>
    * This is a synchronous call and will return once every region has been
@@ -1204,9 +1232,9 @@ public class AssignmentManager extends ZooKeeperListener {
       // Reuse existing assignment info
       bulkPlan = LoadBalancer.retainAssignment(allRegions, servers);
     } else {
-      // Generate a round-robin bulk assignment plan
-      bulkPlan = LoadBalancer.roundRobinAssignment(
-          new ArrayList<HRegionInfo>(allRegions.keySet()), servers);
+      // assign regions in round-robin fashion
+      assignUserRegions(new ArrayList<HRegionInfo>(allRegions.keySet()), servers);
+      return;
     }
     LOG.info("Bulk assigning " + allRegions.size() + " region(s) across " +
       servers.size() + " server(s), retainAssignment=" + retainAssignment);
@@ -1562,11 +1590,13 @@ public class AssignmentManager extends ZooKeeperListener {
             // Expired!  Do a retry.
             switch (regionState.getState()) {
               case CLOSED:
-                LOG.info("Region has been CLOSED for too long, " +
-                    "retriggering ClosedRegionHandler");
-                AssignmentManager.this.executorService.submit(
-                    new ClosedRegionHandler(master, AssignmentManager.this,
-                        regionState.getRegion()));
+                LOG.info("Region " + regionInfo.getEncodedName() +
+                  " has been CLOSED for too long, waiting on queued " +
+                  "ClosedRegionHandler to run or server shutdown");
+                // Update our timestamp.
+                synchronized(regionState) {
+                  regionState.update(regionState.getState());
+                }
                 break;
               case OFFLINE:
                 LOG.info("Region has been OFFLINE for too long, " +

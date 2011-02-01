@@ -546,7 +546,7 @@ public abstract class HBaseServer implements RpcServer {
       } catch (InterruptedException ieo) {
         throw ieo;
       } catch (Exception e) {
-        LOG.debug(getName() + ": readAndProcess threw exception " + e + ". Count of bytes read: " + count, e);
+        LOG.warn(getName() + ": readAndProcess threw exception " + e + ". Count of bytes read: " + count, e);
         count = -1; //so that the (count < 0) block is executed
       }
       if (count < 0) {
@@ -1368,6 +1368,13 @@ public abstract class HBaseServer implements RpcServer {
   @Override
   public void setErrorHandler(HBaseRPCErrorHandler handler) {
     this.errorHandler = handler;
+  }
+
+  /**
+   * Returns the metrics instance for reporting RPC call statistics
+   */
+  public HBaseRpcMetrics getRpcMetrics() {
+    return rpcMetrics;
   }
 
   /**

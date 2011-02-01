@@ -31,6 +31,7 @@ import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1480,6 +1481,7 @@ public class HRegion implements HeapSize { // , Writable{
 
     long now = EnvironmentEdgeManager.currentTimeMillis();
     byte[] byteNow = Bytes.toBytes(now);
+    boolean locked = false;
 
     /** Keep track of the locks we hold so we can release them in finally clause */
     List<Integer> acquiredLocks = Lists.newArrayListWithCapacity(batchOp.operations.length);
@@ -1546,6 +1548,10 @@ public class HRegion implements HeapSize { // , Writable{
             byteNow);
       }
 
+
+      this.updatesLock.readLock().lock();
+      locked = true;
+
       // ------------------------------------
       // STEP 3. Write to WAL
       // ----------------------------------
@@ -1588,6 +1594,9 @@ public class HRegion implements HeapSize { // , Writable{
       success = true;
       return addedSize;
     } finally {
+      if (locked)
+        this.updatesLock.readLock().unlock();
+
       for (Integer toRelease : acquiredLocks) {
         releaseRowLock(toRelease);
       }
@@ -3086,6 +3095,7 @@ public class HRegion implements HeapSize { // , Writable{
 
     // combine and return
     results.addAll(fileResults);
+    Collections.sort(results, KeyValue.COMPARATOR);
     return results;
   }
 
@@ -3154,6 +3164,7 @@ public class HRegion implements HeapSize { // , Writable{
     startRegionOperation();
     try {
       Integer lid = getLock(lockid, row, true);
+      this.updatesLock.readLock().lock();
       try {
         // Process each family
         for (Map.Entry<byte [], NavigableMap<byte [], Long>> family :
@@ -3209,6 +3220,7 @@ public class HRegion implements HeapSize { // , Writable{
         size = this.memstoreSize.addAndGet(size);
         flush = isFlushSize(size);
       } finally {
+        this.updatesLock.readLock().unlock();
         releaseRowLock(lid);
       }
     } finally {
@@ -3242,6 +3254,7 @@ public class HRegion implements HeapSize { // , Writable{
     startRegionOperation();
     try {
       Integer lid = obtainRowLock(row);
+      this.updatesLock.readLock().lock();
       try {
         Store store = stores.get(family);
 
@@ -3282,6 +3295,7 @@ public class HRegion implements HeapSize { // , Writable{
         size = this.memstoreSize.addAndGet(size);
         flush = isFlushSize(size);
       } finally {
+        this.updatesLock.readLock().unlock();
         releaseRowLock(lid);
       }
     } finally {

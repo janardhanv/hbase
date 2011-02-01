@@ -26,6 +26,7 @@ import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -534,7 +535,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       this.executorService.startExecutorService(ExecutorType.MASTER_SERVER_OPERATIONS,
         conf.getInt("hbase.master.executor.serverops.threads", 3));
       this.executorService.startExecutorService(ExecutorType.MASTER_META_SERVER_OPERATIONS,
-        conf.getInt("hbase.master.executor.serverops.threads", 2));
+        conf.getInt("hbase.master.executor.serverops.threads", 5));
       // We depend on there being only one instance of this executor running
       // at a time.  To do concurrency, would need fencing of enable/disable of
       // tables.
@@ -751,6 +752,16 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     return oldValue;
   }
 
+  /**
+   * Switch for the background {@link CatalogJanitor} thread.
+   * Used for testing.  The thread will continue to run.  It will just be a noop
+   * if disabled.
+   * @param b If false, the catalog janitor won't do anything.
+   */
+  public void setCatalogJanitorEnabled(final boolean b) {
+    ((CatalogJanitor)this.catalogJanitorChore).setEnabled(b);
+  }
+
   @Override
   public void move(final byte[] encodedRegionName, final byte[] destServerName)
   throws UnknownRegionException {
@@ -861,9 +872,15 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       // 4. Close the new region to flush to disk.  Close log file too.
       region.close();
       region.getLog().closeAndDelete();
+    }
 
-      // 5. Trigger immediate assignment of this region
-      assignmentManager.assign(region.getRegionInfo(), true);
+    // 5. Trigger immediate assignment of the regions in round-robin fashion
+    List<HServerInfo> servers = serverManager.getOnlineServersList();
+    try {
+      this.assignmentManager.assignUserRegions(Arrays.asList(newRegions), servers);
+    } catch (InterruptedException ie) {
+      LOG.error("Caught " + ie + " during round-robin assignment");
+      throw new IOException(ie);
     }
 
     // 5. If sync, wait for assignment of regions
