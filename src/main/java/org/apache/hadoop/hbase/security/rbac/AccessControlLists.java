@@ -254,8 +254,7 @@ public class AccessControlLists {
       byte[] table, Result result) {
     ListMultimap<String,TablePermission> perms = ArrayListMultimap.create();
     if (result != null && result.size() > 0) {
-      byte[] lastKey = null;
-      for (KeyValue kv : result.sorted()) {
+      for (KeyValue kv : result.raw()) {
 
         Pair<String,TablePermission> permissionsOfUserOnTable =
             parseTablePermissionRecord(table, kv);
