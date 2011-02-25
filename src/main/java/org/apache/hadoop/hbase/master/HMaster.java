@@ -172,7 +172,6 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   private Thread catalogJanitorChore;
   private LogCleaner logCleaner;
 
-  private final String superuser;
   private MasterCoprocessorHost cpHost;
 
   /**
@@ -211,8 +210,6 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
         "hbase.master.kerberos.principal", this.address.getHostname());
     HBasePolicyProvider.init(conf);
     // TODO: do we need a secret manager for digest auth?  If so need to set it in RpcServer here
-
-    this.superuser = UserGroupInformation.getCurrentUser().getShortUserName();
 
     // set the thread name now we have an address
     setName(MASTER + "-" + this.address);
@@ -1035,10 +1032,6 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     if (!getAssignmentManager().getZKTable().
         isDisabledTable(Bytes.toString(tableName))) {
       throw new TableNotDisabledException(tableName);
-    }
-    UserGroupInformation requestor = RequestContext.getRequestUser();
-    if (requestor == null || !(requestor.getShortUserName().equals(superuser))) {
-      throw new AccessDeniedException("You cannot modify table '"+Bytes.toString(tableName)+"' because you are not superuser");
     }
   }
 
