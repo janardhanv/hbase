@@ -22,6 +22,7 @@ package org.apache.hadoop.hbase.ipc;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.metrics.MetricsContext;
 import org.apache.hadoop.metrics.MetricsRecord;
 import org.apache.hadoop.metrics.MetricsUtil;
@@ -97,7 +98,7 @@ public class HBaseRpcMetrics implements Updater {
   public final MetricsTimeVaryingInt authorizationSuccesses =
          new MetricsTimeVaryingInt("rpcAuthorizationSuccesses", registry);
 
-  private void initMethods(Class<? extends HBaseRPCProtocolVersion> protocol) {
+  private void initMethods(Class<? extends VersionedProtocol> protocol) {
     for (Method m : protocol.getDeclaredMethods()) {
       if (get(m.getName()) == null)
         create(m.getName());

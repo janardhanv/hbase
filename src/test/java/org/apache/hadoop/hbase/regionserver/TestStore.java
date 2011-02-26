@@ -62,7 +62,7 @@ import com.google.common.base.Joiner;
 import org.apache.hadoop.security.UserGroupInformation;
 
 /**
- * Test class fosr the Store
+ * Test class for the Store
  */
 public class TestStore extends TestCase {
   public static final Log LOG = LogFactory.getLog(TestStore.class);
@@ -630,5 +630,16 @@ public class TestStore extends TestCase {
     get.setTimeRange(90,200);
     result = HBaseTestingUtility.getFromStoreFile(store, get);
     assertTrue(result.size()==0);
+  }
+
+  /**
+   * Test for HBASE-3492 - Test split on empty colfam (no store files).
+   *
+   * @throws IOException When the IO operations fail.
+   */
+  public void testSplitWithEmptyColFam() throws IOException {
+    init(this.getName());
+    assertNull(store.checkSplit(false));
+    assertNull(store.checkSplit(true));
   }
 }

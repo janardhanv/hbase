@@ -101,7 +101,6 @@ import org.apache.hadoop.hbase.io.hfile.LruBlockCache.CacheStats;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.HBaseRPCErrorHandler;
-import org.apache.hadoop.hbase.ipc.HBaseRPCProtocolVersion;
 import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
@@ -1183,6 +1182,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         .set((int) (storefileIndexSize / (1024 * 1024)));
     this.metrics.compactionQueueSize.set(compactSplitThread
         .getCompactionQueueSize());
+    this.metrics.flushQueueSize.set(cacheFlusher
+        .getFlushQueueSize());
 
     LruBlockCache lruBlockCache = (LruBlockCache) StoreFile.getBlockCache(conf);
     if (lruBlockCache != null) {
@@ -1438,20 +1439,17 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   private HServerAddress getMaster() {
     HServerAddress masterAddress = null;
-    while ((masterAddress = masterAddressManager.getMasterAddress()) == null) {
-      if (stopped) {
-        return null;
-      }
-      LOG.debug("No master found, will retry");
-      sleeper.sleep();
-    }
     HMasterRegionInterface master = null;
+
     while (!stopped && master == null) {
+
+      masterAddress = getMasterAddress();
+      LOG.info("Attempting connect to Master server at " + masterAddress);
       try {
         // Do initial RPC setup. The final argument indicates that the RPC
         // should retry indefinitely.
         master = (HMasterRegionInterface) HBaseRPC.waitForProxy(
-            HMasterRegionInterface.class, HBaseRPCProtocolVersion.versionID,
+            HMasterRegionInterface.class, HMasterRegionInterface.VERSION,
             masterAddress.getInetSocketAddress(), this.conf, -1,
             this.rpcTimeout, this.rpcTimeout);
       } catch (IOException e) {
@@ -1469,6 +1467,18 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     this.hbaseMaster = master;
     return masterAddress;
   }
+
+  private HServerAddress getMasterAddress() {
+    HServerAddress masterAddress = null;
+      while ((masterAddress = masterAddressManager.getMasterAddress()) == null) {
+        if (stopped) {
+          return null;
+        }
+        LOG.debug("No master found, will retry");
+        sleeper.sleep();
+      }
+      return masterAddress;
+   }
 
   /**
    * @return True if successfully invoked {@link #reportForDuty()}
@@ -2456,7 +2466,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   public long getProtocolVersion(final String protocol, final long clientVersion)
       throws IOException {
     if (protocol.equals(HRegionInterface.class.getName())) {
-      return HBaseRPCProtocolVersion.versionID;
+      return HRegionInterface.VERSION;
     }
     throw new IOException("Unknown protocol to name node: " + protocol);
   }

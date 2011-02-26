@@ -299,10 +299,38 @@
         <version>2.0.11</version>
         <executions>
           <execution>
+              <id>multipage</id>
+              <phase>pre-site</phase>
+        <configuration>
+          <xincludeSupported>true</xincludeSupported>
+          <navigShowtitles>true</navigShowtitles>
+          <chunkedOutput>true</chunkedOutput>
+          <useIdAsFilename>true</useIdAsFilename>
+          <sectionAutolabelMaxDepth>100</sectionAutolabelMaxDepth>
+          <sectionAutolabel>true</sectionAutolabel>
+          <sectionLabelIncludesComponentLabel>true</sectionLabelIncludesComponentLabel>
+          <targetDirectory>${basedir}/target/site/book/</targetDirectory>
+          <htmlStylesheet>../css/freebsd_docbook.css</htmlStylesheet>
+        </configuration>
             <goals>
               <goal>generate-html</goal>
             </goals>
+          </execution>
+          <execution>
+              <id>onepage</id>
             <phase>pre-site</phase>
+        <configuration>
+          <xincludeSupported>true</xincludeSupported>
+          <useIdAsFilename>true</useIdAsFilename>
+          <sectionAutolabelMaxDepth>100</sectionAutolabelMaxDepth>
+          <sectionAutolabel>true</sectionAutolabel>
+          <sectionLabelIncludesComponentLabel>true</sectionLabelIncludesComponentLabel>
+          <targetDirectory>${basedir}/target/site/</targetDirectory>
+          <htmlStylesheet>css/freebsd_docbook.css</htmlStylesheet>
+        </configuration>
+            <goals>
+              <goal>generate-html</goal>
+            </goals>
           </execution>
         </executions>
         <dependencies>
@@ -313,16 +341,6 @@
             <scope>runtime</scope>
           </dependency>
         </dependencies>
-        <configuration>
-          <xincludeSupported>true</xincludeSupported>
-          <chunkedOutput>true</chunkedOutput>
-          <useIdAsFilename>true</useIdAsFilename>
-          <sectionAutolabelMaxDepth>100</sectionAutolabelMaxDepth>
-          <sectionAutolabel>true</sectionAutolabel>
-          <sectionLabelIncludesComponentLabel>true</sectionLabelIncludesComponentLabel>
-          <targetDirectory>${basedir}/target/site/</targetDirectory>
-          <htmlStylesheet>css/freebsd_docbook.css</htmlStylesheet>
-        </configuration>
       </plugin>
       <plugin>
         <artifactId>maven-assembly-plugin</artifactId>
@@ -435,6 +453,18 @@
               <goal>run</goal>
             </goals>
           </execution>
+          <execution>
+            <phase>process-resources</phase>
+            <configuration>
+              <tasks>
+                <replace file="${project.build.outputDirectory}/hbase-default.xml"
+                  token="@@@VERSION@@@" value="${project.version}" />
+              </tasks>
+            </configuration>
+            <goals>
+              <goal>run</goal>
+            </goals>
+          </execution>
         </executions>
       </plugin>
       <plugin>
@@ -477,6 +507,7 @@
     <!-- Dependencies -->
     <avro.version>1.4.1</avro.version>
     <commons-cli.version>1.2</commons-cli.version>
+    <commons-el.version>1.0</commons-el.version>
     <commons-codec.version>1.4</commons-codec.version>
     <commons-httpclient.version>3.1</commons-httpclient.version><!-- pretty outdated -->
     <commons-lang.version>2.5</commons-lang.version>
@@ -521,6 +552,11 @@
       <groupId>com.google.guava</groupId>
       <artifactId>guava</artifactId>
       <version>${guava.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>commons-el</groupId>
+      <artifactId>commons-el</artifactId>
+      <version>${commons-el.version}</version>
     </dependency>
     <dependency>
       <groupId>commons-cli</groupId>

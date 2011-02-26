@@ -60,6 +60,7 @@ public class TestSplitTransactionOnCluster {
     new HBaseTestingUtility();
 
   @BeforeClass public static void before() throws Exception {
+    TESTING_UTIL.getConfiguration().setInt("hbase.balancer.period", 60000);
     TESTING_UTIL.startMiniCluster(2);
   }
 
@@ -278,6 +279,7 @@ public class TestSplitTransactionOnCluster {
     for (RegionServerThread rst: cluster.getRegionServerThreads()) {
       HRegionServer hrs = rst.getRegionServer();
       if (hrs.getServerName().equals(notThisOne.getServerName())) continue;
+      if (hrs.isStopping() || hrs.isStopped()) continue;
       return hrs;
     }
     return null;

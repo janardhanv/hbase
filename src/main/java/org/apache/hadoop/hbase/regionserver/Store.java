@@ -178,7 +178,7 @@ public class Store implements HeapSize {
       // second -> ms adjust for user data
       this.ttl *= 1000;
     }
-    this.memstore = new MemStore(this.comparator);
+    this.memstore = new MemStore(conf, this.comparator);
     this.storeNameStr = Bytes.toString(this.family.getName());
 
     // By default, compact if storefile.count >= minFilesToCompact
@@ -725,17 +725,17 @@ public class Store implements HeapSize {
    * @param dir
    * @throws IOException
    */
-  private static long getLowestTimestamp(FileSystem fs, 
+  private static long getLowestTimestamp(FileSystem fs,
       final List<StoreFile> candidates) throws IOException {
     long minTs = Long.MAX_VALUE;
     if (candidates.isEmpty()) {
-      return minTs; 
+      return minTs;
     }
     Path[] p = new Path[candidates.size()];
     for (int i = 0; i < candidates.size(); ++i) {
       p[i] = candidates.get(i).getPath();
     }
-    
+
     FileStatus[] stats = fs.listStatus(p);
     if (stats == null || stats.length == 0) {
       return minTs;
@@ -756,13 +756,13 @@ public class Store implements HeapSize {
         return false;
       }
     }
-    
+
     List<StoreFile> candidates = new ArrayList<StoreFile>(this.storefiles);
 
     // exclude files above the max compaction threshold
     // except: save all references. we MUST compact them
     int pos = 0;
-    while (pos < candidates.size() && 
+    while (pos < candidates.size() &&
            candidates.get(pos).getReader().length() > this.maxCompactSize &&
            !candidates.get(pos).isReference()) ++pos;
     candidates.subList(0, pos).clear();
@@ -788,7 +788,10 @@ public class Store implements HeapSize {
       if (filesToCompact.size() == 1) {
         // Single file
         StoreFile sf = filesToCompact.get(0);
-        long oldest = now - sf.getReader().timeRangeTracker.minimumTimestamp;
+        long oldest =
+            (sf.getReader().timeRangeTracker == null) ?
+                Long.MIN_VALUE :
+                now - sf.getReader().timeRangeTracker.minimumTimestamp;
         if (sf.isMajorCompaction() &&
             (this.ttl == HConstants.FOREVER || oldest < this.ttl)) {
           if (LOG.isDebugEnabled()) {
@@ -868,7 +871,7 @@ public class Store implements HeapSize {
       // do not compact old files above a configurable threshold
       // save all references. we MUST compact them
       int pos = 0;
-      while (pos < filesToCompact.size() && 
+      while (pos < filesToCompact.size() &&
              filesToCompact.get(pos).getReader().length() > maxCompactSize &&
              !filesToCompact.get(pos).isReference()) ++pos;
       filesToCompact.subList(0, pos).clear();
@@ -878,7 +881,7 @@ public class Store implements HeapSize {
       LOG.debug(this.storeNameStr + ": no store files to compact");
       return filesToCompact;
     }
-    
+
     // major compact on user action or age (caveat: we have too many files)
     boolean majorcompaction = (forcemajor || isMajorCompaction(filesToCompact))
       && filesToCompact.size() < this.maxFilesToCompact;
@@ -891,7 +894,7 @@ public class Store implements HeapSize {
       int start = 0;
       double r = this.compactRatio;
 
-      /* TODO: add sorting + unit test back in when HBASE-2856 is fixed 
+      /* TODO: add sorting + unit test back in when HBASE-2856 is fixed
       // Sort files by size to correct when normal skew is altered by bulk load.
       Collections.sort(filesToCompact, StoreFile.Comparators.FILE_SIZE);
        */
@@ -1320,10 +1323,11 @@ public class Store implements HeapSize {
     this.lock.readLock().lock();
     try {
       // sanity checks
-      if (!force) {
-        if (storeSize < this.desiredMaxFileSize || this.storefiles.isEmpty()) {
-          return null;
-        }
+      if (this.storefiles.isEmpty()) {
+        return null;
+      }
+      if (!force && storeSize < this.desiredMaxFileSize) {
+        return null;
       }
 
       if (this.region.getRegionInfo().isMetaRegion()) {

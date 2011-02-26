@@ -26,6 +26,7 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.security.KerberosInfo;
+import org.apache.hadoop.ipc.VersionedProtocol;
 
 /**
  * Clients interact with the HMasterInterface to gain access to meta-level
@@ -38,7 +39,15 @@ import org.apache.hadoop.security.KerberosInfo;
  */
 @KerberosInfo(
     serverPrincipal = "hbase.master.kerberos.principal")
-public interface HMasterInterface extends HBaseRPCProtocolVersion {
+public interface HMasterInterface extends VersionedProtocol {
+  /**
+   * This Interfaces' version. Version changes when the Interface changes.
+   */
+  // All HBase Interfaces used derive from HBaseRPCProtocolVersion.  It
+  // maintained a single global version number on all HBase Interfaces.  This
+  // meant all HBase RPC was broke though only one of the three RPC Interfaces
+  // had changed.  This has since been undone.
+  public static final long VERSION = 28L;
 
   /** @return true if master is available */
   public boolean isMasterRunning();

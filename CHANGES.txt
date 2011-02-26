@@ -31,14 +31,28 @@ Release 0.91.0 - Unreleased
    HBASE-3476  HFile -m option need not scan key values
                (Prakash Khemani via Lars George)
    HBASE-3481  max seq id in flushed file can be larger than its correct value 
-   	           causing data loss during recovery
+               causing data loss during recovery
    HBASE-3493  HMaster sometimes hangs during initialization due to missing
                notify call (Bruno Dumon via Stack)
-
+   HBASE-3494  checkAndPut implementation doesnt verify row param and writable 
+               row are the same
+   HBASE-3416  For intra-row scanning, the update readers notification resets
+               the query matcher and can lead to incorrect behavior
+   HBASE-3492  NPE while splitting table with empty column family store
+   HBASE-3495  Shell is failing on subsequent split calls
+   HBASE-3400  Coprocessor Support for Generic Interfaces
+               (Ed Kohlwey via Gary Helmling)
+   HBASE-3502  Can't open region because can't open .regioninfo because
+               AlreadyBeingCreatedException
+   HBASE-3501  Remove the deletion limit in LogCleaner
+   HBASE-3500  Documentation update for replicatio
+   HBASE-3525  mvn assembly is over-filling the hbase lib dir
+   HBASE-3531  When under global memstore pressure, dont try to flush
+               unflushable regions.
+   HBASE-3550  FilterList reports false positives (Bill Graham via Andrew
+               Purtell)
 
   IMPROVEMENTS
-   HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
-               Andrew Purtell)
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
    HBASE-3292  Expose block cache hit/miss/evict counts into region server
                metrics
@@ -48,32 +62,79 @@ Release 0.91.0 - Unreleased
    HBASE-1861  Multi-Family support for bulk upload tools
    HBASE-3308  SplitTransaction.splitStoreFiles slows splits a lot
    HBASE-3328  Added Admin API to specify explicit split points
-   HBASE-3345  Coprocessors: Allow observers to completely override base
-               function
-   HBASE-3260  Coprocessors: Add explicit lifecycle management
    HBASE-3377  Upgrade Jetty to 6.1.26
    HBASE-3387  Pair does not deep check arrays for equality
                (Jesse Yates via Stack)
    HBASE-3393  Update Avro gateway to use Avro 1.4.1 and the new
                server.join() method (Jeff Hammerbacher via Stack)
    HBASE-3437  Support Explict Split Points from the Shell
-   HBASE-3433  KeyValue API to explicitly distinguish between deep & shallow copies
+   HBASE-3433  KeyValue API to explicitly distinguish between deep & shallow
+               copies
    HBASE-3305  Allow round-robin distribution for table created with
                multiple regions (ted yu via jgray)
+   HBASE-3496  HFile CLI Improvements
+   HBASE-3522  Unbundle our RPC versioning; rather than a global for all 4
+               Interfaces -- region, master, region to master, and
+               coprocesssors -- instead version each individually
+   HBASE-3520  Update our bundled hadoop from branch-0.20-append to latest
+               (rpc version 43)
+   HBASE-3563  [site] Add one-page-only version of hbase doc
 
 
   NEW FEATURES
+   HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
+               Andrew Purtell)
    HBASE-3287  Add option to cache blocks on hfile write and evict blocks on
                hfile close
    HBASE-3335  Add BitComparator for filtering (Nathaniel Cook via Stack)
+   HBASE-3260  Coprocessors: Add explicit lifecycle management
    HBASE-3256  Coprocessors: Coprocessor host and observer for HMaster
+   HBASE-3345  Coprocessors: Allow observers to completely override base
+               function
    HBASE-3448  RegionSplitter, utility class to manually split tables
+   HBASE-2824  A filter that randomly includes rows based on a configured
+               chance (Ferdy via Andrew Purtell)
+   HBASE-3455  Add memstore-local allocation buffers to combat heap
+               fragmentation in the region server. Enabled by default as of
+               0.91
+   HBASE-3257  Coprocessors: Extend server side API to include HLog operations
+               (Mingjie Lai via Andrew Purtell)
+
+
+Release 0.90.2 - Unreleased
+  
+  BUG FIXES
+   HBASE-3545  Possible liveness issue with MasterServerAddress in
+               HRegionServer getMaster (Greg Bowyer via Stack)
+   HBASE-3548  Fix type in documentation of pseudo distributed mode
+   HBASE-3553  HTable ThreadPoolExecutor does not properly initialize
+               for hbase.htable.threads.max threads
+               (Himanshu Vashishtha via garyh)
+
+  IMPROVEMENTS
+   HBASE-3542  MultiGet methods in Thrift
 
 Release 0.90.1 - Unreleased
 
+  NEW FEATURES
+   HBASE-3455  Add memstore-local allocation buffers to combat heap
+               fragmentation in the region server. Experimental / disabled
+               by default in 0.90.1
+  
   BUG FIXES
    HBASE-3483  Memstore lower limit should trigger asynchronous flushes
+   HBASE-3524  NPE from CompactionChecker
 
+  IMPROVEMENTS
+   HBASE-3508  LruBlockCache statistics thread should have a name
+   HBASE-3511  Allow rolling restart to apply to only RS or only masters
+   HBASE-3510  Add thread name for IPC reader threads
+   HBASE-3509  Add metric for flush queue length
+   HBASE-3419  If re-transition to OPENING during log replay fails, server
+               aborts. Instead, should just cancel region open.
+   HBASE-3515  [replication] ReplicationSource can miss a log after RS comes
+               out of GC
+   HBASE-3517  Store build version in hbase-default.xml and verify at runtime
 
 Release 0.90.0 - January 19th, 2011
   INCOMPATIBLE CHANGES

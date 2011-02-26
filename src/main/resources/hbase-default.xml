@@ -360,6 +360,16 @@
     </description>
   </property>
   <property>
+    <name>hbase.hregion.memstore.mslab.enabled</name>
+    <value>true</value>
+    <description>
+      Enables the MemStore-Local Allocation Buffer,
+      a feature which works to prevent heap fragmentation under
+      heavy write loads. This can reduce the frequency of stop-the-world
+      GC pauses on large heaps.
+    </description>
+  </property>
+  <property>
     <name>hbase.hregion.max.filesize</name>
     <value>268435456</value>
     <description>
@@ -673,6 +683,16 @@
     Defines the mode the REST server will be started in. Possible values are:
     false: All HTTP methods are permitted - GET/PUT/POST/DELETE.
     true: Only the GET method is permitted.
+    </description>
+  </property>
+
+  <property skipInDoc="true">
+    <name>hbase.defaults.for.version</name>
+    <value>@@@VERSION@@@</value>
+    <description>
+    This defaults file was compiled for version @@@VERSION@@@. This variable is used
+    to make sure that a user doesn't have an old version of hbase-default.xml on the
+    classpath.
     </description>
   </property>
 </configuration>
