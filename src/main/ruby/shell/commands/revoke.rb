@@ -20,24 +20,20 @@
 
 module Shell
   module Commands
-    class Grant < Command
+    class Revoke < Command
       def help
         return <<-EOF
-Grant users specific rights to tables.
-Syntax : grant <user> <permissions> <table> <column family>
-
-permissions is either zero or more letters from the set "RWXCA".
-READ('R'), WRITE('W'), EXEC('X'), CREATE('C'), ADMIN('A')
-
+Revoke a user's access rights to tables.
+Syntax : revoke <user> <table> <column family>
 For example:
 
-    hbase> grant 'bobsmith', 'RW', 't1', 'f1'
+    hbase> revoke 'bobsmith', 't1', 'f1'
 EOF
       end
 
-      def command(user, rights, table_name, family)
+      def command(user, table_name, family)
         format_simple_command do
-          admin.grant(user, rights, table_name, family)
+          admin.revoke(user, table_name, family)
         end
       end
     end

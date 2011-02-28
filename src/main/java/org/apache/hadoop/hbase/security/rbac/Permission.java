@@ -75,7 +75,8 @@ public class Permission extends VersionedWritable {
 
   public Permission(byte[] actionCodes) {
     if (actionCodes != null) {
-      this.actions = new Action[actionCodes.length];
+      Action acts[] = new Action[actionCodes.length];
+      int j = 0;
       for (int i=0; i<actionCodes.length; i++) {
         byte b = actionCodes[i];
         Action a = ACTION_BY_CODE.get(b);
@@ -84,8 +85,9 @@ public class Permission extends VersionedWritable {
               Bytes.toStringBinary(new byte[]{b})+"'");
           continue;
         }
-        this.actions[i] = a;
+        acts[j++] = a;
       }
+      this.actions = Arrays.copyOf(acts, j);
     }
   }
 

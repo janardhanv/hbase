@@ -16,8 +16,10 @@
 
 package org.apache.hadoop.hbase.security.rbac;
 
+import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.Multimap;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.HColumnDescriptor;
@@ -28,6 +30,7 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
+import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
@@ -36,9 +39,11 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.coprocessor.BaseRegionObserverCoprocessor;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorEnvironment;
+import org.apache.hadoop.hbase.coprocessor.CoprocessorException;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.MasterObserver;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
@@ -49,11 +54,21 @@ import java.io.IOException;
 import java.util.*;
 
 public class AccessController extends BaseRegionObserverCoprocessor
-    implements MasterObserver {
+    implements MasterObserver, AccessControllerProtocol {
   public static final Log LOG = LogFactory.getLog(AccessController.class);
 
+  /**
+   * Version number for AccessControllerProtocol
+   */
+  private static final long PROTOCOL_VERSION = 28L;
+
   TableAuthManager authManager = null;
+
   boolean isMetaRegion = false;
+
+  // defined only for Endpoint implementation, so it can have way to
+  // access region services.
+  private RegionCoprocessorEnvironment regionEnv;
 
   void openMetaRegion(RegionCoprocessorEnvironment e) throws IOException {
     final HRegion region = e.getRegion();
@@ -250,6 +265,11 @@ public class AccessController extends BaseRegionObserverCoprocessor
       this.authManager = TableAuthManager.get(
           e.getMasterServices().getZooKeeperWatcher(),
           e.getConf());
+    }
+
+    // if running at region
+    if (env instanceof RegionCoprocessorEnvironment) {
+      regionEnv = (RegionCoprocessorEnvironment)env;
     }
   }
 
@@ -487,7 +507,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
       final byte [] value, final Put put, final boolean result)
       throws IOException {
     requirePermission(TablePermission.Action.READ, e, 
-        Arrays.asList( new byte[][] {family}));
+        Arrays.asList(new byte[][]{family}));
     return result;
   }
 
@@ -507,7 +527,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
       final long amount, final boolean writeToWAL)
       throws IOException {
     requirePermission(TablePermission.Action.READ, e, 
-        Arrays.asList( new byte[][] {family}));
+        Arrays.asList(new byte[][]{family}));
     return -1;
   }
 
@@ -539,5 +559,101 @@ public class AccessController extends BaseRegionObserverCoprocessor
   public void preScannerClose(final RegionCoprocessorEnvironment e,
       final InternalScanner s) throws IOException {
     requirePermission(TablePermission.Action.READ, e, null);
+  }
+
+  // the following endpoint methods are provided for grant/revoke/list
+  // permissions from client side. They're suppose to be executed only
+  // at the .META. region. This restriction will be applied by both client
+  // side and endpoint implementation.
+  @Override
+  public boolean grant(byte[] user, TablePermission permission)
+      throws IOException {
+    // verify it's only running at.META.
+    if (isMetaRegion) {
+      LOG.info("Receive request to grant access permission to '"
+          + Bytes.toString(user) + "'. "
+          + permission.toString());
+
+      CatalogTracker tracker = this.getEnvironment().
+          getRegionServerServices().getCatalogTracker();
+      List<HRegionInfo> regions = MetaReader.getTableRegions(tracker,
+          permission.getTable());
+
+      // perms only stored against the first region
+      HRegionInfo firstRegion = regions.get(0);
+
+      AccessControlLists.addTablePermission(tracker, firstRegion,
+          Bytes.toString(user), permission);
+      LOG.info("Grant permission successfully.");
+    } else {
+      throw new CoprocessorException(AccessController.class, "This method " +
+          "can only execute at " +
+          Bytes.toString(HConstants.META_TABLE_NAME) + " table.");
+    }
+    return true;
+  }
+
+  @Override
+  public boolean revoke(byte[] user, TablePermission permission)
+      throws IOException{
+    // verify it's only for .META.
+    if (isMetaRegion) {
+      LOG.info("Receive request to revoke access permission for '"
+          + Bytes.toString(user) + "'. "
+          + permission.toString());
+
+      CatalogTracker tracker = this.getEnvironment().
+          getRegionServerServices().getCatalogTracker();
+      List<HRegionInfo> regions = MetaReader.getTableRegions(tracker,
+          permission.getTable());
+
+      // perms only stored against the first region
+      HRegionInfo firstRegion = regions.get(0);
+
+      AccessControlLists.removeTablePermission(tracker, firstRegion,
+          Bytes.toString(user), permission);
+      LOG.info("Revoke permission successfully.");
+    } else {
+      throw new CoprocessorException(AccessController.class, "This method " +
+          "can only execute at " +
+          Bytes.toString(HConstants.META_TABLE_NAME) + " table.");
+    }
+    return true;
+  }
+
+  @Override
+  public List<UserPermission> getUserPermissions(final byte[] tableName)
+      throws IOException {
+    // verify it's only for .META.
+    if (isMetaRegion) {
+      CatalogTracker tracker = this.getEnvironment().
+          getRegionServerServices().getCatalogTracker();
+
+      List<UserPermission> perms = AccessControlLists.getUserPermissions
+          (tracker, tableName);
+      return perms;
+    } else {
+      throw new CoprocessorException(AccessController.class, "This method " +
+          "can only execute at " +
+          Bytes.toString(HConstants.META_TABLE_NAME) + " table.");
+    }
+  }
+  @Override
+  public long getProtocolVersion(String protocol, long clientVersion) throws IOException {
+    return PROTOCOL_VERSION;
+  }
+
+  /**
+   * @param e Coprocessor environment.
+   */
+  private void setEnvironment(RegionCoprocessorEnvironment e) {
+    regionEnv = e;
+  }
+
+  /**
+   * @return env Coprocessor environment.
+   */
+  public RegionCoprocessorEnvironment getEnvironment() {
+    return regionEnv;
   }
 }

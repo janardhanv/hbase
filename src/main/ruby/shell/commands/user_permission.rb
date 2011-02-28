@@ -20,25 +20,28 @@
 
 module Shell
   module Commands
-    class Grant < Command
+    class UserPermission < Command
       def help
         return <<-EOF
-Grant users specific rights to tables.
-Syntax : grant <user> <permissions> <table> <column family>
-
-permissions is either zero or more letters from the set "RWXCA".
-READ('R'), WRITE('W'), EXEC('X'), CREATE('C'), ADMIN('A')
-
+Show all table access permissions for the particular user.
+Syntax : user_permission <table>
 For example:
 
-    hbase> grant 'bobsmith', 'RW', 't1', 'f1'
+    hbase> user_permission 'table1'
 EOF
       end
 
-      def command(user, rights, table_name, family)
-        format_simple_command do
-          admin.grant(user, rights, table_name, family)
+      def command(table)
+        #format_simple_command do
+        #admin.user_permission(table)
+        now = Time.now
+        formatter.header(["User", "Family:Permission"])
+
+        count = admin.user_permission(table) do |user, permission|
+          formatter.row([ user, permission])
         end
+
+        formatter.footer(now, count)
       end
     end
   end

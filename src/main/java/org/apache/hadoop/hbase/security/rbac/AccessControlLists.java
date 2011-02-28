@@ -29,6 +29,7 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
+import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
@@ -49,11 +50,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.DataOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.TreeMap;
+import java.util.*;
 
 public class AccessControlLists {
   /** delimiter to separate user and column family in .META. acl: column keys */
@@ -97,11 +94,31 @@ public class AccessControlLists {
           Bytes.toString(key)+": "+Bytes.toStringBinary(value)
       );
     }
-
     tracker.waitForMetaServerConnectionDefault().put(
         CatalogTracker.META_REGION, p);
   }
 
+  public static void removeTablePermission(CatalogTracker tracker,
+      HRegionInfo firstRegion, String userName, TablePermission perm)
+    throws IOException {
+
+    Delete d = new Delete(firstRegion.getRegionName());
+    byte[] key = null;
+    if (perm.getFamily() != null && perm.getFamily().length > 0) {
+      key = Bytes.toBytes(userName + ACL_KEY_DELIMITER +
+          Bytes.toString(perm.getFamily()));
+    } else {
+      key = Bytes.toBytes(userName);
+    }
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Removing permission for user '" + userName+ "': "+
+          perm.toString());
+    }
+    d.deleteColumns(HConstants.ACL_FAMILY, key);
+    tracker.waitForMetaServerConnectionDefault().delete(
+        CatalogTracker.META_REGION, d);
+  }
+  
   public static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
       HRegion metaRegion)
     throws IOException {
@@ -247,6 +264,22 @@ public class AccessControlLists {
       metaServer.close(scannerId);
     }
 
+    return perms;
+  }
+
+  public static List<UserPermission> getUserPermissions(
+      CatalogTracker tracker, byte[] tableName)
+  throws IOException {
+    ListMultimap<String,TablePermission> allPerms = getTablePermissions(
+      tracker, tableName);
+
+    List<UserPermission> perms = new ArrayList<UserPermission>();
+
+    for (Map.Entry<String, TablePermission> entry : allPerms.entries()) {
+      UserPermission up = new UserPermission(Bytes.toBytes(entry.getKey()),
+          entry.getValue().getFamily(), entry.getValue().getActions());
+      perms.add(up);
+    }
     return perms;
   }
 

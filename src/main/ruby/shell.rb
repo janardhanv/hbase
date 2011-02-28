@@ -224,6 +224,8 @@ Shell.load_command_group(
     is_enabled
     exists
     grant
+    revoke
+    user_permission
     list
   ]
 )

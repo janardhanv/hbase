@@ -220,15 +220,68 @@ module Hbase
     end
 
     #----------------------------------------------------------------------------------------------
-    # Add an rbac:info column with the value _rights_
-    # for the .META. row for the first region in the table _table_name_.
-    def grant(user,rights,table_name)
-      region_name = get_first_region(table_name)
-      put = Put.new(Bytes.toBytes(region_name))
-      put.add(org.apache.hadoop.hbase.HConstants::ACL_FAMILY,Bytes.toBytes(user),Bytes.toBytes(rights));
-      meta = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
-      meta.put(put)
+    def grant(user, permissions, table_name, family)
+      # Table should exist
+      raise(ArgumentError, "Can't find a table: #{table_name}") unless exists?(table_name)
+      
+      htd = @admin.getTableDescriptor(table_name.to_java_bytes)
+      raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
+
+      #TODO: need to validateuser name
+
+      # invoke cp endpiont to perform access control
+      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, family.to_java_bytes, permissions.to_java_bytes)
+      first = get_first_region(table_name)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
+      protocol.grant(user.to_java_bytes, tp)
     end
+
+    #----------------------------------------------------------------------------------------------
+    def revoke(user, table_name, family)
+      # Table should exist
+      raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
+
+      htd = @admin.getTableDescriptor(table_name.to_java_bytes)
+      raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
+
+      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, family.to_java_bytes, "".to_java_bytes)
+      first = get_first_region(table_name)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
+      protocol.revoke(user.to_java_bytes, tp)
+    end
+
+    #----------------------------------------------------------------------------------------------
+    def user_permission(table_name)
+      raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
+
+      first = get_first_region(table_name)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
+      perms = protocol.getUserPermissions(table_name.to_java_bytes)
+
+      res = {}
+      count  = 0
+      perms.each do |value|
+        user_name = String.from_java_bytes(value.getUser)
+        family = org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getFamily)
+
+        action = org.apache.hadoop.hbase.security.rbac.Permission.new value.getActions
+
+        if block_given?
+          yield(user_name, "#{family}:#{action.to_s}")
+        else
+          res[user_name] ||= {}
+          res[user_name][family] = action
+        end
+        count += 1
+      end
+      
+      return ((block_given?) ? count : res)
+    end
+
+    #----------------------------------------------------------------------------------------------
 
     def get_first_region(table_name)
       #return the name of the first region for the given table name.
