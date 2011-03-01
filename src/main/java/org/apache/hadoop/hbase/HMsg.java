@@ -38,20 +38,9 @@ import org.apache.hadoop.io.Writable;
  * design, these are to go via zk from here on out.
  */
 public class HMsg implements Writable {
-  public static final HMsg [] STOP_REGIONSERVER_ARRAY =
-    new HMsg [] {new HMsg(Type.STOP_REGIONSERVER)};
   public static final HMsg [] EMPTY_HMSG_ARRAY = new HMsg[0];
 
   public static enum Type {
-    /** Master tells region server to stop.
-     */
-    STOP_REGIONSERVER,
-
-    /**
-     * Region server split the region associated with this message.
-     */
-    REGION_SPLIT,
-
     /**
      * When RegionServer receives this message, it goes into a sleep that only
      * an exit will cure.  This message is sent by unit tests simulating
@@ -229,10 +218,6 @@ public class HMsg implements Writable {
        out.writeBoolean(true);
        Bytes.writeByteArray(out, this.message);
      }
-     if (this.type.equals(Type.REGION_SPLIT)) {
-       this.daughterA.write(out);
-       this.daughterB.write(out);
-     }
    }
 
   /**
@@ -245,12 +230,6 @@ public class HMsg implements Writable {
      boolean hasMessage = in.readBoolean();
      if (hasMessage) {
        this.message = Bytes.readByteArray(in);
-     }
-     if (this.type.equals(Type.REGION_SPLIT)) {
-       this.daughterA = new HRegionInfo();
-       this.daughterB = new HRegionInfo();
-       this.daughterA.readFields(in);
-       this.daughterB.readFields(in);
      }
    }
 }

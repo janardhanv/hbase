@@ -957,12 +957,13 @@ index e70ebc6..96f8c27 100644
           <para>
             Finally, if upgrading from 0.20.x, check your 
             <varname>.META.</varname> schema in the shell.  In the past we would
-            recommend that users run with a 16MB
-            <varname>MEMSTORE_SIZE</varname>.
+            recommend that users run with a 16kb
+            <varname>MEMSTORE_FLUSHSIZE</varname>.
             Run <code>hbase> scan '-ROOT-'</code> in the shell. This will output
             the current <varname>.META.</varname> schema.  Check
-            <varname>MEMSTORE_SIZE</varname> size.  Is it 16MB?  If so, you will
-            need to change this.  Run the script <filename>bin/set_meta_memstore_size.rb</filename>.
+            <varname>MEMSTORE_FLUSHSIZE</varname> size.  Is it 16kb (16384)?  If so, you will
+            need to change this (The 'normal'/default value is 64MB (67108864)).
+            Run the script <filename>bin/set_meta_memstore_size.rb</filename>.
             This will make the necessary edit to your <varname>.META.</varname> schema.
             Failure to run this change will make for a slow cluster <footnote>
             <para>
@@ -1343,7 +1344,7 @@ of all regions.
 
   <chapter xml:id="mapreduce">
   <title>HBase and MapReduce</title>
-  <para>See <link xlink:href="apidocs/org/apache/hadoop/hbase/mapreduce/package-summary.html#package_description">HBase and MapReduce</link>
+  <para>See <link xlink:href="http://hbase.org/apidocs/org/apache/hadoop/hbase/mapreduce/package-summary.html#package_description">HBase and MapReduce</link>
   up in javadocs.</para>
   </chapter>
 
