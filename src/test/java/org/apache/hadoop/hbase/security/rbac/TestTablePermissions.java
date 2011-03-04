@@ -67,6 +67,7 @@ public class TestTablePermissions {
   private static byte[] TEST_TABLE = Bytes.toBytes("perms_test");
   private static byte[] TEST_TABLE2 = Bytes.toBytes("perms_test2");
   private static byte[] TEST_FAMILY = Bytes.toBytes("f1");
+  private static byte[] TEST_QUALIFIER = Bytes.toBytes("col1");
 
   @BeforeClass
   public static void beforeClass() throws Exception {
@@ -101,6 +102,9 @@ public class TestTablePermissions {
     AccessControlLists.addTablePermission(CT, firstRegion,
         "hubert", new TablePermission(TEST_TABLE, null,
             TablePermission.Action.READ));
+    AccessControlLists.addTablePermission(CT, firstRegion,
+        "humphrey", new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_QUALIFIER,
+            TablePermission.Action.READ));
 
     // retrieve the same
     ListMultimap<String,TablePermission> perms =
@@ -134,6 +138,17 @@ public class TestTablePermissions {
     actions = Arrays.asList(permission.getActions());
     assertTrue(actions.contains(TablePermission.Action.READ));
     assertFalse(actions.contains(TablePermission.Action.WRITE));
+
+    userPerms = perms.get("humphrey");
+    assertNotNull("Should have read permissions for humphrey", userPerms);
+    assertEquals("Should have 1 permission for humphrey", 1, userPerms.size());
+    permission = userPerms.get(0);
+    assertTrue("Permission should be for " + TEST_TABLE,
+        Bytes.equals(TEST_TABLE, permission.getTable()));
+    assertTrue("Permission should be for family " + TEST_FAMILY,
+        Bytes.equals(TEST_FAMILY, permission.getFamily()));
+    assertTrue("Permission should be for qualifier " + TEST_QUALIFIER,
+        Bytes.equals(TEST_QUALIFIER, permission.getQualifier()));
 
     // table 2 permissions
     List<HRegionInfo> table2regions = MetaReader.getTableRegions(CT, TEST_TABLE2);
@@ -223,6 +238,11 @@ public class TestTablePermissions {
 
     p1 = new TablePermission(TEST_TABLE, TEST_FAMILY, TablePermission.Action.READ, TablePermission.Action.WRITE);
     p2 = new TablePermission(TEST_TABLE, TEST_FAMILY, TablePermission.Action.WRITE, TablePermission.Action.READ);
+    assertTrue(p1.equals(p2));
+    assertTrue(p2.equals(p1));
+
+    p1 = new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_QUALIFIER, TablePermission.Action.READ, TablePermission.Action.WRITE);
+    p2 = new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_QUALIFIER, TablePermission.Action.WRITE, TablePermission.Action.READ);
     assertTrue(p1.equals(p2));
     assertTrue(p2.equals(p1));
 

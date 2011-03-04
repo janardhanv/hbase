@@ -69,12 +69,14 @@ public class AccessControlLists {
     throws IOException {
 
     Put p = new Put(firstRegion.getRegionName());
-    byte[] key = null;
+    byte[] key = Bytes.toBytes(username);
     if (perm.getFamily() != null && perm.getFamily().length > 0) {
-      key = Bytes.toBytes(username + ACL_KEY_DELIMITER +
-          Bytes.toString(perm.getFamily()));
-    } else {
-      key = Bytes.toBytes(username);
+      key = Bytes.add(key,
+          Bytes.add(new byte[]{ACL_KEY_DELIMITER}, perm.getFamily()));
+    }
+    if (perm.getQualifier() != null && perm.getQualifier().length > 0) {
+      key = Bytes.add(key,
+          Bytes.add(new byte[]{ACL_KEY_DELIMITER}, perm.getQualifier()));
     }
 
     TablePermission.Action[] actions = perm.getActions();
@@ -225,12 +227,14 @@ public class AccessControlLists {
    * <p>
    * KeyValues for permissions assignments are stored in one of the formats:
    * <pre>
-   * Key            Desc
-   * --------       --------
-   * user           table level permissions for a user [R=read, W=write]
-   * @group         table level permissions for a group
-   * user,family    column family level permissions for a user
-   * @group,family  column family level permissions for a group
+   * Key                      Desc
+   * --------                 --------
+   * user                     table level permissions for a user [R=read, W=write]
+   * @group                   table level permissions for a group
+   * user,family              column family level permissions for a user
+   * @group,family            column family level permissions for a group
+   * user,family,qualifier    column qualifier level permissions for a user
+   * @group,family,qualifier  column qualifier level permissions for a group
    * </pre>
    * All values are encoded as byte arrays containing the codes from the
    * {@link org.apache.hadoop.hbase.security.rbac.TablePermission.Action} enum.
@@ -325,15 +329,23 @@ public class AccessControlLists {
 
     // check for a column family appended to the key
     String username = Bytes.toString(key);
-    int idx = username.lastIndexOf(ACL_KEY_DELIMITER);
+    int idx = username.indexOf(ACL_KEY_DELIMITER);
     byte[] permFamily = null;
+    byte[] permQualifier = null;
     if (idx > 0 && idx < username.length()-1) {
-      permFamily = Bytes.toBytes(username.substring(idx+1));
+      String remainder = username.substring(idx+1);
       username = username.substring(0, idx);
+      idx = remainder.indexOf(ACL_KEY_DELIMITER);
+      if (idx > 0 && idx < remainder.length()-1) {
+        permFamily = Bytes.toBytes(remainder.substring(0, idx));
+        permQualifier = Bytes.toBytes(remainder.substring(idx+1));
+      } else {
+        permFamily = Bytes.toBytes(remainder);
+      }
     }
 
-    return new Pair<String,TablePermission>(username,
-        new TablePermission(table, permFamily, value));
+    return new Pair<String,TablePermission>(
+        username, new TablePermission(table, permFamily, permQualifier, value));
   }
 
   /**

@@ -58,6 +58,18 @@ public class RequestContext {
   }
 
   /**
+   * Returns the username for any user associated with the current RPC
+   * request or <code>null</code> if no user is set.
+   */
+  public static String getRequestUserName() {
+    UserGroupInformation user = getRequestUser();
+    if (user != null) {
+      return user.getShortUserName();
+    }
+    return null;
+  }
+
+  /**
    * Indicates whether or not the current thread is within scope of executing
    * an RPC request.
    */

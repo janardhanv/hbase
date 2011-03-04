@@ -220,7 +220,7 @@ module Hbase
     end
 
     #----------------------------------------------------------------------------------------------
-    def grant(user, permissions, table_name, family)
+    def grant(user, permissions, table_name, family=nil, qualifier=nil)
       # Table should exist
       raise(ArgumentError, "Can't find a table: #{table_name}") unless exists?(table_name)
       
@@ -230,7 +230,9 @@ module Hbase
       #TODO: need to validateuser name
 
       # invoke cp endpiont to perform access control
-      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, family.to_java_bytes, permissions.to_java_bytes)
+      fambytes = family.to_java_bytes if defined? family
+      qualbytes = qualifier.to_java_bytes if defined? qualifier
+      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, permissions.to_java_bytes)
       first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
       protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
@@ -238,14 +240,16 @@ module Hbase
     end
 
     #----------------------------------------------------------------------------------------------
-    def revoke(user, table_name, family)
+    def revoke(user, table_name, family=nil, qualifier=nil)
       # Table should exist
       raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
 
       htd = @admin.getTableDescriptor(table_name.to_java_bytes)
       raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
 
-      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, family.to_java_bytes, "".to_java_bytes)
+      fambytes = family.to_java_bytes if defined? family
+      qualbytes = qualifier.to_java_bytes if defined? qualifier
+      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, "".to_java_bytes)
       first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
       protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
@@ -288,8 +292,8 @@ module Hbase
       #for example, given "foo", this will return something like:
       # "foo,,1285018739013.639eb6f8570828eb2fcab130b7914c25."
       region = nil
-      scan = Scan.new
-      scan.setStartRow(Bytes.toBytes(table_name+",,"))
+      scan = org.apache.hadoop.hbase.client.Scan.new
+      scan.setStartRow(org.apache.hadoop.hbase.util.Bytes.toBytes(table_name+",,"))
       scan.setCaching(1);
       scanner = @meta.getScanner(scan)
       iter = scanner.iterator

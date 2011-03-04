@@ -22,6 +22,7 @@ package org.apache.hadoop.hbase.security.rbac;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.util.Bytes;
 
 import java.io.DataInput;
@@ -38,6 +39,7 @@ public class TablePermission extends Permission {
 
   private byte[] table;
   private byte[] family;
+  private byte[] qualifier;
 
   /** Nullary constructor for Writable, do not use */
   public TablePermission() {
@@ -51,9 +53,21 @@ public class TablePermission extends Permission {
    * @param assigned the list of allowed actions
    */
   public TablePermission(byte[] table, byte[] family, Action... assigned) {
+    this(table, family, null, assigned);
+  }
+
+  /**
+   * Constructor
+   * @param table the table
+   * @param family the family, can be null if a global permission on the table
+   * @param assigned the list of allowed actions
+   */
+  public TablePermission(byte[] table, byte[] family, byte[] qualifier,
+      Action... assigned) {
     super(assigned);
     this.table = table;
     this.family = family;
+    this.qualifier = qualifier;
   }
 
   /**
@@ -62,10 +76,12 @@ public class TablePermission extends Permission {
    * @param family the family, can be null if a global permission on the table
    * @param actionCodes the list of allowed action codes
    */
-  public TablePermission(byte[] table, byte[] family, byte[] actionCodes) {
+  public TablePermission(byte[] table, byte[] family, byte[] qualifier,
+      byte[] actionCodes) {
     super(actionCodes);
     this.table = table;
     this.family = family;
+    this.qualifier = qualifier;
   }
 
   public byte[] getTable() {
@@ -74,6 +90,10 @@ public class TablePermission extends Permission {
 
   public byte[] getFamily() {
     return family;
+  }
+
+  public byte[] getQualifier() {
+    return qualifier;
   }
 
   /**
@@ -85,7 +105,8 @@ public class TablePermission extends Permission {
    * @param action
    * @return
    */
-  public boolean implies(byte[] table, byte[] family, Action action) {
+  public boolean implies(byte[] table, byte[] family, byte[] qualifier,
+      Action action) {
     if (!Bytes.equals(this.table, table)) {
       return false;
     }
@@ -96,6 +117,57 @@ public class TablePermission extends Permission {
       return false;
     }
 
+    if (this.qualifier != null &&
+        (qualifier == null ||
+         !Bytes.equals(this.qualifier, qualifier))) {
+      return false;
+    }
+
+    // check actions
+    return super.implies(action);
+  }
+
+  public boolean implies(byte[] table, KeyValue kv, Action action) {
+    if (!Bytes.equals(this.table, table)) {
+      return false;
+    }
+
+    if (family != null &&
+        (Bytes.compareTo(family, 0, family.length,
+            kv.getBuffer(), kv.getFamilyOffset(), kv.getFamilyLength()) != 0)) {
+      return false;
+    }
+
+    if (qualifier != null &&
+        (Bytes.compareTo(qualifier, 0, qualifier.length,
+            kv.getBuffer(), kv.getQualifierOffset(), kv.getQualifierLength()) != 0)) {
+      return false;
+    }
+
+    // check actions
+    return super.implies(action);
+  }
+
+  /**
+   * Returns <code>true</code> if this permission matches the given column
+   * family at least.  This only indicates a partial match against the table
+   * and column family, however, and does not guarantee that implies() for the
+   * column same family would return <code>true</code>.  In the case of a
+   * column-qualifier specific permission, for example, implies() would still
+   * return false.
+   */
+  public boolean matchesFamily(byte[] table, byte[] family, Action action) {
+    if (!Bytes.equals(this.table, table)) {
+      return false;
+    }
+
+    if (this.family != null &&
+        (family == null ||
+         !Bytes.equals(this.family, family))) {
+      return false;
+    }
+
+    // ignore qualifier
     // check actions
     return super.implies(action);
   }
@@ -108,8 +180,10 @@ public class TablePermission extends Permission {
 
     if (!(Bytes.equals(table, other.getTable()) &&
         ((family == null && other.getFamily() == null) ||
-         Bytes.equals(family, other.getFamily())
-       ))) {
+         Bytes.equals(family, other.getFamily())) &&
+        ((qualifier == null && other.getQualifier() == null) ||
+         Bytes.equals(qualifier, other.getQualifier()))
+       )) {
       return false;
     }
 
@@ -121,6 +195,7 @@ public class TablePermission extends Permission {
     StringBuilder str = new StringBuilder("[TablePermission: ")
         .append("table=").append(Bytes.toString(table))
         .append(", family=").append(Bytes.toString(family))
+        .append(", qualifier=").append(Bytes.toString(qualifier))
         .append(", actions=");
     if (actions != null) {
       for (int i=0; i<actions.length; i++) {
@@ -144,6 +219,9 @@ public class TablePermission extends Permission {
     if (in.readBoolean()) {
       family = Bytes.readByteArray(in);
     }
+    if (in.readBoolean()) {
+      qualifier = Bytes.readByteArray(in);
+    }
   }
 
   @Override
@@ -153,6 +231,10 @@ public class TablePermission extends Permission {
     out.writeBoolean(family != null);
     if (family != null) {
       Bytes.writeByteArray(out, family);
+    }
+    out.writeBoolean(qualifier != null);
+    if (qualifier != null) {
+      Bytes.writeByteArray(out, qualifier);
     }
   }
 }

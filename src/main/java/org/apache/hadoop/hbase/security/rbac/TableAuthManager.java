@@ -26,6 +26,7 @@ import com.google.common.collect.Lists;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -208,12 +209,49 @@ public class TableAuthManager {
       Permission.Action action) {
     if (perms != null) {
       for (TablePermission p : perms) {
-        if (p.implies(table, family, action)) {
+        if (p.implies(table, family, null, action)) {
           return true;
         }
       }
     } else if (LOG.isDebugEnabled()) {
       LOG.debug("No permissions found for table="+Bytes.toStringBinary(table));
+    }
+
+    return false;
+  }
+
+  public boolean authorize(UserGroupInformation user, byte[] table, KeyValue kv,
+      TablePermission.Action action) {
+    List<TablePermission> userPerms = getUserPermissions(
+        user.getShortUserName(), table);
+    if (authorize(userPerms, table, kv, action)) {
+      return true;
+    }
+
+    String[] groupNames = user.getGroupNames();
+    if (groupNames != null) {
+      for (String group : groupNames) {
+        List<TablePermission> groupPerms = getGroupPermissions(group, table);
+        if (authorize(groupPerms, table, kv, action)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  public boolean authorize(List<TablePermission> perms, byte[] table, KeyValue kv,
+      TablePermission.Action action) {
+    if (perms != null) {
+      for (TablePermission p : perms) {
+        if (p.implies(table, kv, action)) {
+          return true;
+        }
+      }
+    } else if (LOG.isDebugEnabled()) {
+      LOG.debug("No permissions for authorize() check, table=" +
+          Bytes.toStringBinary(table));
     }
 
     return false;
@@ -286,6 +324,41 @@ public class TableAuthManager {
         }
       }
     }
+    return false;
+  }
+
+  /**
+   * Returns true if the given user has a {@link TablePermission} matching up
+   * to the column family portion of a permission.  Note that this permission
+   * may be scoped to a given column qualifier and does not guarantee that
+   * authorize() on the same column family would return true.
+   */
+  public boolean matchFamilyPermission(UserGroupInformation user,
+      byte[] table, byte[] family, TablePermission.Action action) {
+    List<TablePermission> userPerms = getUserPermissions(
+        user.getShortUserName(), table);
+    if (userPerms != null) {
+      for (TablePermission p : userPerms) {
+        if (p.matchesFamily(table, family, action)) {
+          return true;
+        }
+      }
+    }
+
+    String[] groups = user.getGroupNames();
+    if (groups != null) {
+      for (String group : groups) {
+        List<TablePermission> groupPerms = getGroupPermissions(group, table);
+        if (groupPerms != null) {
+          for (TablePermission p : groupPerms) {
+            if (p.matchesFamily(table, family, action)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
     return false;
   }
 

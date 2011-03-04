@@ -19,6 +19,8 @@ package org.apache.hadoop.hbase.security.rbac;
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
 import com.google.common.collect.Lists;
+import com.google.common.collect.MapMaker;
+import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -43,6 +45,7 @@ import org.apache.hadoop.hbase.coprocessor.CoprocessorException;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.MasterObserver;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+import org.apache.hadoop.hbase.filter.FilterList;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.regionserver.HRegion;
@@ -70,6 +73,10 @@ public class AccessController extends BaseRegionObserverCoprocessor
   // access region services.
   private RegionCoprocessorEnvironment regionEnv;
 
+  /** Mapping of scanner instances to the user who created them */
+  private Map<InternalScanner,String> scannerOwners =
+      new MapMaker().weakKeys().makeMap();
+
   void openMetaRegion(RegionCoprocessorEnvironment e) throws IOException {
     final HRegion region = e.getRegion();
 
@@ -89,6 +96,10 @@ public class AccessController extends BaseRegionObserverCoprocessor
     }
   }
 
+  /**
+   * Writes all table ACLs for the tables in the given Map up into ZooKeeper
+   * znodes.
+   */
   void updateACL(RegionCoprocessorEnvironment e,
       final Map<byte[], List<KeyValue>> familyMap) {
     Set<String> tableSet = new HashSet<String>();
@@ -207,7 +218,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
       }
     } else {
       // just check for the table-level
-      result = authManager.authorize(user, htd.getName(), null, permRequest);
+      result = authManager.authorize(user, htd.getName(), (byte[])null, permRequest);
     }
 
     if (LOG.isDebugEnabled()) {
@@ -255,6 +266,35 @@ public class AccessController extends BaseRegionObserverCoprocessor
         env.getRegion().getTableDesc().getNameAsString()+", action=" +
         perm.toString() + ")");
     }
+  }
+
+  /**
+   * Returns <code>true</code> if the current user is allowed the given action
+   * over at least one of the column qualifiers in the given column families.
+   */
+  public boolean hasFamilyQualifierPermission(TablePermission.Action perm,
+      RegionCoprocessorEnvironment env, Collection<byte[]> families)
+    throws IOException {
+    HRegionInfo hri = env.getRegion().getRegionInfo();
+    HTableDescriptor htd = hri.getTableDesc();
+    byte[] tableName = htd.getName();
+
+    UserGroupInformation user = RequestContext.getRequestUser();
+    if (user == null) {
+      LOG.info("No user associated with request.  Permission denied!");
+      return false;
+    }
+
+    if (families != null && families.size() > 0) {
+      // at least one family must be allowed
+      for (byte[] fam : families) {
+        if (authManager.matchFamilyPermission(user, tableName, fam, perm)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
   }
 
   /* ---- MasterObserver implementation ---- */
@@ -460,7 +500,27 @@ public class AccessController extends BaseRegionObserverCoprocessor
   @Override
   public void preGet(final RegionCoprocessorEnvironment e, final Get get,
       final List<KeyValue> result) throws IOException {
-    requirePermission(TablePermission.Action.READ, e, get.familySet());
+    /*
+     if column family level checks fail, check for a qualifier level permission
+     in one of the families.  If it is present, then continue with the AccessControlFilter.
+      */
+    if (!permissionGranted(TablePermission.Action.READ, e, get.familySet())) {
+      if (hasFamilyQualifierPermission(TablePermission.Action.READ, e,
+          get.familySet())) {
+        byte[] table = getTableName(e);
+        AccessControlFilter filter = new AccessControlFilter(authManager,
+            UserGroupInformation.getCurrentUser(), table);
+
+        // wrap any existing filter
+        if (get.getFilter() != null) {
+          FilterList wrapper = new FilterList(FilterList.Operator.MUST_PASS_ALL,
+              Lists.newArrayList(filter, get.getFilter()));
+          get.setFilter(wrapper);
+        } else {
+          get.setFilter(filter);
+        }
+      }
+    }
   }
 
   @Override
@@ -542,8 +602,44 @@ public class AccessController extends BaseRegionObserverCoprocessor
   @Override
   public InternalScanner preScannerOpen(final RegionCoprocessorEnvironment e,
       final Scan scan, final InternalScanner s) throws IOException {
-    requirePermission(TablePermission.Action.READ, e,
-        Arrays.asList(scan.getFamilies()));
+    /*
+     if column family level checks fail, check for a qualifier level permission
+     in one of the families.  If it is present, then continue with the AccessControlFilter.
+      */
+    UserGroupInformation user = RequestContext.getRequestUser();
+    List<byte[]> families = Arrays.asList(scan.getFamilies());
+    if (!permissionGranted(TablePermission.Action.READ, e, families)) {
+      if (hasFamilyQualifierPermission(TablePermission.Action.READ, e, families)) {
+        byte[] table = getTableName(e);
+        AccessControlFilter filter = new AccessControlFilter(authManager,
+            user, table);
+
+        // wrap any existing filter
+        if (scan.hasFilter()) {
+          FilterList wrapper = new FilterList(FilterList.Operator.MUST_PASS_ALL,
+              Lists.newArrayList(filter, scan.getFilter()));
+          scan.setFilter(wrapper);
+        } else {
+          scan.setFilter(filter);
+        }
+      } else {
+        // no table/family level perms and no qualifier level perms, reject
+        throw new AccessDeniedException("Insufficient permissions for user '"+
+            (user != null ? user.getShortUserName() : "null")+"' "+
+            "for scanner open on table "+getTableName(e));
+      }
+    }
+    return s;
+  }
+
+  @Override
+  public InternalScanner postScannerOpen(final RegionCoprocessorEnvironment e,
+      final Scan scan, final InternalScanner s) throws IOException {
+    UserGroupInformation user = RequestContext.getRequestUser();
+    if (user != null && user.getShortUserName() != null) {
+      // store reference to scanner owner for later checks
+      scannerOwners.put(s, user.getShortUserName());
+    }
     return s;
   }
 
@@ -551,14 +647,37 @@ public class AccessController extends BaseRegionObserverCoprocessor
   public boolean preScannerNext(final RegionCoprocessorEnvironment e,
       final InternalScanner s, final List<KeyValue> result,
       final int limit, final boolean hasNext) throws IOException {
-    requirePermission(TablePermission.Action.READ, e, null);
+    // verify that requesting user matches the user who created the scanner
+    // if so, we assume that access control is correctly enforced based on
+    // the checks performed in preScannerOpen()
+    if (RequestContext.isInRequestContext()) {
+      String owner = scannerOwners.get(s);
+      if (owner != null && !owner.equals(RequestContext.getRequestUserName())) {
+        throw new AccessDeniedException("User '"+
+            RequestContext.getRequestUserName()+"' is not the scanner owner!");
+      }
+    }
     return hasNext;
   }
 
   @Override
   public void preScannerClose(final RegionCoprocessorEnvironment e,
       final InternalScanner s) throws IOException {
-    requirePermission(TablePermission.Action.READ, e, null);
+    // Verify, when called through RPC, that the caller is the scanner owner
+    if (RequestContext.isInRequestContext()) {
+      String owner = scannerOwners.get(s);
+      if (owner != null && !owner.equals(RequestContext.getRequestUserName())) {
+        throw new AccessDeniedException("User '"+
+            RequestContext.getRequestUserName()+"' is not the scanner owner!");
+      }
+    }
+  }
+
+  @Override
+  public void postScannerClose(final RegionCoprocessorEnvironment e,
+      final InternalScanner s) throws IOException {
+    // clean up any associated owner mapping
+    scannerOwners.remove(s);
   }
 
   // the following endpoint methods are provided for grant/revoke/list
@@ -655,5 +774,19 @@ public class AccessController extends BaseRegionObserverCoprocessor
    */
   public RegionCoprocessorEnvironment getEnvironment() {
     return regionEnv;
+  }
+
+  public byte[] getTableName(RegionCoprocessorEnvironment e) {
+    HRegion region = e.getRegion();
+    byte[] tableName = null;
+
+    if (region != null) {
+      HRegionInfo regionInfo = region.getRegionInfo();
+      if (regionInfo != null) {
+        HTableDescriptor tableDesc = regionInfo.getTableDesc();
+        tableName = tableDesc.getName();
+      }
+    }
+    return tableName;
   }
 }
