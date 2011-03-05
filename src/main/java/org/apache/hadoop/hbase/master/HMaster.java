@@ -77,6 +77,7 @@ import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.HBasePolicyProvider;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.InfoServer;
 import org.apache.hadoop.hbase.util.Pair;
@@ -207,11 +208,10 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       0); // this is a DNC w/o high priority handlers
     this.address = new HServerAddress(rpcServer.getListenerAddress());
 
-    // initialize server principal
-    SecurityUtil.login(conf, "hbase.master.keytab.file",
+    // initialize server principal (if using secure Hadoop)
+    User.login(conf, "hbase.master.keytab.file",
         "hbase.master.kerberos.principal", this.address.getHostname());
     HBasePolicyProvider.init(conf);
-    // TODO: do we need a secret manager for digest auth?  If so need to set it in RpcServer here
 
     // set the thread name now we have an address
     setName(MASTER + "-" + this.address);
@@ -441,6 +441,10 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       this.assignmentManager.assignRoot();
       this.catalogTracker.waitForRoot();
       assigned++;
+    } else {
+      // Region already assigned.  We didnt' assign it.  Add to in-memory state.
+      this.assignmentManager.regionOnline(HRegionInfo.ROOT_REGIONINFO,
+        this.serverManager.getHServerInfo(this.catalogTracker.getRootLocation()));
     }
     LOG.info("-ROOT- assigned=" + assigned + ", rit=" + rit +
       ", location=" + catalogTracker.getRootLocation());
@@ -455,6 +459,10 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       // guarantee that the transition has completed
       this.assignmentManager.waitForAssignment(HRegionInfo.FIRST_META_REGIONINFO);
       assigned++;
+    } else {
+      // Region already assigned.  We didnt' assign it.  Add to in-memory state.
+      this.assignmentManager.regionOnline(HRegionInfo.FIRST_META_REGIONINFO,
+        this.serverManager.getHServerInfo(this.catalogTracker.getMetaLocation()));
     }
     LOG.info(".META. assigned=" + assigned + ", rit=" + rit +
       ", location=" + catalogTracker.getMetaLocation());

@@ -119,6 +119,7 @@ import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.WALObserver;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.HBasePolicyProvider;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CompressionTest;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
@@ -347,7 +348,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           + "hbase-958 debugging");
     }
 
-    SecurityUtil.login(conf, "hbase.regionserver.keytab.file",
+    // login the server principal (if using secure Hadoop)
+    User.login(conf, "hbase.regionserver.keytab.file",
         "hbase.regionserver.kerberos.principal", serverInfo.getHostname());
     HBasePolicyProvider.init(conf);
   }
