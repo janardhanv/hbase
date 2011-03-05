@@ -25,6 +25,7 @@ import static org.junit.Assert.*;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -64,7 +65,9 @@ public class TestAccessControlFilter {
     conf.set("hadoop.security.authentication", "simple");
     conf.set("hbase.coprocessor.master.classes", AccessController.class.getName());
     conf.set("hbase.coprocessor.region.classes", AccessController.class.getName());
-    conf.set("hbase.superuser", "admin,ghelmling.hfs.0,ghelmling.hfs.1");
+    String baseuser = User.getCurrent().getShortName();
+    conf.set("hbase.superuser",
+        String.format("admin,%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
     TEST_UTIL.startMiniCluster(2);
 
     ADMIN = User.createUserForTesting(TEST_UTIL.getConfiguration(),
@@ -114,7 +117,11 @@ public class TestAccessControlFilter {
     // test read
     READER.runAs(new PrivilegedExceptionAction<Object>() {
       public Object run() throws Exception {
-        ResultScanner rs = table.getScanner(new Scan());
+        Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+        // force a new RS connection
+        conf.set("testkey", UUID.randomUUID().toString());
+        HTable t = new HTable(conf, TABLE);
+        ResultScanner rs = t.getScanner(new Scan());
         int rowcnt = 0;
         for (Result r : rs) {
           rowcnt++;
@@ -132,7 +139,11 @@ public class TestAccessControlFilter {
     // test read with qualifier filter
     LIMITED.runAs(new PrivilegedExceptionAction<Object>() {
       public Object run() throws Exception {
-        ResultScanner rs = table.getScanner(new Scan());
+        Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+        // force a new RS connection
+        conf.set("testkey", UUID.randomUUID().toString());
+        HTable t = new HTable(conf, TABLE);
+        ResultScanner rs = t.getScanner(new Scan());
         int rowcnt = 0;
         for (Result r : rs) {
           rowcnt++;
@@ -150,7 +161,11 @@ public class TestAccessControlFilter {
     DENIED.runAs(new PrivilegedExceptionAction(){
       public Object run() throws Exception {
         try {
-          ResultScanner rs = table.getScanner(new Scan());
+          Configuration conf = new Configuration(TEST_UTIL.getConfiguration());
+          // force a new RS connection
+          conf.set("testkey", UUID.randomUUID().toString());
+          HTable t = new HTable(conf, TABLE);
+          ResultScanner rs = t.getScanner(new Scan());
           fail("Attempt to open scanner should have been denied");
         } catch (AccessDeniedException ade) {
           // expected
