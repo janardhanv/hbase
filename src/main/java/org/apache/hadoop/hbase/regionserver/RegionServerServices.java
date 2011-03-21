@@ -24,6 +24,7 @@ import java.io.IOException;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
+import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.zookeeper.KeeperException;
@@ -83,4 +84,9 @@ public interface RegionServerServices extends OnlineRegions {
    * Returns a reference to the RPC server metrics.
    */
   public HBaseRpcMetrics getRpcMetrics();
+
+  /**
+   * Returns a reference to the region server's RPC server
+   */
+  public RpcServer getRpcServer();
 }

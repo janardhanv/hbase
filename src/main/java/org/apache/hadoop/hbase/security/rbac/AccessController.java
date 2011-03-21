@@ -48,11 +48,19 @@ import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.filter.FilterList;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.ipc.RequestContext;
+import org.apache.hadoop.hbase.ipc.RpcServer;
+import org.apache.hadoop.hbase.ipc.SecureServer;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
+import org.apache.hadoop.hbase.security.HBaseSaslRpcServer;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenSecretManager;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.security.token.SecretManager;
+import org.apache.hadoop.security.token.Token;
+
 import java.io.IOException;
 import java.util.*;
 
@@ -72,6 +80,8 @@ public class AccessController extends BaseRegionObserverCoprocessor
   // defined only for Endpoint implementation, so it can have way to
   // access region services.
   private RegionCoprocessorEnvironment regionEnv;
+
+  private AuthenticationTokenSecretManager secretManager;
 
   /** Mapping of scanner instances to the user who created them */
   private Map<InternalScanner,String> scannerOwners =
@@ -310,6 +320,13 @@ public class AccessController extends BaseRegionObserverCoprocessor
     // if running at region
     if (env instanceof RegionCoprocessorEnvironment) {
       regionEnv = (RegionCoprocessorEnvironment)env;
+      RpcServer server = regionEnv.getRegionServerServices().getRpcServer();
+      if (server instanceof SecureServer) {
+        SecretManager mgr = ((SecureServer)server).getSecretManager();
+        if (mgr instanceof AuthenticationTokenSecretManager) {
+          secretManager = (AuthenticationTokenSecretManager)mgr;
+        }
+      }
     }
   }
 
@@ -757,6 +774,34 @@ public class AccessController extends BaseRegionObserverCoprocessor
           Bytes.toString(HConstants.META_TABLE_NAME) + " table.");
     }
   }
+
+  @Override
+  public Token<AuthenticationTokenIdentifier> getAuthenticationToken()
+      throws IOException {
+    if (secretManager == null) {
+      throw new IOException(
+          "No secret manager configured for token authentication");
+    }
+
+    UserGroupInformation currentUser = RequestContext.getRequestUser();
+    if (currentUser == null) {
+      throw new AccessDeniedException("No authenticated user for request!");
+    } else if (currentUser.getAuthenticationMethod() !=
+        UserGroupInformation.AuthenticationMethod.KERBEROS) {
+      LOG.warn("Token generation denied for user="+currentUser.getUserName()
+          +", authMethod="+currentUser.getAuthenticationMethod());
+      throw new AccessDeniedException(
+          "Token generation only allowed for Kerberos authenticated clients");
+    }
+
+    return secretManager.generateToken(currentUser.getUserName());
+  }
+
+  @Override
+  public String whoami() {
+    return RequestContext.getRequestUserName();
+  }
+
   @Override
   public long getProtocolVersion(String protocol, long clientVersion) throws IOException {
     return PROTOCOL_VERSION;

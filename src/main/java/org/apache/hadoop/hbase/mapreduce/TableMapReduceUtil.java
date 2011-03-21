@@ -40,8 +40,10 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Base64;
 import org.apache.hadoop.hbase.zookeeper.ZKUtil;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableComparable;
 import org.apache.hadoop.mapreduce.Job;
@@ -107,6 +109,15 @@ public class TableMapReduceUtil {
       convertScanToString(scan));
     if (addDependencyJars) {
       addDependencyJars(job);
+    }
+
+    if (User.isSecurityEnabled()) {
+      try {
+        User.getCurrent().obtainAuthTokenForJob(job.getConfiguration(), job);
+      } catch (InterruptedException ie) {
+        LOG.info("Interrupted obtaining user authentication token");
+        Thread.interrupted();
+      }
     }
   }
 
@@ -262,6 +273,15 @@ public class TableMapReduceUtil {
 
     if (addDependencyJars) {
       addDependencyJars(job);
+    }
+
+    if (User.isSecurityEnabled()) {
+      try {
+        User.getCurrent().obtainAuthTokenForJob(conf, job);
+      } catch (InterruptedException ie) {
+        LOG.info("Interrupted obtaining user authentication token");
+        Thread.interrupted();
+      }
     }
   }
 

@@ -22,9 +22,9 @@ package org.apache.hadoop.hbase.ipc;
 import org.apache.hadoop.hbase.HMsg;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerInfo;
+import org.apache.hadoop.hbase.security.KerberosInfo;
 import org.apache.hadoop.io.MapWritable;
 import org.apache.hadoop.ipc.VersionedProtocol;
-import org.apache.hadoop.security.KerberosInfo;
 
 import java.io.IOException;
 

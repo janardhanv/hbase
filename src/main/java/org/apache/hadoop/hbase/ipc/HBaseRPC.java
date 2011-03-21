@@ -77,7 +77,7 @@ public class HBaseRPC {
     super();
   }                                  // no public ctor
 
-  private static final String RPC_ENGINE_PROP = "hbase.rpc.engine";
+  public static final String RPC_ENGINE_PROP = "hbase.rpc.engine";
 
   // cache of RpcEngines by protocol
   private static final Map<Class,RpcEngine> PROTOCOL_ENGINES

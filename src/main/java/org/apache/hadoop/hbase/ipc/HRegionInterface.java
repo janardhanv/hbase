@@ -41,9 +41,10 @@ import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
+import org.apache.hadoop.hbase.security.TokenInfo;
+import org.apache.hadoop.hbase.security.KerberosInfo;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.ipc.VersionedProtocol;
-import org.apache.hadoop.security.KerberosInfo;
 
 /**
  * Clients interact with HRegionServers using a handle to the HRegionInterface.
@@ -53,6 +54,7 @@ import org.apache.hadoop.security.KerberosInfo;
  */
 @KerberosInfo(
     serverPrincipal = "hbase.regionserver.kerberos.principal")
+@TokenInfo("HBASE_AUTH_TOKEN")
 public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortable {
   /**
    * This Interfaces' version. Version changes when the Interface changes.

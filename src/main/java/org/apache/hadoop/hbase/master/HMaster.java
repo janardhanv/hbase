@@ -211,14 +211,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     // initialize server principal (if using secure Hadoop)
     User.login(conf, "hbase.master.keytab.file",
         "hbase.master.kerberos.principal", this.address.getHostname());
-    HBasePolicyProvider.init(conf);
 
     // set the thread name now we have an address
     setName(MASTER + "-" + this.address);
 
     Replication.decorateMasterConfiguration(this.conf);
-
-    this.rpcServer.startThreads();
 
     // Hack! Maps DFSClient => Master for logs.  HDFS made this
     // config param for task trackers, but we can piggyback off of it.
@@ -229,6 +226,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
 
     this.zooKeeper = new ZooKeeperWatcher(conf, MASTER + ":" +
         address.getPort(), this);
+
+    this.rpcServer.startThreads();
 
     this.metrics = new MasterMetrics(getServerName());
   }

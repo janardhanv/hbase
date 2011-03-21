@@ -41,4 +41,18 @@ public class Classes {
     return valueType;
   }
 
+  public static String stringify(Class[] classes) {
+    StringBuilder buf = new StringBuilder();
+    if (classes != null) {
+      for (Class c : classes) {
+        if (buf.length() > 0) {
+          buf.append(",");
+        }
+        buf.append(c.getName());
+      }
+    } else {
+      buf.append("NULL");
+    }
+    return buf.toString();
+  }
 }

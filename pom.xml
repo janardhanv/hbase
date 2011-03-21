@@ -189,6 +189,7 @@
       </releases>
     </repository>
     <!-- snapshot builds of Hadoop 0.20.104-append branch for testing -->
+    <!--
     <repository>
       <id>ghelmling.testing</id>
       <name>Gary Helmling test repo</name>
@@ -200,6 +201,7 @@
         <enabled>true</enabled>
       </releases>
     </repository>
+    -->
     <repository>
       <id>repository.jboss.org</id>
       <url>http://repository.jboss.org/nexus/content/groups/public-jboss/</url>

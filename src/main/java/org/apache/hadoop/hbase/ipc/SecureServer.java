@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -24,11 +24,14 @@ import com.google.common.base.Function;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.AuthMethod;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslDigestCallbackHandler;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslGssCallbackHandler;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslStatus;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenSecretManager;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Writable;
@@ -78,36 +81,32 @@ public abstract class SecureServer extends HBaseServer {
   // 4 : Introduced SASL security layer
   public static final byte CURRENT_VERSION = 4;
 
-  public static final Log LOG = LogFactory.getLog("org.apache.hadoop.ipc.HBaseServer");
+  public static final Log LOG = LogFactory.getLog("org.apache.hadoop.ipc.SecureServer");
   private static final Log AUDITLOG =
     LogFactory.getLog("SecurityLogger.org.apache.hadoop.ipc.HBaseServer");
   private static final String AUTH_FAILED_FOR = "Auth failed for ";
   private static final String AUTH_SUCCESSFULL_FOR = "Auth successfull for ";
 
-  private SecretManager<TokenIdentifier> secretManager;
-  private ServiceAuthorizationManager authManager;
+  protected SecretManager<TokenIdentifier> secretManager;
+  protected ServiceAuthorizationManager authManager;
 
   /** Reads calls from a connection and queues them for handling. */
   public class SecureConnection extends HBaseServer.Connection  {
     private boolean rpcHeaderRead = false; // if initial rpc header is read
     private boolean headerRead = false;  //if the connection header that
                                          //follows version is read.
-    protected SocketChannel channel;
     private ByteBuffer data;
     private ByteBuffer dataLengthBuffer;
     protected final LinkedList<Call> responseQueue;
     private volatile int rpcCount = 0; // number of outstanding rpcs
     private long lastContact;
     private int dataLength;
-    protected Socket socket;
     // Cache the remote host & port info so that even if the socket is
     // disconnected, we can say where it used to connect to.
     private String hostAddress;
     private String hostName;
     private int remotePort;
 
-    ConnectionHeader header = new ConnectionHeader();
-    Class<? extends VersionedProtocol> protocol;
     boolean useSasl;
     SaslServer saslServer;
     private AuthMethod authMethod;
@@ -117,14 +116,14 @@ public abstract class SecureServer extends HBaseServer {
     private ByteBuffer unwrappedData;
     private ByteBuffer unwrappedDataLengthBuffer;
 
-    UserGroupInformation user = null;
     public UserGroupInformation attemptingUser = null; // user name before auth
 
     // Fake 'call' for failed authorization response
     private final int AUTHORIZATION_FAILED_CALLID = -1;
     private final Call authFailedCall =
       new Call(AUTHORIZATION_FAILED_CALLID, null, this);
-    private ByteArrayOutputStream authFailedResponse = new ByteArrayOutputStream();
+    private ByteBufferOutputStream authFailedResponse =
+        new ByteBufferOutputStream(0);
     // Fake 'call' for SASL context setup
     private static final int SASL_CALLID = -33;
     private final Call saslCall = new Call(SASL_CALLID, null, this);
@@ -132,8 +131,7 @@ public abstract class SecureServer extends HBaseServer {
 
     private boolean useWrap = false;
 
-    public SecureConnection(SelectionKey key, SocketChannel channel,
-                      long lastContact) {
+    public SecureConnection(SocketChannel channel, long lastContact) {
       super(channel, lastContact);
       this.channel = channel;
       this.lastContact = lastContact;
@@ -299,10 +297,10 @@ public abstract class SecureServer extends HBaseServer {
               + saslServer.getNegotiatedProperty(Sasl.QOP));
           String qop = (String) saslServer.getNegotiatedProperty(Sasl.QOP);
           useWrap = qop != null && !"auth".equalsIgnoreCase(qop);
-          user = getAuthorizedUgi(saslServer.getAuthorizationID());
-          LOG.info("SASL server successfully authenticated client: " + user);
+          ticket = getAuthorizedUgi(saslServer.getAuthorizationID());
+          LOG.info("SASL server successfully authenticated client: " + ticket);
           rpcMetrics.authenticationSuccesses.inc();
-          AUDITLOG.info(AUTH_SUCCESSFULL_FOR + user);
+          AUDITLOG.info(AUTH_SUCCESSFULL_FOR + ticket);
           saslContextEstablished = true;
         }
       } else {
@@ -385,9 +383,9 @@ public abstract class SecureServer extends HBaseServer {
           if (isSecurityEnabled && authMethod == AuthMethod.SIMPLE) {
             AccessControlException ae = new AccessControlException(
                 "Authentication is required");
-            setupResponse(authFailedResponse, authFailedCall, Status.FATAL,
-                null, ae.getClass().getName(), ae.getMessage());
-            responder.doRespond(authFailedCall);
+            doResponse(authFailedResponse, authFailedCall, null,
+                ae.getClass().getName(), ae.getMessage(), "SecureConnection",
+                Status.FATAL);
             throw ae;
           }
           if (!isSecurityEnabled && authMethod != AuthMethod.SIMPLE) {
@@ -467,32 +465,32 @@ public abstract class SecureServer extends HBaseServer {
 
       UserGroupInformation protocolUser = header.getUgi();
       if (!useSasl) {
-        user = protocolUser;
-        if (user != null) {
-          user.setAuthenticationMethod(AuthMethod.SIMPLE.authenticationMethod);
+        ticket = protocolUser;
+        if (ticket != null) {
+          ticket.setAuthenticationMethod(AuthMethod.SIMPLE.authenticationMethod);
         }
       } else {
         // user is authenticated
-        user.setAuthenticationMethod(authMethod.authenticationMethod);
+        ticket.setAuthenticationMethod(authMethod.authenticationMethod);
         //Now we check if this is a proxy user case. If the protocol user is
         //different from the 'user', it is a proxy user scenario. However,
         //this is not allowed if user authenticated with DIGEST.
         if ((protocolUser != null)
-            && (!protocolUser.getUserName().equals(user.getUserName()))) {
+            && (!protocolUser.getUserName().equals(ticket.getUserName()))) {
           if (authMethod == AuthMethod.DIGEST) {
             // Not allowed to doAs if token authentication is used
-            throw new AccessControlException("Authenticated user (" + user
+            throw new AccessControlException("Authenticated user (" + ticket
                 + ") doesn't match what the client claims to be ("
                 + protocolUser + ")");
           } else {
             // Effective user can be different from authenticated user
             // for simple auth or kerberos auth
             // The user is the real user. Now we create a proxy user
-            UserGroupInformation realUser = user;
-            user = UserGroupInformation.createProxyUser(protocolUser
+            UserGroupInformation realUser = ticket;
+            ticket = UserGroupInformation.createProxyUser(protocolUser
                 .getUserName(), realUser);
             // Now the user is a proxy user, set Authentication method Proxy.
-            user.setAuthenticationMethod(AuthenticationMethod.PROXY);
+            ticket.setAuthenticationMethod(AuthenticationMethod.PROXY);
           }
         }
       }
@@ -547,7 +545,7 @@ public abstract class SecureServer extends HBaseServer {
         if (!authorizeConnection()) {
           throw new AccessControlException("Connection from " + this
               + " for protocol " + header.getProtocol()
-              + " is unauthorized for user " + user);
+              + " is unauthorized for user " + ticket);
         }
       }
     }
@@ -559,20 +557,21 @@ public abstract class SecureServer extends HBaseServer {
         // real user for the effective user, therefore not required to
         // authorize real user. doAs is allowed only for simple or kerberos
         // authentication
-        if (user != null && user.getRealUser() != null
+        if (ticket != null && ticket.getRealUser() != null
             && (authMethod != AuthMethod.DIGEST)) {
-          ProxyUsers.authorize(user, this.getHostAddress(), conf);
+          ProxyUsers.authorize(ticket, this.getHostAddress(), conf);
         }
-        authorize(user, header, getHostName());
+        authorize(ticket, header, getHostName());
         if (LOG.isDebugEnabled()) {
           LOG.debug("Successfully authorized " + header);
         }
         rpcMetrics.authorizationSuccesses.inc();
       } catch (AuthorizationException ae) {
+        LOG.debug("Connection authorization failed: "+ae.getMessage(), ae);
         rpcMetrics.authorizationFailures.inc();
-        setupResponse(authFailedResponse, authFailedCall, Status.FATAL, null,
-            ae.getClass().getName(), ae.getMessage());
-        responder.doRespond(authFailedCall);
+        doResponse(authFailedResponse, authFailedCall, null,
+            ae.getClass().getName(), ae.getMessage(), "SecureConnection",
+            Status.FATAL);
         return false;
       }
       return true;
@@ -590,97 +589,6 @@ public abstract class SecureServer extends HBaseServer {
       }
       try {socket.close();} catch(Exception ignored) {}
     }
-  }
-
-  /** Handles queued calls . */
-  private class Handler extends Thread {
-    private final BlockingQueue<Call> myCallQueue;
-    public Handler(final BlockingQueue<Call> cq, int instanceNumber) {
-      this.myCallQueue = cq;
-      this.setDaemon(true);
-
-      String threadName = "IPC Server handler " + instanceNumber + " on " + port;
-      if (cq == priorityCallQueue) {
-        // this is just an amazing hack, but it works.
-        threadName = "PRI " + threadName;
-      }
-      this.setName(threadName);
-    }
-
-    @Override
-    public void run() {
-      LOG.info(getName() + ": starting");
-      SERVER.set(SecureServer.this);
-      ByteArrayOutputStream buf =
-        new ByteArrayOutputStream(INITIAL_RESP_BUF_SIZE);
-      while (running) {
-        try {
-          Call call = myCallQueue.take(); // pop the queue; maybe blocked here
-
-          if (LOG.isDebugEnabled())
-            LOG.debug(getName() + ": has #" + call.id + " from " +
-                      call.connection);
-
-          String errorClass = null;
-          String error = null;
-          Writable value = null;
-
-          CurCall.set(call);
-          try {
-            /* TODO: For now all requests run as the server principal for HDFS
-             * interation.  But we need to preserve caller credentials in
-             * context for authorization checking.  We could use doAs() here
-             * with JAAS to check permissions or our own custom context
-             * and checks.
-             */
-            value = call(call.connection.protocol, call.param,
-                         call.timestamp);
-          } catch (Throwable e) {
-            LOG.debug(getName()+", call "+call+": error: " + e, e);
-            errorClass = e.getClass().getName();
-            error = StringUtils.stringifyException(e);
-          }
-          CurCall.set(null);
-          synchronized (call.connection.responseQueue) {
-            // setupResponse() needs to be sync'ed together with
-            // responder.doResponse() since setupResponse may use
-            // SASL to encrypt response data and SASL enforces
-            // its own message ordering.
-            setupResponse(buf, call,
-                        (error == null) ? Status.SUCCESS : Status.ERROR,
-                        value, errorClass, error);
-          // Discard the large buf and reset it back to
-          // smaller size to freeup heap
-          if (buf.size() > maxRespSize) {
-            LOG.warn("Large response size " + buf.size() + " for call " +
-                call.toString());
-              buf = new ByteArrayOutputStream(INITIAL_RESP_BUF_SIZE);
-            }
-            responder.doRespond(call);
-          }
-        } catch (InterruptedException e) {
-          if (running) {                          // unexpected -- log it
-            LOG.info(getName() + " caught: " +
-                     StringUtils.stringifyException(e));
-          }
-        } catch (OutOfMemoryError e) {
-          if (errorHandler != null) {
-            if (errorHandler.checkOOME(e)) {
-              LOG.info(getName() + ": exiting on OOME");
-              return;
-            }
-          } else {
-            // rethrow if no handler
-            throw e;
-          }
-        } catch (Exception e) {
-          LOG.info(getName() + " caught: " +
-                   StringUtils.stringifyException(e));
-        }
-      }
-      LOG.info(getName() + ": exiting");
-    }
-
   }
 
   /**
@@ -722,17 +630,25 @@ public abstract class SecureServer extends HBaseServer {
     super(bindAddress, port, paramClass, handlerCount, priorityHandlerCount, conf, serverName, highPriorityLevel);
     this.authorize =
       conf.getBoolean(HADOOP_SECURITY_AUTHORIZATION, false);
-    this.authManager = new ServiceAuthorizationManager();
     this.isSecurityEnabled = UserGroupInformation.isSecurityEnabled();
+    LOG.debug("security enabled="+isSecurityEnabled);
 
     if (isSecurityEnabled) {
       HBaseSaslRpcServer.init(conf);
     }
   }
 
-  protected Connection getConnection(SelectionKey readKey,
-      SocketChannel channel, long time) {
-    return new SecureConnection(readKey, channel, time);
+  @Override
+  protected Connection getConnection(SocketChannel channel, long time) {
+    return new SecureConnection(channel, time);
+  }
+
+  @Override
+  protected void doResponse(ByteBufferOutputStream response, Call call,
+      Writable rv, String errorClass, String error, String handler)
+  throws IOException {
+    doResponse(response, call, rv, errorClass, error, handler,
+        error == null ? Status.SUCCESS : Status.ERROR);
   }
 
   /**
@@ -740,37 +656,46 @@ public abstract class SecureServer extends HBaseServer {
    *
    * @param response buffer to serialize the response into
    * @param call {@link Call} to which we are setting up the response
-   * @param status {@link org.apache.hadoop.hbase.ipc.Status} of the IPC call
    * @param rv return value for the IPC Call, if the call was successful
    * @param errorClass error class, if the the call failed
    * @param error error message, if the call failed
+   * @param status {@link org.apache.hadoop.hbase.ipc.Status} of the IPC call
    * @throws java.io.IOException
    */
-  private void setupResponse(ByteArrayOutputStream response,
-                             Call call, Status status,
-                             Writable rv, String errorClass, String error)
+  protected void doResponse(ByteBufferOutputStream response, Call call,
+      Writable rv, String errorClass, String error, String handler, Status status)
   throws IOException {
-    response.reset();
-    DataOutputStream out = new DataOutputStream(response);
-    out.writeInt(call.id);                // write call id
-    out.writeInt(status.state);           // write status
+    synchronized (call.connection.responseQueue) {
+      // setupResponse() needs to be sync'ed together with
+      // responder.doResponse() since setupResponse may use
+      // SASL to encrypt response data and SASL enforces
+      // its own message ordering.
+      DataOutputStream out = new DataOutputStream(response);
+      out.writeInt(call.id);                // write call id
+      out.writeInt(status.state);           // write status
 
-    if (status == Status.SUCCESS) {
-      rv.write(out);
-    } else {
-      WritableUtils.writeString(out, errorClass);
-      WritableUtils.writeString(out, error);
+      if (status == Status.SUCCESS) {
+        rv.write(out);
+      } else {
+        WritableUtils.writeString(out, errorClass);
+        WritableUtils.writeString(out, error);
+      }
+      if (((SecureConnection)call.connection).useWrap) {
+        wrapWithSasl(response, call);
+      }
+      if (response.size() > warnResponseSize) {
+        LOG.warn(handler+", responseTooLarge for: "+call+": Size: "
+                 + StringUtils.humanReadableInt(response.size()));
+      }
+      call.setResponse(response.getByteBuffer());
+      responder.doRespond(call);
     }
-    if (((SecureConnection)call.connection).useWrap) {
-      wrapWithSasl(response, call);
-    }
-    call.setResponse(ByteBuffer.wrap(response.toByteArray()));
   }
 
-  private void wrapWithSasl(ByteArrayOutputStream response, Call call)
+  private void wrapWithSasl(ByteBufferOutputStream response, Call call)
       throws IOException {
     if (((SecureConnection)call.connection).useSasl) {
-      byte[] token = response.toByteArray();
+      byte[] token = response.getByteBuffer().array();
       // synchronization may be needed since there can be multiple Handler
       // threads using saslServer to wrap responses.
       synchronized (((SecureConnection)call.connection).saslServer) {
@@ -779,7 +704,7 @@ public abstract class SecureServer extends HBaseServer {
       if (LOG.isDebugEnabled())
         LOG.debug("Adding saslServer wrapped token of size " + token.length
             + " as call response.");
-      response.reset();
+      response.getByteBuffer().reset();
       DataOutputStream saslOut = new DataOutputStream(response);
       saslOut.writeInt(token.length);
       saslOut.write(token, 0, token.length);
@@ -803,6 +728,10 @@ public abstract class SecureServer extends HBaseServer {
   /** Stops the service.  No new calls will be handled after this is called. */
   public synchronized void stop() {
     super.stop();
+  }
+
+  public SecretManager<? extends TokenIdentifier> getSecretManager() {
+    return this.secretManager;
   }
 
   public void setSecretManager(SecretManager<? extends TokenIdentifier> secretManager) {

@@ -1,5 +1,5 @@
-/**
- * Copyright 2010 The Apache Software Foundation
+/*
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -43,11 +43,13 @@ public class HBasePolicyProvider extends PolicyProvider {
     return services;
   }
 
-  public static void init(Configuration conf) {
+  public static void init(Configuration conf,
+      ServiceAuthorizationManager authManager) {
     // set service-level authorization security policy
+    conf.set("hadoop.policy.file", "hbase-policy.xml");
     if (conf.getBoolean(
           ServiceAuthorizationManager.SERVICE_AUTHORIZATION_CONFIG, false)) {
-      new ServiceAuthorizationManager().refresh(conf, new HBasePolicyProvider());
+      authManager.refresh(conf, new HBasePolicyProvider());
     }
   }
 }

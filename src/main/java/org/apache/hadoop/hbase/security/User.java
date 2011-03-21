@@ -22,12 +22,13 @@ package org.apache.hadoop.hbase.security;
 
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.util.Methods;
+import org.apache.hadoop.mapred.JobConf;
+import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.security.UserGroupInformation;
 
 import java.io.IOException;
 import java.lang.reflect.Constructor;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.security.PrivilegedAction;
 import java.security.PrivilegedExceptionAction;
@@ -90,6 +91,24 @@ public abstract class User {
   public abstract <T> T runAs(PrivilegedExceptionAction<T> action)
       throws IOException, InterruptedException;
 
+  /**
+   * Requests an authentication token for this user and stores it in the
+   * user's credentials.
+   *
+   * @throws IOException
+   */
+  public abstract void obtainAuthTokenForJob(Configuration conf, Job job)
+      throws IOException, InterruptedException;
+
+  /**
+   * Requests an authentication token for this user and stores it in the
+   * user's credentials.
+   *
+   * @throws IOException
+   */
+  public abstract void obtainAuthTokenForJob(JobConf job)
+      throws IOException, InterruptedException;
+
   public String toString() {
     return ugi.toString();
   }
@@ -141,6 +160,19 @@ public abstract class User {
       SecureHadoopUser.login(conf, fileConfKey, principalConfKey, localhost);
     } else {
       HadoopUser.login(conf, fileConfKey, principalConfKey, localhost);
+    }
+  }
+
+  /**
+   * Returns whether or not Kerberos authentication is configured.  For
+   * non-secure Hadoop, this always returns false.  For secure Hadoop, it will
+   * return the value from UserGroupInformation.isSecurityEnabled().
+   */
+  public static boolean isSecurityEnabled() {
+    if (IS_SECURE_HADOOP) {
+      return SecureHadoopUser.isSecurityEnabled();
+    } else {
+      return HadoopUser.isSecurityEnabled();
     }
   }
 
@@ -230,6 +262,20 @@ public abstract class User {
       return result;
     }
 
+    @Override
+    public void obtainAuthTokenForJob(Configuration conf, Job job)
+        throws IOException, InterruptedException {
+      // this is a no-op.  token creation is only supported for kerberos
+      // authenticated clients
+    }
+
+    @Override
+    public void obtainAuthTokenForJob(JobConf job)
+        throws IOException, InterruptedException {
+      // this is a no-op.  token creation is only supported for kerberos
+      // authenticated clients
+    }
+
     public static User createUserForTesting(Configuration conf,
         String name, String[] groups) {
       try {
@@ -261,6 +307,10 @@ public abstract class User {
     public static void login(Configuration conf, String fileConfKey,
         String principalConfKey, String localhost) throws IOException {
       LOG.info("Skipping login, not running on secure Hadoop");
+    }
+
+    public static boolean isSecurityEnabled() {
+      return false;
     }
   }
 
@@ -331,6 +381,55 @@ public abstract class User {
       }
     }
 
+    @Override
+    public void obtainAuthTokenForJob(Configuration conf, Job job)
+        throws IOException, InterruptedException {
+      try {
+        Class c = Class.forName(
+            "org.apache.hadoop.hbase.security.token.TokenUtil");
+        Methods.call(c, null, "obtainTokenForJob",
+            new Class[]{Configuration.class, UserGroupInformation.class,
+                Job.class},
+            new Object[]{conf, ugi, job});
+      } catch (ClassNotFoundException cnfe) {
+        throw new RuntimeException("Failure loading TokenUtil class, "
+            +"is secure RPC available?", cnfe);
+      } catch (IOException ioe) {
+        throw ioe;
+      } catch (InterruptedException ie) {
+        throw ie;
+      } catch (RuntimeException re) {
+        throw re;
+      } catch (Exception e) {
+        throw new UndeclaredThrowableException(e,
+            "Unexpected error calling TokenUtil.obtainAndCacheToken()");
+      }
+    }
+
+    @Override
+    public void obtainAuthTokenForJob(JobConf job)
+        throws IOException, InterruptedException {
+      try {
+        Class c = Class.forName(
+            "org.apache.hadoop.hbase.security.token.TokenUtil");
+        Methods.call(c, null, "obtainTokenForJob",
+            new Class[]{JobConf.class, UserGroupInformation.class},
+            new Object[]{job, ugi});
+      } catch (ClassNotFoundException cnfe) {
+        throw new RuntimeException("Failure loading TokenUtil class, "
+            +"is secure RPC available?", cnfe);
+      } catch (IOException ioe) {
+        throw ioe;
+      } catch (InterruptedException ie) {
+        throw ie;
+      } catch (RuntimeException re) {
+        throw re;
+      } catch (Exception e) {
+        throw new UndeclaredThrowableException(e,
+            "Unexpected error calling TokenUtil.obtainAndCacheToken()");
+      }
+    }
+
     public static User createUserForTesting(Configuration conf,
         String name, String[] groups) {
       try {
@@ -356,7 +455,7 @@ public abstract class User {
             Configuration.class, String.class, String.class, String.class };
         Object[] args = new Object[]{
             conf, fileConfKey, principalConfKey, localhost };
-        call(c, null, "login", types, args);
+        Methods.call(c, null, "login", types, args);
       } catch (ClassNotFoundException cnfe) {
         throw new RuntimeException("Unable to login using " +
             "org.apache.hadoop.security.Security.login(). SecurityUtil class " +
@@ -368,6 +467,17 @@ public abstract class User {
       } catch (Exception e) {
         throw new UndeclaredThrowableException(e,
             "Unhandled exception in User.login()");
+      }
+    }
+
+    public static boolean isSecurityEnabled() {
+      try {
+        return (Boolean)callStatic("isSecurityEnabled");
+      } catch (RuntimeException re) {
+        throw re;
+      } catch (Exception e) {
+        throw new UndeclaredThrowableException(e,
+            "Unexpected exception calling UserGroupInformation.isSecurityEnabled()");
       }
     }
   }
@@ -384,54 +494,6 @@ public abstract class User {
 
   private static Object call(UserGroupInformation instance, String methodName,
       Class[] types, Object[] args) throws Exception {
-    return call(UserGroupInformation.class, instance, methodName, types, args);
-  }
-
-  private static <T> Object call(Class<T> clazz, T instance, String methodName,
-      Class[] types, Object[] args) throws Exception {
-    try {
-      Method m = clazz.getMethod(methodName, types);
-      return m.invoke(instance, args);
-    } catch (IllegalArgumentException arge) {
-      LOG.fatal("Constructed invalid call. class="+clazz.getName()+
-          " method=" + methodName + " types=" + stringify(types), arge);
-      throw arge;
-    } catch (NoSuchMethodException nsme) {
-      throw new IllegalArgumentException(
-          "Can't find method "+methodName+" in "+clazz.getName()+"!", nsme);
-    } catch (InvocationTargetException ite) {
-      // unwrap the underlying exception and rethrow
-      if (ite.getTargetException() != null) {
-        if (ite.getTargetException() instanceof Exception) {
-          throw (Exception)ite.getTargetException();
-        } else if (ite.getTargetException() instanceof Error) {
-          throw (Error)ite.getTargetException();
-        }
-      }
-      throw new UndeclaredThrowableException(ite,
-          "Unknown exception invoking "+clazz.getName()+"."+methodName+"()");
-    } catch (IllegalAccessException iae) {
-      throw new IllegalArgumentException(
-          "Denied access calling "+clazz.getName()+"."+methodName+"()", iae);
-    } catch (SecurityException se) {
-      LOG.fatal("SecurityException calling method. class="+clazz.getName()+
-          " method=" + methodName + " types=" + stringify(types), se);
-      throw se;
-    }
-  }
-
-  private static String stringify(Class[] classes) {
-    StringBuilder buf = new StringBuilder();
-    if (classes != null) {
-      for (Class c : classes) {
-        if (buf.length() > 0) {
-          buf.append(",");
-        }
-        buf.append(c.getName());
-      }
-    } else {
-      buf.append("NULL");
-    }
-    return buf.toString();
+    return Methods.call(UserGroupInformation.class, instance, methodName, types, args);
   }
 }

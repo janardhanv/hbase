@@ -351,7 +351,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     // login the server principal (if using secure Hadoop)
     User.login(conf, "hbase.regionserver.keytab.file",
         "hbase.regionserver.kerberos.principal", serverInfo.getHostname());
-    HBasePolicyProvider.init(conf);
   }
 
   private static final int NORMAL_QOS = 0;
@@ -1363,6 +1362,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   public HBaseRpcMetrics getRpcMetrics() {
     return server.getRpcMetrics();
+  }
+
+  @Override
+  public RpcServer getRpcServer() {
+    return server;
   }
 
   /**

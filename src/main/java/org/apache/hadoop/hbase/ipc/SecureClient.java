@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -25,16 +25,18 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcClient;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.AuthMethod;
+import org.apache.hadoop.hbase.security.KerberosInfo;
+import org.apache.hadoop.hbase.security.TokenInfo;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenSelector;
 import org.apache.hadoop.io.*;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.net.NetUtils;
-import org.apache.hadoop.security.KerberosInfo;
 import org.apache.hadoop.security.SecurityUtil;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 import org.apache.hadoop.security.token.TokenIdentifier;
-import org.apache.hadoop.security.token.TokenInfo;
 import org.apache.hadoop.security.token.TokenSelector;
 import org.apache.hadoop.util.ReflectionUtils;
 
@@ -42,8 +44,10 @@ import javax.net.SocketFactory;
 import java.io.*;
 import java.net.*;
 import java.security.PrivilegedExceptionAction;
+import java.util.HashMap;
 import java.util.Hashtable;
 import java.util.Iterator;
+import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -61,7 +65,15 @@ import java.util.concurrent.atomic.AtomicLong;
 public class SecureClient extends HBaseClient {
 
   private static final Log LOG =
-    LogFactory.getLog("org.apache.hadoop.ipc.HBaseClient");
+    LogFactory.getLog("org.apache.hadoop.ipc.SecureClient");
+
+  protected static Map<String,TokenSelector<? extends TokenIdentifier>> tokenHandlers =
+      new HashMap<String,TokenSelector<? extends TokenIdentifier>>();
+  static {
+    tokenHandlers.put(AuthenticationTokenIdentifier.AUTH_TOKEN_TYPE.toString(),
+        new AuthenticationTokenSelector());
+  }
+
   protected final Hashtable<ConnectionId, Connection> connections =
     new Hashtable<ConnectionId, Connection>();
 
@@ -105,18 +117,16 @@ public class SecureClient extends HBaseClient {
       if (useSasl && protocol != null) {
         TokenInfo tokenInfo = protocol.getAnnotation(TokenInfo.class);
         if (tokenInfo != null) {
-          TokenSelector<? extends TokenIdentifier> tokenSelector = null;
-          try {
-            tokenSelector = tokenInfo.value().newInstance();
-          } catch (InstantiationException e) {
-            throw new IOException(e.toString());
-          } catch (IllegalAccessException e) {
-            throw new IOException(e.toString());
+          TokenSelector<? extends TokenIdentifier> tokenSelector =
+              tokenHandlers.get(tokenInfo.value());
+          if (tokenSelector != null) {
+            InetSocketAddress addr = remoteId.getAddress();
+            token = tokenSelector.selectToken(new Text(addr.getAddress()
+                .getHostAddress() + ":" + addr.getPort()),
+                ticket.getTokens());
+          } else if (LOG.isDebugEnabled()) {
+            LOG.debug("No token selector found for type "+tokenInfo.value());
           }
-          InetSocketAddress addr = remoteId.getAddress();
-          token = tokenSelector.selectToken(new Text(addr.getAddress()
-              .getHostAddress() + ":" + addr.getPort()),
-              ticket.getTokens());
         }
         KerberosInfo krbInfo = protocol.getAnnotation(KerberosInfo.class);
         if (krbInfo != null) {
@@ -762,4 +772,46 @@ public class SecureClient extends HBaseClient {
     connection.setupIOstreams();
     return connection;
   }
+
+  /** Make a call, passing <code>param</code>, to the IPC server running at
+   * <code>address</code> which is servicing the <code>protocol</code> protocol,
+   * with the <code>ticket</code> credentials, returning the value.
+   * Throws exceptions if there are network problems or if the remote code
+   * threw an exception. */
+  public Writable call(Writable param, InetSocketAddress addr,
+                       Class<? extends VersionedProtocol> protocol,
+                       UserGroupInformation ticket, int rpcTimeout)
+      throws InterruptedException, IOException {
+    Call call = new Call(param);
+    Connection connection = getConnection(addr, protocol, ticket, rpcTimeout, call);
+    connection.sendParam(call);                 // send the parameter
+    boolean interrupted = false;
+    //noinspection SynchronizationOnLocalVariableOrMethodParameter
+    synchronized (call) {
+      while (!call.done) {
+        try {
+          call.wait();                           // wait for the result
+        } catch (InterruptedException ignored) {
+          // save the fact that we were interrupted
+          interrupted = true;
+        }
+      }
+
+      if (interrupted) {
+        // set the interrupt flag now that we are done waiting
+        Thread.currentThread().interrupt();
+      }
+
+      if (call.error != null) {
+        if (call.error instanceof RemoteException) {
+          call.error.fillInStackTrace();
+          throw call.error;
+        }
+        // local exception
+        throw wrapException(addr, call.error);
+      }
+      return call.value;
+    }
+  }
+
 }

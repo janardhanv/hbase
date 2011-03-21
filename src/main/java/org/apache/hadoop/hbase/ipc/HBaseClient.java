@@ -807,7 +807,7 @@ public class HBaseClient {
    * @return an exception to throw
    */
   @SuppressWarnings({"ThrowableInstanceNeverThrown"})
-  private IOException wrapException(InetSocketAddress addr,
+  protected IOException wrapException(InetSocketAddress addr,
                                          IOException exception) {
     if (exception instanceof ConnectException) {
       //connection refused; include the host:port in the error

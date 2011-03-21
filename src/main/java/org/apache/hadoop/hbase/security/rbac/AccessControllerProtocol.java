@@ -22,6 +22,8 @@ package org.apache.hadoop.hbase.security.rbac;
 
 import com.google.common.collect.Multimap;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
+import org.apache.hadoop.security.token.Token;
 
 import java.io.IOException;
 import java.util.Map;
@@ -42,4 +44,9 @@ public interface AccessControllerProtocol extends CoprocessorProtocol {
 
   public List<UserPermission> getUserPermissions(byte[] tableName)
       throws IOException;
+
+  public Token<AuthenticationTokenIdentifier> getAuthenticationToken()
+      throws IOException;
+
+  public String whoami();
 }

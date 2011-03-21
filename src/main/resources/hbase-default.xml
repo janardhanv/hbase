@@ -569,6 +569,20 @@
     </description>
   </property>
   <property>
+    <name>hbase.auth.key.update-interval</name>
+    <value>86400000</value>
+    <description>The update interval for master key for authentication tokens 
+    in servers in milliseconds.
+    </description>
+  </property>
+  <property>
+    <name>hbase.auth.token.max-lifetime</name>
+    <value>604800000</value>
+    <description>The maximum lifetime in milliseconds after which an
+    authentication token expires.
+    </description>
+  </property>
+  <property>
     <name>zookeeper.session.timeout</name>
     <value>180000</value>
     <description>ZooKeeper session timeout.

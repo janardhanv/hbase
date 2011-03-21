@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -9,7 +9,7 @@
  * "License"); you may not use this file except in compliance
  * with the License.  You may obtain a copy of the License at
  *
- * http://www.apache.org/licenses/LICENSE-2.0
+ *     http://www.apache.org/licenses/LICENSE-2.0
  *
  * Unless required by applicable law or agreed to in writing, software
  * distributed under the License is distributed on an "AS IS" BASIS,
@@ -24,9 +24,12 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configurable;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.client.RetriesExhaustedException;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.security.HBasePolicyProvider;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer;
+import org.apache.hadoop.hbase.security.token.AuthenticationTokenSecretManager;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.metrics.util.MetricsTimeVaryingRate;
@@ -277,10 +280,10 @@ public class SecureRpcEngine implements RpcEngine {
       int metaHandlerCount, final boolean verbose, Configuration conf,
        int highPriorityLevel)
     throws IOException {
-    return
-        new Server(instance, ifaces, conf, bindAddress, port,
+    Server server = new Server(instance, ifaces, conf, bindAddress, port,
             numHandlers, metaHandlerCount, verbose,
             highPriorityLevel);
+    return server;
   }
 
   /** An RPC Server. */
@@ -328,6 +331,35 @@ public class SecureRpcEngine implements RpcEngine {
       this.authorize =
         conf.getBoolean(ServiceAuthorizationManager.SERVICE_AUTHORIZATION_CONFIG,
                         false);
+    }
+
+    public AuthenticationTokenSecretManager createSecretManager(){
+      if (instance instanceof org.apache.hadoop.hbase.Server) {
+        org.apache.hadoop.hbase.Server server =
+            (org.apache.hadoop.hbase.Server)instance;
+        Configuration conf = server.getConfiguration();
+        long keyUpdateInterval =
+            conf.getLong("hbase.auth.key.update-interval", 24*60*60*1000);
+        long maxAge =
+            conf.getLong("hbase.auth.token.max-lifetime", 7*24*60*60*1000);
+        return new AuthenticationTokenSecretManager(conf, server.getZooKeeper(),
+            server.getServerName(), keyUpdateInterval, maxAge);
+      }
+      return null;
+    }
+
+    @Override
+    public void startThreads() {
+      AuthenticationTokenSecretManager mgr = createSecretManager();
+      if (mgr != null) {
+        setSecretManager(mgr);
+        mgr.start();
+      }
+      this.authManager = new ServiceAuthorizationManager();
+      HBasePolicyProvider.init(conf, authManager);
+
+      // continue with base startup
+      super.startThreads();
     }
 
     @Override

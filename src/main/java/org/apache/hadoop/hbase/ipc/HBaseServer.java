@@ -102,14 +102,14 @@ public abstract class HBaseServer implements RpcServer {
   /** Default value for above param */
   private static final int DEFAULT_WARN_RESPONSE_SIZE = 100 * 1024 * 1024;
 
-  private final int warnResponseSize;
+  protected final int warnResponseSize;
 
   public static final Log LOG =
     LogFactory.getLog("org.apache.hadoop.ipc.HBaseServer");
 
   protected static final ThreadLocal<RpcServer> SERVER =
     new ThreadLocal<RpcServer>();
-  private volatile boolean started = false;
+  protected volatile boolean started = false;
 
   private static final Map<String, Class<? extends VersionedProtocol>>
       PROTOCOL_CACHE =
@@ -520,7 +520,7 @@ public abstract class HBaseServer implements RpcServer {
         try {
           reader.startAdd();
           SelectionKey readKey = reader.registerChannel(channel);
-          c = new Connection(channel, System.currentTimeMillis());
+          c = getConnection(channel, System.currentTimeMillis());
           readKey.attach(c);
           synchronized (connectionList) {
             connectionList.add(numConnections, c);
@@ -1079,17 +1079,16 @@ public abstract class HBaseServer implements RpcServer {
 
             if (LOG.isDebugEnabled()) {
               if (call.connection.ticket == null) {
-              // No user associated with this call's connection:
-              // call.connection.ticket should have been set in Connection::processHeader().
-                LOG.debug(getName() + ": has no principal information associated with call #" + call.id + " from " +
-                          call.connection + " : proceeding using server user: '" + UserGroupInformation.getCurrentUser().getUserName() + "' instead.");
+                LOG.debug(getName() + ": has NULL principal, call #" + call.id
+                    + " from " + call.connection);
               }
               else {
                 LOG.debug("Executing call as "+call.connection.ticket.getUserName());
               }
             }
 
-            RequestContext.set(call.connection.ticket, getRemoteIp(), call.connection.protocol);
+            RequestContext.set(call.connection.ticket, getRemoteIp(),
+                call.connection.protocol);
             value = call(call.connection.protocol, call.param, call.timestamp);
           } catch (Throwable e) {
             LOG.debug(getName()+", call "+call+": error: " + e, e);
@@ -1120,25 +1119,8 @@ public abstract class HBaseServer implements RpcServer {
             }
           }
           ByteBufferOutputStream buf = new ByteBufferOutputStream(size);
-          DataOutputStream out = new DataOutputStream(buf);
-          out.writeInt(call.id);                // write call id
-          out.writeBoolean(error != null);      // write error flag
 
-          if (error == null) {
-            value.write(out);
-          } else {
-            WritableUtils.writeString(out, errorClass);
-            WritableUtils.writeString(out, error);
-          }
-
-          if (buf.size() > warnResponseSize) {
-            LOG.warn(getName()+", responseTooLarge for: "+call+": Size: "
-                     + StringUtils.humanReadableInt(buf.size()));
-          }
-
-
-          call.setResponse(buf.getByteBuffer());
-          responder.doRespond(call);
+          doResponse(buf, call, value, errorClass, error, getName());
         } catch (InterruptedException e) {
           if (running) {                          // unexpected -- log it
             LOG.info(getName() + " caught: " +
@@ -1239,8 +1221,7 @@ public abstract class HBaseServer implements RpcServer {
     responder = new Responder();
   }
 
-  protected Connection getConnection(SelectionKey readKey,
-      SocketChannel channel, long time) {
+  protected Connection getConnection(SocketChannel channel, long time) {
     return new Connection(channel, time);
   }
 
@@ -1250,6 +1231,29 @@ public abstract class HBaseServer implements RpcServer {
         numConnections--;
     }
     connection.close();
+  }
+
+  protected void doResponse(ByteBufferOutputStream buf, Call call,
+      Writable value, String errorClass, String error, String handler)
+      throws IOException {
+    DataOutputStream out = new DataOutputStream(buf);
+    out.writeInt(call.id);                // write call id
+    out.writeBoolean(error != null);      // write error flag
+
+    if (error == null) {
+      value.write(out);
+    } else {
+      WritableUtils.writeString(out, errorClass);
+      WritableUtils.writeString(out, error);
+    }
+
+    if (buf.size() > warnResponseSize) {
+      LOG.warn(handler+", responseTooLarge for: "+call+": Size: "
+               + StringUtils.humanReadableInt(buf.size()));
+    }
+
+    call.setResponse(buf.getByteBuffer());
+    responder.doRespond(call);
   }
 
   /** Sets the socket buffer size used for responding to RPCs.
