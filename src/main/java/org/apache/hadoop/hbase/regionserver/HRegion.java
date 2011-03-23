@@ -94,8 +94,9 @@ import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.util.Progressable;
 import org.apache.hadoop.util.StringUtils;
+
+import org.cliffc.high_scale_lib.Counter;
 
 import com.google.common.collect.ClassToInstanceMap;
 import com.google.common.collect.Lists;
@@ -174,6 +175,8 @@ public class HRegion implements HeapSize { // , Writable{
   // private byte [] name = null;
 
   final AtomicLong memstoreSize = new AtomicLong(0);
+
+  final Counter requestsCount = new Counter();
 
   /**
    * The directory for the table this region is part of.
@@ -454,6 +457,11 @@ public class HRegion implements HeapSize { // , Writable{
   /** @return a HRegionInfo object for this region */
   public HRegionInfo getRegionInfo() {
     return this.regionInfo;
+  }
+
+  /** @return requestsCount for this region */
+  public long getRequestsCount() {
+    return this.requestsCount.get();
   }
 
   /** @return true if region is closed */
@@ -2351,7 +2359,7 @@ public class HRegion implements HeapSize { // , Writable{
     if (!(o instanceof HRegion)) {
       return false;
     }
-    return this.hashCode() == ((HRegion)o).hashCode();
+    return Bytes.equals(this.regionInfo.getRegionName(), ((HRegion)o).regionInfo.getRegionName());
   }
 
   @Override
@@ -2972,6 +2980,7 @@ public class HRegion implements HeapSize { // , Writable{
       listPaths(fs, newRegionDir);
     }
     HRegion dstRegion = HRegion.newHRegion(tableDir, log, fs, conf, newRegionInfo, null);
+    dstRegion.requestsCount.set(a.requestsCount.get() + b.requestsCount.get());
     dstRegion.initialize();
     dstRegion.compactStores();
     if (LOG.isDebugEnabled()) {
@@ -3381,7 +3390,8 @@ public class HRegion implements HeapSize { // , Writable{
 
   public static final long FIXED_OVERHEAD = ClassSize.align(
       (4 * Bytes.SIZEOF_LONG) + ClassSize.ARRAY +
-      (24 * ClassSize.REFERENCE) + ClassSize.OBJECT + Bytes.SIZEOF_INT);
+      ClassSize.align(25 * ClassSize.REFERENCE) + ClassSize.OBJECT +
+      ClassSize.align(Bytes.SIZEOF_INT));
 
   public static final long DEEP_OVERHEAD = ClassSize.align(FIXED_OVERHEAD +
       (ClassSize.OBJECT * 2) + (2 * ClassSize.ATOMIC_BOOLEAN) +
@@ -3644,6 +3654,7 @@ public class HRegion implements HeapSize { // , Writable{
       throw new NotServingRegionException(regionInfo.getRegionNameAsString() +
           " is closed");
     }
+    this.requestsCount.increment();
   }
 
   /**

@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -18,13 +18,13 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.ipc;
-
-import org.apache.hadoop.hbase.util.Bytes;
+package org.apache.hadoop.hbase.util;
 
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.WritableByteChannel;
 
 /**
  * Not thread safe!
@@ -81,6 +81,20 @@ public class ByteBufferOutputStream extends OutputStream {
     buf.put((byte)b);
   }
 
+ /**
+  * Writes the complete contents of this byte buffer output stream to
+  * the specified output stream argument.
+  *
+  * @param      out   the output stream to which to write the data.
+  * @exception  IOException  if an I/O error occurs.
+  */
+  public synchronized void writeTo(OutputStream out) throws IOException {
+    WritableByteChannel channel = Channels.newChannel(out);
+    ByteBuffer bb = buf.duplicate();
+    bb.flip();
+    channel.write(bb);
+  }
+
   @Override
   public void write(byte[] b) throws IOException {
     checkSizeAndGrow(b.length);
@@ -103,5 +117,16 @@ public class ByteBufferOutputStream extends OutputStream {
   @Override
   public void close() throws IOException {
     // noop again. heh
+  }
+
+  public byte[] toByteArray(int offset, int length) {
+    ByteBuffer bb = buf.duplicate();
+    bb.flip();
+
+    byte[] chunk = new byte[length];
+
+    bb.position(offset);
+    bb.get(chunk, 0, length);
+    return chunk;
   }
 }

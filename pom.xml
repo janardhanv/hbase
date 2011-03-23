@@ -156,8 +156,12 @@
 
   <repositories>
     <repository>
-      <id>temp-thrift</id>
-      <name>Thrift 0.2.0</name>
+      <id>apache release</id>
+      <url>https://repository.apache.org/content/repositories/releases/</url>
+    </repository>
+    <repository>
+      <id>hadoop-non-releases</id>
+      <name>Hadoop non-releases</name>
       <url>http://people.apache.org/~rawson/repo/</url>
       <snapshots>
         <enabled>false</enabled>
@@ -353,6 +357,15 @@
             <descriptor>src/assembly/all.xml</descriptor>
           </descriptors>
         </configuration>
+        <executions>
+          <execution>
+            <id>tarball</id>
+            <phase>package</phase>
+            <goals>
+              <goal>single</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- Run with -Dmaven.test.skip.exec=true to build -tests.jar without running tests (this is needed for upstream projects whose tests need this jar simply for compilation)-->
@@ -361,6 +374,7 @@
         <artifactId>maven-jar-plugin</artifactId>
         <executions>
           <execution>
+            <phase>prepare-package</phase>
             <goals>
               <goal>test-jar</goal>
             </goals>
@@ -389,7 +403,7 @@
         <executions>
           <execution>
             <id>attach-sources</id>
-            <phase>package</phase>
+            <phase>prepare-package</phase>
             <goals>
               <goal>jar-no-fork</goal>
             </goals>
@@ -406,6 +420,7 @@
           </includes>
           <excludes>
             <exclude>**/*$*</exclude>
+            <exclude>${test.exclude.pattern}</exclude>
           </excludes>
         </configuration>
       </plugin>
@@ -523,8 +538,7 @@
     <jetty.version>6.1.26</jetty.version>
     <jetty.jspapi.version>6.1.14</jetty.jspapi.version>
     <jersey.version>1.4</jersey.version>
-    <!--JRuby > 1.0.x has *GPL jars in it so we can't upgrade. See HBASE-3374-->
-    <jruby.version>1.0.3</jruby.version>
+    <jruby.version>1.6.0</jruby.version>
     <jsr311.version>1.1.1</jsr311.version>
     <junit.version>4.8.1</junit.version>
     <log4j.version>1.2.16</log4j.version>
@@ -532,8 +546,21 @@
     <protobuf.version>2.3.0</protobuf.version>
     <slf4j.version>1.5.8</slf4j.version><!-- newer version available -->
     <stax-api.version>1.0.1</stax-api.version>
-    <thrift.version>0.2.0</thrift.version><!-- newer version available -->
+    <thrift.version>0.5.0</thrift.version><!-- newer version available -->
     <zookeeper.version>3.3.2</zookeeper.version>
+
+    <package.prefix>/usr</package.prefix>	           
+    <package.conf.dir>/etc/hbase</package.conf.dir>  
+    <package.log.dir>/var/log/hbase</package.log.dir>
+    <package.pid.dir>/var/run/hbase</package.pid.dir>
+    <package.release>1</package.release>	       
+    <!-- also must update this when we bump version -->
+    <package.version>0.91.0</package.version>	       
+    <final.name>${artifactId}-${version}</final.name>
+
+    <!-- For flaky tests exclusion -->
+    <test.exclude></test.exclude>
+    <test.exclude.pattern>**/${test.exclude}.java</test.exclude.pattern>
   </properties>
 
   <!-- Sorted by groups of dependencies then groupId and artifactId -->
@@ -560,6 +587,11 @@
       <groupId>commons-cli</groupId>
       <artifactId>commons-cli</artifactId>
       <version>${commons-cli.version}</version>
+    </dependency>
+    <dependency>
+     <groupId>com.github.stephenc.high-scale-lib</groupId>
+     <artifactId>high-scale-lib</artifactId>
+     <version>1.1.1</version>
     </dependency>
     <dependency>
       <groupId>commons-codec</groupId>
@@ -640,8 +672,8 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.thrift</groupId>
-      <artifactId>thrift</artifactId>
+      <groupId>org.apache.hadoop</groupId>
+      <artifactId>libthrift</artifactId>
       <version>${thrift.version}</version>
       <exclusions>
         <exclusion>
@@ -837,7 +869,73 @@
   $ mvn -s /my/path/settings.xml deploy
 
   -->
-
+  <profiles>
+    <profile>
+      <id>rpm</id>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <version>1.6</version>
+            <executions>
+              <execution>
+                <id>build-rpm</id>
+                <phase>package</phase>
+                <configuration>
+                <target>
+                  <ant antfile="${basedir}/src/packages/build.xml">
+                    <target name="package-rpm"/>
+                    <target name="package-conf-pseudo-rpm"/>
+                  </ant>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>deb</id>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <version>1.6</version>
+            <executions>
+              <execution>
+                <id>build-deb</id>
+                <phase>package</phase>
+                <configuration>
+                  <target>
+                    <property name="artifactId" value="${artifactId}" />
+                    <ant antfile="${basedir}/src/packages/build.xml">
+                      <target name="package-deb"/>
+                      <target name="package-conf-pseudo-deb"/>
+                    </ant>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+            <dependencies>
+              <dependency>
+                <groupId>org.vafer</groupId>
+                <artifactId>jdeb</artifactId>
+                <version>0.8</version>
+              </dependency>
+            </dependencies>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+ 
   <!-- See http://jira.codehaus.org/browse/MSITE-443 why the settings need to be here and not in pluginManagement. -->
   <reporting>
     <plugins>

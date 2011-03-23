@@ -81,10 +81,11 @@ public class MasterFileSystem {
     this.rootdir = FSUtils.getRootDir(conf);
     // Cover both bases, the old way of setting default fs and the new.
     // We're supposed to run on 0.20 and 0.21 anyways.
-    conf.set("fs.default.name", this.rootdir.toString());
-    conf.set("fs.defaultFS", this.rootdir.toString());
+    this.fs = this.rootdir.getFileSystem(conf);
+    String fsUri = this.fs.getUri().toString();
+    conf.set("fs.default.name", fsUri);
+    conf.set("fs.defaultFS", fsUri);
     // setup the filesystem variable
-    this.fs = FileSystem.get(conf);
     // set up the archived logs path
     this.oldLogDir = new Path(this.rootdir, HConstants.HREGION_OLDLOGDIR_NAME);
     createInitialFileSystemLayout();
@@ -231,9 +232,19 @@ public class MasterFileSystem {
     // Filesystem is good. Go ahead and check for hbase.rootdir.
     if (!fs.exists(rd)) {
       fs.mkdirs(rd);
-      FSUtils.setVersion(fs, rd);
+      // DFS leaves safe mode with 0 DNs when there are 0 blocks.
+      // We used to handle this by checking the current DN count and waiting until
+      // it is nonzero. With security, the check for datanode count doesn't work --
+      // it is a privileged op. So instead we adopt the strategy of the jobtracker
+      // and simply retry file creation during bootstrap indefinitely. As soon as
+      // there is one datanode it will succeed. Permission problems should have
+      // already been caught by mkdirs above.
+      FSUtils.setVersion(fs, rd, c.getInt(HConstants.THREAD_WAKE_FREQUENCY,
+        10 * 1000));
     } else {
-      FSUtils.checkVersion(fs, rd, true);
+      // as above
+      FSUtils.checkVersion(fs, rd, true, c.getInt(HConstants.THREAD_WAKE_FREQUENCY,
+        10 * 1000));
     }
     // Make sure the root region directory exists!
     if (!FSUtils.rootRegionExists(fs, rd)) {

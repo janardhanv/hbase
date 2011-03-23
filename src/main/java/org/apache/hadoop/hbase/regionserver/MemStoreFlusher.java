@@ -19,21 +19,9 @@
  */
 package org.apache.hadoop.hbase.regionserver;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.DroppedSnapshotException;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.RemoteExceptionHandler;
-import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.util.StringUtils;
-
-import com.google.common.base.Preconditions;
-
 import java.io.IOException;
 import java.lang.management.ManagementFactory;
 import java.util.ConcurrentModificationException;
-import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
@@ -46,6 +34,17 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.DroppedSnapshotException;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.RemoteExceptionHandler;
+import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.util.StringUtils;
+
+import com.google.common.base.Preconditions;
 
 /**
  * Thread that flushes cache on request
@@ -141,7 +140,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
     }
     return (long)(max * limit);
   }
-  
+
   /**
    * The memstore across all regions has exceeded the low water mark. Pick
    * one region to flush and flush it synchronously (this is called from the
@@ -152,26 +151,26 @@ class MemStoreFlusher extends Thread implements FlushRequester {
     SortedMap<Long, HRegion> regionsBySize =
         server.getCopyOfOnlineRegionsSortedBySize();
 
-    // TODO: HBASE-3532 - we can't use Set<HRegion> here because it doesn't
-    // implement equals correctly. So, set of region names.
-    Set<byte[]> excludedRegionNames = new TreeSet<byte[]>(Bytes.BYTES_COMPARATOR);
+    Set<HRegion> excludedRegions = new TreeSet<HRegion>();
 
     boolean flushedOne = false;
     while (!flushedOne) {
       // Find the biggest region that doesn't have too many storefiles
+      // (might be null!)
       HRegion bestFlushableRegion = getBiggestMemstoreRegion(
-          regionsBySize, excludedRegionNames, true);
+          regionsBySize, excludedRegions, true);
       // Find the biggest region, total, even if it might have too many flushes.
       HRegion bestAnyRegion = getBiggestMemstoreRegion(
-          regionsBySize, excludedRegionNames, false);
+          regionsBySize, excludedRegions, false);
 
       if (bestAnyRegion == null) {
-        LOG.fatal("Above memory mark but there are no flushable regions!");
+        LOG.error("Above memory mark but there are no flushable regions!");
         return false;
       }
-      
+
       HRegion regionToFlush;
-      if (bestAnyRegion.memstoreSize.get() > 2 * bestFlushableRegion.memstoreSize.get()) {
+      if (bestFlushableRegion != null &&
+	  bestAnyRegion.memstoreSize.get() > 2 * bestFlushableRegion.memstoreSize.get()) {
         // Even if it's not supposed to be flushed, pick a region if it's more than twice
         // as big as the best flushable one - otherwise when we're under pressure we make
         // lots of little flushes and cause lots of compactions, etc, which just makes
@@ -183,19 +182,23 @@ class MemStoreFlusher extends Thread implements FlushRequester {
             " vs best flushable region's " +
             StringUtils.humanReadableInt(bestFlushableRegion.memstoreSize.get()) +
             ". Choosing the bigger.");
-        regionToFlush = bestAnyRegion;
+	regionToFlush = bestAnyRegion;
       } else {
-        regionToFlush = bestFlushableRegion;
+	  if (bestFlushableRegion == null) {
+	      regionToFlush = bestAnyRegion;
+	  } else {
+	      regionToFlush = bestFlushableRegion;
+	  }
       }
-      
+
       Preconditions.checkState(regionToFlush.memstoreSize.get() > 0);
-      
+
       LOG.info("Flush of region " + regionToFlush + " due to global heap pressure");
       flushedOne = flushRegion(regionToFlush, true);
       if (!flushedOne) {
         LOG.info("Excluding unflushable region " + regionToFlush +
           " - trying to find a different region to flush.");
-        excludedRegionNames.add(regionToFlush.getRegionName());
+        excludedRegions.add(regionToFlush);
       }
     }
     return true;
@@ -226,7 +229,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
               }
             }
             // Enqueue another one of these tokens so we'll wake up again
-            wakeupFlushThread();            
+            wakeupFlushThread();
           }
           continue;
         }
@@ -239,7 +242,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
       } catch (ConcurrentModificationException ex) {
         continue;
       } catch (Exception ex) {
-        LOG.error("Cache flusher failed for entry " + fqe);
+        LOG.error("Cache flusher failed for entry " + fqe, ex);
         if (!server.checkFileSystem()) {
           break;
         }
@@ -266,11 +269,11 @@ class MemStoreFlusher extends Thread implements FlushRequester {
 
   private HRegion getBiggestMemstoreRegion(
       SortedMap<Long, HRegion> regionsBySize,
-      Set<byte[]> excludedRegionNames,
+      Set<HRegion> excludedRegions,
       boolean checkStoreFileCount) {
     synchronized (regionsInQueue) {
       for (HRegion region : regionsBySize.values()) {
-        if (excludedRegionNames.contains(region.getRegionName())) {
+        if (excludedRegions.contains(region)) {
           continue;
         }
 
@@ -282,14 +285,14 @@ class MemStoreFlusher extends Thread implements FlushRequester {
     }
     return null;
   }
-  
+
   /**
    * Return true if global memory usage is above the high watermark
    */
   private boolean isAboveHighWaterMark() {
     return server.getGlobalMemStoreSize() >= globalMemStoreLimit;
   }
-  
+
   /**
    * Return true if we're above the high watermark
    */
@@ -329,7 +332,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
    * A flushRegion that checks store file count.  If too many, puts the flush
    * on delay queue to retry later.
    * @param fqe
-   * @return true if the region was successfully flushed, false otherwise. If 
+   * @return true if the region was successfully flushed, false otherwise. If
    * false, there will be accompanying log messages explaining why the log was
    * not flushed.
    */
@@ -447,7 +450,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
   }
 
   interface FlushQueueEntry extends Delayed {}
-  
+
   /**
    * Token to insert into the flush queue that ensures that the flusher does not sleep
    */
@@ -462,7 +465,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
       return -1;
     }
   }
-  
+
   /**
    * Datastructure used in the flush queue.  Holds region and retry count.
    * Keeps tabs on how old this object is.  Implements {@link Delayed}.  On
@@ -473,7 +476,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
    */
   static class FlushRegionEntry implements FlushQueueEntry {
     private final HRegion region;
-    
+
     private final long createTime;
     private long whenToExpire;
     private int requeueCount = 0;
@@ -499,7 +502,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
     public int getRequeueCount() {
       return this.requeueCount;
     }
- 
+
     /**
      * @param when When to expire, when to come up out of the queue.
      * Specify in milliseconds.  This method adds System.currentTimeMillis()
@@ -523,7 +526,7 @@ class MemStoreFlusher extends Thread implements FlushRequester {
       return Long.valueOf(getDelay(TimeUnit.MILLISECONDS) -
         other.getDelay(TimeUnit.MILLISECONDS)).intValue();
     }
-    
+
     @Override
     public String toString() {
       return "[flush region " + Bytes.toString(region.getRegionName()) + "]";

@@ -38,11 +38,14 @@ import org.apache.hadoop.hdfs.protocol.AlreadyBeingCreatedException;
 import org.apache.hadoop.hdfs.protocol.FSConstants;
 import org.apache.hadoop.hdfs.server.namenode.LeaseExpiredException;
 import org.apache.hadoop.io.SequenceFile;
+import org.apache.hadoop.util.StringUtils;
 
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.HashMap;
@@ -172,13 +175,28 @@ public class FSUtils {
    */
   public static void checkVersion(FileSystem fs, Path rootdir,
       boolean message) throws IOException {
+    checkVersion(fs, rootdir, message, 0);
+  }
+
+  /**
+   * Verifies current version of file system
+   *
+   * @param fs file system
+   * @param rootdir root directory of HBase installation
+   * @param message if true, issues a message on System.out
+   * @param wait wait interval for retry if > 0
+   *
+   * @throws IOException e
+   */
+  public static void checkVersion(FileSystem fs, Path rootdir,
+      boolean message, int wait) throws IOException {
     String version = getVersion(fs, rootdir);
 
     if (version == null) {
       if (!rootRegionExists(fs, rootdir)) {
         // rootDir is empty (no version file and no root region)
         // just create new version file (HBASE-1195)
-        FSUtils.setVersion(fs, rootdir);
+        FSUtils.setVersion(fs, rootdir, wait);
         return;
       }
     } else if (version.compareTo(HConstants.FILE_SYSTEM_VERSION) == 0)
@@ -205,7 +223,20 @@ public class FSUtils {
    */
   public static void setVersion(FileSystem fs, Path rootdir)
   throws IOException {
-    setVersion(fs, rootdir, HConstants.FILE_SYSTEM_VERSION);
+    setVersion(fs, rootdir, HConstants.FILE_SYSTEM_VERSION, 0);
+  }
+
+  /**
+   * Sets version of file system
+   *
+   * @param fs filesystem object
+   * @param rootdir hbase root
+   * @param wait time to wait for retry
+   * @throws IOException e
+   */
+  public static void setVersion(FileSystem fs, Path rootdir, int wait)
+  throws IOException {
+    setVersion(fs, rootdir, HConstants.FILE_SYSTEM_VERSION, wait);
   }
 
   /**
@@ -214,15 +245,33 @@ public class FSUtils {
    * @param fs filesystem object
    * @param rootdir hbase root directory
    * @param version version to set
+   * @param wait time to wait for retry
    * @throws IOException e
    */
-  public static void setVersion(FileSystem fs, Path rootdir, String version)
-  throws IOException {
-    FSDataOutputStream s =
-      fs.create(new Path(rootdir, HConstants.VERSION_FILE_NAME));
-    s.writeUTF(version);
-    s.close();
-    LOG.debug("Created version file at " + rootdir.toString() + " set its version at:" + version);
+  public static void setVersion(FileSystem fs, Path rootdir, String version,
+      int wait) throws IOException {
+    while (true) try {
+      FSDataOutputStream s =
+        fs.create(new Path(rootdir, HConstants.VERSION_FILE_NAME));
+      s.writeUTF(version);
+      s.close();
+      LOG.debug("Created version file at " + rootdir.toString() +
+        " set its version at:" + version);
+      return;
+    } catch (IOException e) {
+      if (wait > 0) {
+        LOG.warn("Unable to create version file at " + rootdir.toString() +
+          ", retrying: " + StringUtils.stringifyException(e));
+        try {
+          Thread.sleep(wait);
+        } catch (InterruptedException ex) {
+          // ignore
+        }
+      } else {
+        // rethrow
+        throw e;
+      }
+    }
   }
 
   /**
@@ -260,22 +309,6 @@ public class FSUtils {
     FileSystem fs = FileSystem.get(conf);
     if (!(fs instanceof DistributedFileSystem)) return;
     DistributedFileSystem dfs = (DistributedFileSystem)fs;
-    // Are there any data nodes up yet?
-    // Currently the safe mode check falls through if the namenode is up but no
-    // datanodes have reported in yet.
-    try {
-      while (dfs.getDataNodeStats().length == 0) {
-        LOG.info("Waiting for dfs to come up...");
-        try {
-          Thread.sleep(wait);
-        } catch (InterruptedException e) {
-          //continue
-        }
-      }
-    } catch (IOException e) {
-      // getDataNodeStats can fail if superuser privilege is required to run
-      // the datanode report, just ignore it
-    }
     // Make sure dfs is not in safe mode
     while (dfs.setSafeMode(FSConstants.SafeModeAction.SAFEMODE_GET)) {
       LOG.info("Waiting for dfs to exit safe mode...");
@@ -304,11 +337,13 @@ public class FSUtils {
   /**
    * @param c configuration
    * @return Path to hbase root directory: i.e. <code>hbase.rootdir</code> from
-   * configuration as a Path.
+   * configuration as a qualified Path.
    * @throws IOException e
    */
   public static Path getRootDir(final Configuration c) throws IOException {
-    return new Path(c.get(HConstants.HBASE_DIR));
+    Path p = new Path(c.get(HConstants.HBASE_DIR));
+    FileSystem fs = p.getFileSystem(c);
+    return p.makeQualified(fs);
   }
 
   /**
@@ -631,8 +666,23 @@ public class FSUtils {
     boolean recovered = false;
     while (!recovered) {
       try {
-        FSDataOutputStream out = fs.append(p);
-        out.close();
+        try {
+          if (fs instanceof DistributedFileSystem) {
+            DistributedFileSystem dfs = (DistributedFileSystem)fs;
+            DistributedFileSystem.class.getMethod("recoverLease",
+              new Class[] {Path.class}).invoke(dfs, p);
+          } else {
+            throw new Exception("Not a DistributedFileSystem");
+          }
+        } catch (InvocationTargetException ite) {
+          // function was properly called, but threw it's own exception
+          throw (IOException) ite.getCause();
+        } catch (Exception e) {
+          LOG.debug("Failed fs.recoverLease invocation, " + e.toString() +
+            ", trying fs.append instead");
+          FSDataOutputStream out = fs.append(p);
+          out.close();
+        }
         recovered = true;
       } catch (IOException e) {
         e = RemoteExceptionHandler.checkIOException(e);
@@ -646,11 +696,6 @@ public class FSUtils {
             LOG.warn("Waited " + waitedFor + "ms for lease recovery on " + p +
               ":" + e.getMessage());
           }
-          try {
-            Thread.sleep(1000);
-          } catch (InterruptedException ex) {
-            // ignore it and try again
-          }
         } else if (e instanceof LeaseExpiredException &&
             e.getMessage().contains("File does not exist")) {
           // This exception comes out instead of FNFE, fix it
@@ -660,8 +705,12 @@ public class FSUtils {
           throw new IOException("Failed to open " + p + " for append", e);
         }
       }
+      try {
+        Thread.sleep(1000);
+      } catch (InterruptedException ex) {
+        new InterruptedIOException().initCause(ex);
+      }
     }
     LOG.info("Finished lease recover attempt for " + p);
   }
-
 }
