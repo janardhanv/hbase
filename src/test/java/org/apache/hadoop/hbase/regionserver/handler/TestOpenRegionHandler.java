@@ -35,6 +35,7 @@ import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
+import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.regionserver.CompactionRequestor;
 import org.apache.hadoop.hbase.regionserver.FlushRequester;
 import org.apache.hadoop.hbase.regionserver.HRegion;
@@ -159,6 +160,11 @@ public class TestOpenRegionHandler {
     
     @Override
     public HBaseRpcMetrics getRpcMetrics() {
+      return null;
+    }
+
+    @Override
+    public RpcServer getRpcServer() {
       return null;
     }
     

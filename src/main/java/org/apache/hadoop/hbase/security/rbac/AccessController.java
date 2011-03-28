@@ -45,6 +45,7 @@ import org.apache.hadoop.hbase.coprocessor.CoprocessorException;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.MasterObserver;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
+import org.apache.hadoop.hbase.filter.CompareFilter;
 import org.apache.hadoop.hbase.filter.FilterList;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.ipc.RequestContext;
@@ -581,9 +582,10 @@ public class AccessController extends BaseRegionObserverCoprocessor
   @Override
   public boolean preCheckAndPut(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
-      final byte [] value, final Put put, final boolean result)
-      throws IOException {
-    requirePermission(TablePermission.Action.READ, e, 
+      final CompareFilter.CompareOp compareOp,
+      final WritableByteArrayComparable comparator, final Put put,
+      final boolean result) throws IOException {
+    requirePermission(TablePermission.Action.READ, e,
         Arrays.asList(new byte[][]{family}));
     return result;
   }
@@ -591,9 +593,10 @@ public class AccessController extends BaseRegionObserverCoprocessor
   @Override
   public boolean preCheckAndDelete(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
-      final byte [] value, final Delete delete, final boolean result)
-      throws IOException {
-    requirePermission(TablePermission.Action.READ, e, 
+      final CompareFilter.CompareOp compareOp,
+      final WritableByteArrayComparable comparator, final Delete delete,
+      final boolean result) throws IOException {
+    requirePermission(TablePermission.Action.READ, e,
         Arrays.asList( new byte[][] {family}));
     return result;
   }
@@ -662,7 +665,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
 
   @Override
   public boolean preScannerNext(final RegionCoprocessorEnvironment e,
-      final InternalScanner s, final List<KeyValue> result,
+      final InternalScanner s, final List<Result> result,
       final int limit, final boolean hasNext) throws IOException {
     // verify that requesting user matches the user who created the scanner
     // if so, we assume that access control is correctly enforced based on
