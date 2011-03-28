@@ -74,8 +74,10 @@ import org.apache.hadoop.hbase.client.RowLock;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.IncompatibleFilterException;
+import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.io.HeapSize;
 import org.apache.hadoop.hbase.io.TimeRange;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
@@ -1637,14 +1639,16 @@ public class HRegion implements HeapSize { // , Writable{
    * @param row
    * @param family
    * @param qualifier
-   * @param expectedValue
+   * @param compareOp
+   * @param comparator
    * @param lockId
    * @param writeToWAL
    * @throws IOException
    * @return true if the new put was execute, false otherwise
    */
   public boolean checkAndMutate(byte [] row, byte [] family, byte [] qualifier,
-      byte [] expectedValue, Writable w, Integer lockId, boolean writeToWAL)
+      CompareOp compareOp, WritableByteArrayComparable comparator, Writable w,
+      Integer lockId, boolean writeToWAL)
   throws IOException{
     checkReadOnly();
     //TODO, add check for value length or maybe even better move this to the
@@ -1673,12 +1677,32 @@ public class HRegion implements HeapSize { // , Writable{
 
         boolean matches = false;
         if (result.size() == 0 &&
-            (expectedValue == null || expectedValue.length == 0)) {
+           (comparator.getValue() == null || comparator.getValue().length == 0)) {
           matches = true;
         } else if (result.size() == 1) {
-          //Compare the expected value with the actual value
-          byte [] actualValue = result.get(0).getValue();
-          matches = Bytes.equals(expectedValue, actualValue);
+          int compareResult = comparator.compareTo(result.get(0).getValue());
+          switch (compareOp) {
+          case LESS:
+            matches = compareResult <= 0;
+            break;
+          case LESS_OR_EQUAL:
+            matches = compareResult < 0;
+            break;
+          case EQUAL:
+            matches = compareResult == 0;
+            break;
+          case NOT_EQUAL:
+            matches = compareResult != 0;
+            break;
+          case GREATER_OR_EQUAL:
+            matches = compareResult > 0;
+            break;
+          case GREATER:
+            matches = compareResult >= 0;
+            break;
+          default:
+            throw new RuntimeException("Unknown Compare op " + compareOp.name());
+          }
         }
         //If matches put the new put or delete the new delete
         if (matches) {
@@ -2447,14 +2471,6 @@ public class HRegion implements HeapSize { // , Writable{
 
     public synchronized boolean next(List<KeyValue> outResults, int limit)
         throws IOException {
-      if (coprocessorHost != null) {
-        Boolean result = coprocessorHost.preScannerNext((InternalScanner)this,
-          outResults, limit);
-        if (result != null) {
-          return result.booleanValue();
-        }
-      }
-
       if (this.filterClosed) {
         throw new UnknownScannerException("Scanner was closed (timed out?) " +
             "after we renewed it. Could be caused by a very slow scanner " +
@@ -2469,11 +2485,6 @@ public class HRegion implements HeapSize { // , Writable{
         results.clear();
 
         boolean returnResult = nextInternal(limit);
-
-        if (coprocessorHost != null) {
-          returnResult = coprocessorHost.postScannerNext((InternalScanner)this,
-            results, limit, returnResult);
-        }
 
         outResults.addAll(results);
         resetFilters();
@@ -2582,20 +2593,12 @@ public class HRegion implements HeapSize { // , Writable{
               currentRow, 0, currentRow.length) <= isScan);
     }
 
-    public synchronized void close() throws IOException {
-      if (coprocessorHost != null) {
-        if (coprocessorHost.preScannerClose((InternalScanner)this)) {
-          return;
-        }
-      }
+    public synchronized void close() {
       if (storeHeap != null) {
         storeHeap.close();
         storeHeap = null;
       }
       this.filterClosed = true;
-      if (coprocessorHost != null) {
-        coprocessorHost.postScannerClose((InternalScanner)this);
-      }
     }
   }
 

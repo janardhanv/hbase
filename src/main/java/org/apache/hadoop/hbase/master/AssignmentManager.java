@@ -925,9 +925,28 @@ public class AssignmentManager extends ZooKeeperListener {
     // Move on to open regions.
     try {
       // Send OPEN RPC. This can fail if the server on other end is is not up.
-      this.serverManager.sendRegionOpen(destination, regions);
+      // If we fail, fail the startup by aborting the server.  There is one
+      // exception we will tolerate: ServerNotRunningException.  This is thrown
+      // between report of regionserver being up and 
+      long maxWaitTime = System.currentTimeMillis() +
+        this.master.getConfiguration().getLong("hbase.regionserver.rpc.startup.waittime", 60000);
+      while (!this.master.isStopped()) {
+        try {
+          this.serverManager.sendRegionOpen(destination, regions);
+          break;
+        } catch (org.apache.hadoop.hbase.ipc.ServerNotRunningException e) {
+          // This is the one exception to retry.  For all else we should just fail
+          // the startup.
+          long now = System.currentTimeMillis();
+          if (now > maxWaitTime) throw e;
+          LOG.debug("Server is not yet up; waiting up to " +
+              (maxWaitTime - now) + "ms", e);
+          Thread.sleep(1000);
+        }
+      }
     } catch (Throwable t) {
-      this.master.abort("Failed assignment of regions to " + destination, t);
+      this.master.abort("Failed assignment of regions to " + destination +
+        "; bulk assign FAILED", t);
       return;
     }
     LOG.debug("Bulk assigning done for " + destination.getServerName());
@@ -1257,36 +1276,13 @@ public class AssignmentManager extends ZooKeeperListener {
       // Presume that the split message when it comes in will fix up the master's
       // in memory cluster state.
       return;
-    } catch (ConnectException e) {
-      LOG.info("Failed connect to " + server + ", message=" + e.getMessage() +
-        ", region=" + region.getEncodedName());
-      // Presume that regionserver just failed and we haven't got expired
-      // server from zk yet.  Let expired server deal with clean up.
-    } catch (java.net.SocketTimeoutException e) {
-      LOG.info("Server " + server + " returned " + e.getMessage() + " for " +
-        region.getEncodedName());
-      // Presume retry or server will expire.
-    } catch (EOFException e) {
-      LOG.info("Server " + server + " returned " + e.getMessage() + " for " +
-        region.getEncodedName());
-      // Presume retry or server will expire.
-    } catch (RemoteException re) {
-      IOException ioe = re.unwrapRemoteException();
-      if (ioe instanceof NotServingRegionException) {
-        // Failed to close, so pass through and reassign
-        LOG.debug("Server " + server + " returned " + ioe + " for " +
-          region.getEncodedName());
-      } else if (ioe instanceof EOFException) {
-        // Failed to close, so pass through and reassign
-        LOG.debug("Server " + server + " returned " + ioe + " for " +
-          region.getEncodedName());
-      } else {
-        this.master.abort("Remote unexpected exception", ioe);
-      }
     } catch (Throwable t) {
-      // For now call abort if unexpected exception -- radical, but will get
-      // fellas attention. St.Ack 20101012
-      this.master.abort("Remote unexpected exception", t);
+      if (t instanceof RemoteException) {
+        t = ((RemoteException)t).unwrapRemoteException();
+      }
+      LOG.info("Server " + server + " returned " + t + " for " +
+        region.getEncodedName());
+      // Presume retry or server will expire.
     }
   }
 
@@ -1774,6 +1770,10 @@ public class AssignmentManager extends ZooKeeperListener {
                   Stat stat = new Stat();
                   RegionTransitionData data = ZKAssign.getDataNoWatch(watcher,
                       node, stat);
+                  if (data == null) {
+                    LOG.warn("Data is null, node " + node + " no longer exists");
+                    break;
+                  }
                   if (data.getEventType() == EventType.RS_ZK_REGION_OPENED) {
                     LOG.debug("Region has transitioned to OPENED, allowing " +
                         "watched event handlers to process");

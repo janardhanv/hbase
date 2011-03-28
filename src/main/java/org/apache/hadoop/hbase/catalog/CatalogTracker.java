@@ -23,6 +23,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.net.ConnectException;
 import java.net.SocketTimeoutException;
+import java.net.SocketException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
@@ -320,12 +321,12 @@ public class CatalogTracker {
   throws InterruptedException, IOException, NotAllMetaRegionsOnlineException {
     long stop = System.currentTimeMillis() + timeout;
     synchronized (metaAvailable) {
-      if (getMetaServerConnection(true) != null) {
-        return metaLocation;
-      }
       while(!stopped && !metaAvailable.get() &&
           (timeout == 0 || System.currentTimeMillis() < stop)) {
-        metaAvailable.wait(timeout);
+        if (getMetaServerConnection(true) != null) {
+          return metaLocation;
+        }
+        metaAvailable.wait(timeout == 0 ? 50 : timeout);
       }
       if (getMetaServerConnection(true) == null) {
         throw new NotAllMetaRegionsOnlineException(
@@ -390,8 +391,11 @@ public class CatalogTracker {
         throw e;
       }
     } catch (SocketTimeoutException e) {
-      // We were passed the wrong address.  Return 'protocol' == null.
+      // Return 'protocol' == null.
       LOG.debug("Timed out connecting to " + address);
+    } catch (SocketException e) {
+      // Return 'protocol' == null.
+      LOG.debug("Exception connecting to " + address);
     } catch (IOException ioe) {
       Throwable cause = ioe.getCause();
       if (cause != null && cause instanceof EOFException) {

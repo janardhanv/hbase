@@ -34,7 +34,6 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedList;
 import java.util.List;
@@ -96,6 +95,9 @@ import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
 import org.apache.hadoop.hbase.executor.ExecutorService;
 import org.apache.hadoop.hbase.executor.ExecutorService.ExecutorType;
+import org.apache.hadoop.hbase.filter.BinaryComparator;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
+import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.io.hfile.LruBlockCache;
 import org.apache.hadoop.hbase.io.hfile.LruBlockCache.CacheStats;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
@@ -182,7 +184,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * encoded region name.  All access should be synchronized.
    */
   protected final Map<String, HRegion> onlineRegions =
-    new HashMap<String, HRegion>();
+    new ConcurrentHashMap<String, HRegion>();
 
   protected final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final LinkedBlockingQueue<HMsg> outboundMsgs = new LinkedBlockingQueue<HMsg>();
@@ -688,11 +690,9 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
   String getOnlineRegionsAsPrintableString() {
     StringBuilder sb = new StringBuilder();
-    synchronized (this.onlineRegions) {
-      for (HRegion r: this.onlineRegions.values()) {
-        if (sb.length() > 0) sb.append(", ");
-        sb.append(r.getRegionInfo().getEncodedName());
-      }
+    for (HRegion r: this.onlineRegions.values()) {
+      if (sb.length() > 0) sb.append(", ");
+      sb.append(r.getRegionInfo().getEncodedName());
     }
     return sb.toString();
   }
@@ -712,9 +712,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         // Only print out regions still closing if a small number else will
         // swamp the log.
         if (count < 10 && LOG.isDebugEnabled()) {
-          synchronized (this.onlineRegions) {
-            LOG.debug(this.onlineRegions);
-          }
+          LOG.debug(this.onlineRegions);
         }
       }
       Threads.sleep(1000);
@@ -756,10 +754,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     HServerLoad hsl = new HServerLoad(requestCount.get(),
       (int)(memory.getUsed() / 1024 / 1024),
       (int) (memory.getMax() / 1024 / 1024));
-    synchronized (this.onlineRegions) {
-      for (HRegion r : this.onlineRegions.values()) {
-        hsl.addRegionInfo(createRegionLoad(r));
-      }
+    for (HRegion r : this.onlineRegions.values()) {
+      hsl.addRegionInfo(createRegionLoad(r));
     }
     return hsl;
   }
@@ -923,10 +919,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   public HServerLoad.RegionLoad createRegionLoad(final String encodedRegionName) {
     HRegion r = null;
-    synchronized (this.onlineRegions) {
-      r = this.onlineRegions.get(encodedRegionName);
-    }
-    return createRegionLoad(r);
+    r = this.onlineRegions.get(encodedRegionName);
+    return r != null ? createRegionLoad(r) : null;
   }
 
   /*
@@ -1042,17 +1036,15 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
     @Override
     protected void chore() {
-      synchronized (this.instance.onlineRegions) {
-        for (HRegion r : this.instance.onlineRegions.values()) {
-          try {
-            if (r != null && r.isMajorCompaction()) {
-              // Queue a compaction. Will recognize if major is needed.
-              this.instance.compactSplitThread.requestCompaction(r, getName()
-                + " requests major compaction");
-            }
-          } catch (IOException e) {
-            LOG.warn("Failed major compaction check on " + r, e);
+      for (HRegion r : this.instance.onlineRegions.values()) {
+        try {
+          if (r != null && r.isMajorCompaction()) {
+            // Queue a compaction. Will recognize if major is needed.
+            this.instance.compactSplitThread.requestCompaction(r, getName()
+              + " requests major compaction");
           }
+        } catch (IOException e) {
+          LOG.warn("Failed major compaction check on " + r, e);
         }
       }
     }
@@ -1154,8 +1146,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     long memstoreSize = 0;
     long requestsCount = 0;
     long storefileIndexSize = 0;
-    synchronized (this.onlineRegions) {
-      for (Map.Entry<String, HRegion> e : this.onlineRegions.entrySet()) {
+    for (Map.Entry<String, HRegion> e : this.onlineRegions.entrySet()) {
         HRegion r = e.getValue();
         memstoreSize += r.memstoreSize.get();
         requestsCount += r.requestsCount.get();
@@ -1168,7 +1159,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           }
         }
       }
-    }
     this.metrics.stores.set(stores);
     this.metrics.storefiles.set(storefiles);
     this.metrics.memstoreSizeMB.set((int) (memstoreSize / (1024 * 1024)));
@@ -1362,7 +1352,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
   /**
    * Return a reference to the metrics instance used for counting RPC calls.
-   * @return
+   * @return Metrics instance.
    */
   public HBaseRpcMetrics getRpcMetrics() {
     return server.getRpcMetrics();
@@ -1552,16 +1542,14 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     HRegion root = null;
     this.lock.writeLock().lock();
     try {
-      synchronized (this.onlineRegions) {
-        for (Map.Entry<String, HRegion> e: onlineRegions.entrySet()) {
-          HRegionInfo hri = e.getValue().getRegionInfo();
-          if (hri.isRootRegion()) {
-            root = e.getValue();
-          } else if (hri.isMetaRegion()) {
-            meta = e.getValue();
-          }
-          if (meta != null && root != null) break;
+      for (Map.Entry<String, HRegion> e: onlineRegions.entrySet()) {
+        HRegionInfo hri = e.getValue().getRegionInfo();
+        if (hri.isRootRegion()) {
+          root = e.getValue();
+        } else if (hri.isMetaRegion()) {
+          meta = e.getValue();
         }
+        if (meta != null && root != null) break;
       }
     } finally {
       this.lock.writeLock().unlock();
@@ -1577,13 +1565,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   void closeUserRegions(final boolean abort) {
     this.lock.writeLock().lock();
     try {
-      synchronized (this.onlineRegions) {
-        for (Map.Entry<String, HRegion> e: this.onlineRegions.entrySet()) {
-          HRegion r = e.getValue();
-          if (!r.getRegionInfo().isMetaRegion()) {
-            // Don't update zk with this close transition; pass false.
-            closeRegion(r.getRegionInfo(), abort, false);
-          }
+      for (Map.Entry<String, HRegion> e: this.onlineRegions.entrySet()) {
+        HRegion r = e.getValue();
+        if (!r.getRegionInfo().isMetaRegion()) {
+          // Don't update zk with this close transition; pass false.
+          closeRegion(r.getRegionInfo(), abort, false);
         }
       }
     } finally {
@@ -1701,8 +1687,9 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   private boolean checkAndMutate(final byte[] regionName, final byte[] row,
-      final byte[] family, final byte[] qualifier, final byte[] value,
-      final Writable w, Integer lock) throws IOException {
+      final byte[] family, final byte[] qualifier, final CompareOp compareOp,
+      final WritableByteArrayComparable comparator, final Writable w,
+      Integer lock) throws IOException {
     checkOpen();
     this.requestCount.incrementAndGet();
     HRegion region = getRegion(regionName);
@@ -1710,8 +1697,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       if (!region.getRegionInfo().isMetaTable()) {
         this.cacheFlusher.reclaimMemStoreMemory();
       }
-      return region
-          .checkAndMutate(row, family, qualifier, value, w, lock, true);
+      return region.checkAndMutate(row, family, qualifier, compareOp,
+        comparator, w, lock, true);
     } catch (Throwable t) {
       throw convertThrowableToIOE(cleanup(t));
     }
@@ -1738,18 +1725,59 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           + "regionName is null");
     }
     HRegion region = getRegion(regionName);
+    WritableByteArrayComparable comparator = new BinaryComparator(value);
     if (region.getCoprocessorHost() != null) {
       Boolean result = region.getCoprocessorHost()
-        .preCheckAndPut(row, family, qualifier, value, put);
+        .preCheckAndPut(row, family, qualifier, CompareOp.EQUAL, comparator,
+          put);
       if (result != null) {
         return result.booleanValue();
       }
     }
     boolean result = checkAndMutate(regionName, row, family, qualifier,
-      value, put, getLockFromId(put.getLockId()));
+      CompareOp.EQUAL, new BinaryComparator(value), put,
+      getLockFromId(put.getLockId()));
     if (region.getCoprocessorHost() != null) {
       result = region.getCoprocessorHost().postCheckAndPut(row, family,
-        qualifier, value, put, result);
+        qualifier, CompareOp.EQUAL, comparator, put, result);
+    }
+    return result;
+  }
+
+  /**
+   *
+   * @param regionName
+   * @param row
+   * @param family
+   * @param qualifier
+   * @param compareOp
+   * @param comparator
+   * @param put
+   * @throws IOException
+   * @return true if the new put was execute, false otherwise
+   */
+  public boolean checkAndPut(final byte[] regionName, final byte[] row,
+      final byte[] family, final byte[] qualifier, final CompareOp compareOp,
+      final WritableByteArrayComparable comparator, final Put put)
+       throws IOException {
+    checkOpen();
+    if (regionName == null) {
+      throw new IOException("Invalid arguments to checkAndPut "
+          + "regionName is null");
+    }
+    HRegion region = getRegion(regionName);
+    if (region.getCoprocessorHost() != null) {
+      Boolean result = region.getCoprocessorHost()
+        .preCheckAndPut(row, family, qualifier, compareOp, comparator, put);
+      if (result != null) {
+        return result.booleanValue();
+      }
+    }
+    boolean result = checkAndMutate(regionName, row, family, qualifier,
+      compareOp, comparator, put, getLockFromId(put.getLockId()));
+    if (region.getCoprocessorHost() != null) {
+      result = region.getCoprocessorHost().postCheckAndPut(row, family,
+        qualifier, compareOp, comparator, put, result);
     }
     return result;
   }
@@ -1776,21 +1804,61 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           + "regionName is null");
     }
     HRegion region = getRegion(regionName);
+    WritableByteArrayComparable comparator = new BinaryComparator(value);
     if (region.getCoprocessorHost() != null) {
       Boolean result = region.getCoprocessorHost().preCheckAndDelete(row,
-        family, qualifier, value, delete);
+        family, qualifier, CompareOp.EQUAL, comparator, delete);
       if (result != null) {
         return result.booleanValue();
       }
     }
-    boolean result = checkAndMutate(regionName, row, family, qualifier, value,
-      delete, getLockFromId(delete.getLockId()));
+    boolean result = checkAndMutate(regionName, row, family, qualifier,
+      CompareOp.EQUAL, comparator, delete, getLockFromId(delete.getLockId()));
     if (region.getCoprocessorHost() != null) {
       result = region.getCoprocessorHost().postCheckAndDelete(row, family,
-        qualifier, value, delete, result);
+        qualifier, CompareOp.EQUAL, comparator, delete, result);
     }
     return result;
   }
+
+  /**
+   *
+   * @param regionName
+   * @param row
+   * @param family
+   * @param qualifier
+   * @param compareOp
+   * @param comparator
+   * @param delete
+   * @throws IOException
+   * @return true if the new put was execute, false otherwise
+   */
+  public boolean checkAndDelete(final byte[] regionName, final byte[] row,
+      final byte[] family, final byte[] qualifier, final CompareOp compareOp,
+      final WritableByteArrayComparable comparator, final Delete delete)
+      throws IOException {
+    checkOpen();
+
+    if (regionName == null) {
+      throw new IOException("Invalid arguments to checkAndDelete "
+        + "regionName is null");
+    }
+    HRegion region = getRegion(regionName);
+    if (region.getCoprocessorHost() != null) {
+      Boolean result = region.getCoprocessorHost().preCheckAndDelete(row,
+        family, qualifier, compareOp, comparator, delete);
+     if (result != null) {
+       return result.booleanValue();
+     }
+    }
+    boolean result = checkAndMutate(regionName, row, family, qualifier,
+      compareOp, comparator, delete, getLockFromId(delete.getLockId()));
+   if (region.getCoprocessorHost() != null) {
+     result = region.getCoprocessorHost().postCheckAndDelete(row, family,
+       qualifier, compareOp, comparator, delete, result);
+   }
+   return result;
+ }
 
   //
   // remote scanner interface
@@ -1845,13 +1913,44 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       } catch (IOException e) {
         // If checkOpen failed, server not running or filesystem gone,
         // cancel this lease; filesystem is gone or we're closing or something.
-        this.leases.cancelLease(scannerName);
+        try {
+          this.leases.cancelLease(scannerName);
+        } catch (LeaseException le) {
+          LOG.info("Server shutting down and client tried to access missing scanner " +
+            scannerName);
+        }
         throw e;
       }
       this.leases.renewLease(scannerName);
       List<Result> results = new ArrayList<Result>(nbRows);
       long currentScanResultSize = 0;
       List<KeyValue> values = new ArrayList<KeyValue>();
+
+      // Call coprocessor. Get region info from scanner.
+      HRegion region = null;
+      if (s instanceof HRegion.RegionScanner) {
+        HRegion.RegionScanner rs = (HRegion.RegionScanner) s;
+        region = getRegion(rs.getRegionName().getRegionName());
+      } else {
+        throw new IOException("InternalScanner implementation is expected " +
+            "to be HRegion.RegionScanner.");
+      }
+      if (region != null && region.getCoprocessorHost() != null) {
+        Boolean bypass = region.getCoprocessorHost().preScannerNext(s,
+            results, nbRows);
+        if (!results.isEmpty()) {
+          for (Result r : results) {
+            for (KeyValue kv : r.raw()) {
+              currentScanResultSize += kv.heapSize();
+            }
+          }
+        }
+        if (bypass != null) {
+          return ((HRegion.RegionScanner) s).isFilterDone() && results.isEmpty() ? null
+              : results.toArray(new Result[0]);
+        }
+      }
+
       for (int i = 0; i < nbRows
           && currentScanResultSize < maxScannerResultSize; i++) {
         requestCount.incrementAndGet();
@@ -1868,6 +1967,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         }
         values.clear();
       }
+
+      // coprocessor postNext hook
+      if (region != null && region.getCoprocessorHost() != null) {
+        region.getCoprocessorHost().postScannerNext(s, results, nbRows, true);
+      }
+
       // Below is an ugly hack where we cast the InternalScanner to be a
       // HRegion.RegionScanner. The alternative is to change InternalScanner
       // interface but its used everywhere whereas we just need a bit of info
@@ -1890,10 +1995,33 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       checkOpen();
       requestCount.incrementAndGet();
       String scannerName = String.valueOf(scannerId);
-      InternalScanner s = scanners.remove(scannerName);
+      InternalScanner s = scanners.get(scannerName);
+
+      HRegion region = null;
+      if (s != null) {
+        // call coprocessor.
+        if (s instanceof HRegion.RegionScanner) {
+          HRegion.RegionScanner rs = (HRegion.RegionScanner) s;
+          region = getRegion(rs.getRegionName().getRegionName());
+        } else {
+          throw new IOException("InternalScanner implementation is expected " +
+              "to be HRegion.RegionScanner.");
+        }
+        if (region != null && region.getCoprocessorHost() != null) {
+          if (region.getCoprocessorHost().preScannerClose(s)) {
+            return; // bypass
+          }
+        }
+      }
+
+      s = scanners.remove(scannerName);
       if (s != null) {
         s.close();
         this.leases.cancelLease(scannerName);
+
+        if (region != null && region.getCoprocessorHost() != null) {
+          region.getCoprocessorHost().postScannerClose(s);
+        }
       }
     } catch (Throwable t) {
       throw convertThrowableToIOE(cleanup(t));
@@ -2135,14 +2263,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   public boolean closeRegion(HRegionInfo region, final boolean zk)
   throws NotServingRegionException {
     LOG.info("Received close region: " + region.getRegionNameAsString());
-    synchronized (this.onlineRegions) {
-      boolean hasit = this.onlineRegions.containsKey(region.getEncodedName());
-      if (!hasit) {
-        LOG.warn("Received close for region we are not serving; " +
-          region.getEncodedName());
-        throw new NotServingRegionException("Received close for "
-          + region.getRegionNameAsString() + " but we are not serving it");
-      }
+    boolean hasit = this.onlineRegions.containsKey(region.getEncodedName());
+    if (!hasit) {
+      LOG.warn("Received close for region we are not serving; " +
+        region.getEncodedName());
+      throw new NotServingRegionException("Received close for "
+        + region.getRegionNameAsString() + " but we are not serving it");
     }
     return closeRegion(region, false, zk);
   }
@@ -2243,11 +2369,9 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   @Override
   @QosPriority(priority=HIGH_QOS)
   public List<HRegionInfo> getOnlineRegions() {
-    List<HRegionInfo> list = new ArrayList<HRegionInfo>();
-    synchronized(this.onlineRegions) {
-      for (Map.Entry<String,HRegion> e: this.onlineRegions.entrySet()) {
-        list.add(e.getValue().getRegionInfo());
-      }
+    List<HRegionInfo> list = new ArrayList<HRegionInfo>(onlineRegions.size());
+    for (Map.Entry<String,HRegion> e: this.onlineRegions.entrySet()) {
+      list.add(e.getValue().getRegionInfo());
     }
     Collections.sort(list);
     return list;
@@ -2255,16 +2379,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
   public int getNumberOfOnlineRegions() {
     int size = -1;
-    synchronized (this.onlineRegions) {
-      size = this.onlineRegions.size();
-    }
+    size = this.onlineRegions.size();
     return size;
   }
 
   boolean isOnlineRegionsEmpty() {
-    synchronized (this.onlineRegions) {
-      return this.onlineRegions.isEmpty();
-    }
+    return this.onlineRegions.isEmpty();
   }
 
   /**
@@ -2274,35 +2394,19 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * @see #getOnlineRegions()
    */
   public Collection<HRegion> getOnlineRegionsLocalContext() {
-    synchronized (this.onlineRegions) {
-      Collection<HRegion> regions = this.onlineRegions.values();
-      return Collections.unmodifiableCollection(regions);
-    }
+    Collection<HRegion> regions = this.onlineRegions.values();
+    return Collections.unmodifiableCollection(regions);
   }
 
   @Override
   public void addToOnlineRegions(HRegion region) {
-    lock.writeLock().lock();
-    try {
-      synchronized (this.onlineRegions) {
-        this.onlineRegions.put(region.getRegionInfo().getEncodedName(), region);
-      }
-    } finally {
-      lock.writeLock().unlock();
-    }
+    this.onlineRegions.put(region.getRegionInfo().getEncodedName(), region);
   }
 
   @Override
   public boolean removeFromOnlineRegions(final String encodedName) {
-    this.lock.writeLock().lock();
     HRegion toReturn = null;
-    try {
-      synchronized (this.onlineRegions) {
-        toReturn = this.onlineRegions.remove(encodedName);
-      }
-    } finally {
-      this.lock.writeLock().unlock();
-    }
+    toReturn = this.onlineRegions.remove(encodedName);
     return toReturn != null;
   }
 
@@ -2319,10 +2423,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           }
         });
     // Copy over all regions. Regions are sorted by size with biggest first.
-    synchronized (this.onlineRegions) {
-      for (HRegion region : this.onlineRegions.values()) {
-        sortedRegions.put(Long.valueOf(region.memstoreSize.get()), region);
-      }
+    for (HRegion region : this.onlineRegions.values()) {
+      sortedRegions.put(Long.valueOf(region.memstoreSize.get()), region);
     }
     return sortedRegions;
   }
@@ -2330,9 +2432,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   @Override
   public HRegion getFromOnlineRegions(final String encodedRegionName) {
     HRegion r = null;
-    synchronized (this.onlineRegions) {
-      r = this.onlineRegions.get(encodedRegionName);
-    }
+    r = this.onlineRegions.get(encodedRegionName);
     return r;
   }
 
@@ -2366,17 +2466,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   protected HRegion getRegion(final byte[] regionName)
       throws NotServingRegionException {
     HRegion region = null;
-    this.lock.readLock().lock();
-    try {
-      region = getOnlineRegion(regionName);
-      if (region == null) {
-        throw new NotServingRegionException("Region is not online: " +
-          Bytes.toStringBinary(regionName));
-      }
-      return region;
-    } finally {
-      this.lock.readLock().unlock();
+    region = getOnlineRegion(regionName);
+    if (region == null) {
+      throw new NotServingRegionException("Region is not online: " +
+        Bytes.toStringBinary(regionName));
     }
+    return region;
   }
 
   /**
@@ -2387,16 +2482,14 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   protected HRegionInfo[] getMostLoadedRegions() {
     ArrayList<HRegionInfo> regions = new ArrayList<HRegionInfo>();
-    synchronized (onlineRegions) {
-      for (HRegion r : onlineRegions.values()) {
-        if (r.isClosed() || r.isClosing()) {
-          continue;
-        }
-        if (regions.size() < numRegionsToReport) {
-          regions.add(r.getRegionInfo());
-        } else {
-          break;
-        }
+    for (HRegion r : onlineRegions.values()) {
+      if (r.isClosed() || r.isClosing()) {
+        continue;
+      }
+      if (regions.size() < numRegionsToReport) {
+        regions.add(r.getRegionInfo());
+      } else {
+        break;
       }
     }
     return regions.toArray(new HRegionInfo[regions.size()]);
@@ -2441,10 +2534,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   public long getGlobalMemStoreSize() {
     long total = 0;
-    synchronized (onlineRegions) {
-      for (HRegion region : onlineRegions.values()) {
-        total += region.memstoreSize.get();
-      }
+    for (HRegion region : onlineRegions.values()) {
+      total += region.memstoreSize.get();
     }
     return total;
   }
@@ -2539,17 +2630,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     } catch (IOException e) {
       checkFileSystem();
       throw e;
-    }
-  }
-
-  public HRegionInfo[] getRegionsAssignment() throws IOException {
-    synchronized (this.onlineRegions) {
-      HRegionInfo [] regions = new HRegionInfo[getNumberOfOnlineRegions()];
-      Iterator<HRegion> ite = onlineRegions.values().iterator();
-      for (int i = 0; ite.hasNext(); i++) {
-        regions[i] = ite.next().getRegionInfo();
-      }
-      return regions;
     }
   }
 

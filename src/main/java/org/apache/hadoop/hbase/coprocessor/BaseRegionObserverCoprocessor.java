@@ -27,6 +27,8 @@ import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
+import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.wal.HLogKey;
@@ -136,32 +138,32 @@ public abstract class BaseRegionObserverCoprocessor implements RegionObserver {
   @Override
   public boolean preCheckAndPut(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
-      final byte [] value, final Put put, final boolean result)
-      throws IOException {
+      final CompareOp compareOp, final WritableByteArrayComparable comparator,
+      final Put put, final boolean result) throws IOException {
     return result;
   }
 
   @Override
   public boolean postCheckAndPut(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
-      final byte [] value, final Put put, final boolean result)
-    throws IOException {
+      final CompareOp compareOp, final WritableByteArrayComparable comparator,
+      final Put put, final boolean result) throws IOException {
     return result;
   }
 
   @Override
   public boolean preCheckAndDelete(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
-      final byte [] value, final Delete delete, final boolean result)
-      throws IOException {
+      final CompareOp compareOp, final WritableByteArrayComparable comparator,
+      final Delete delete, final boolean result) throws IOException {
     return result;
   }
 
   @Override
   public boolean postCheckAndDelete(final RegionCoprocessorEnvironment e,
       final byte [] row, final byte [] family, final byte [] qualifier,
-      final byte [] value, final Delete delete, final boolean result)
-      throws IOException {
+      final CompareOp compareOp, final WritableByteArrayComparable comparator,
+      final Delete delete, final boolean result) throws IOException {
     return result;
   }
 
@@ -204,14 +206,14 @@ public abstract class BaseRegionObserverCoprocessor implements RegionObserver {
 
   @Override
   public boolean preScannerNext(final RegionCoprocessorEnvironment e,
-      final InternalScanner s, final List<KeyValue> results,
+      final InternalScanner s, final List<Result> results,
       final int limit, final boolean hasMore) throws IOException {
     return hasMore;
   }
 
   @Override
   public boolean postScannerNext(final RegionCoprocessorEnvironment e,
-      final InternalScanner s, final List<KeyValue> results, final int limit,
+      final InternalScanner s, final List<Result> results, final int limit,
       final boolean hasMore) throws IOException {
     return hasMore;
   }
