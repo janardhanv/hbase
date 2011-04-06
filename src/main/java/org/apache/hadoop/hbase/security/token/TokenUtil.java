@@ -27,7 +27,9 @@ import java.security.PrivilegedExceptionAction;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.ClusterStatus;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol;
 import org.apache.hadoop.io.Text;
@@ -52,6 +54,12 @@ public class TokenUtil {
         meta.close();
       }
     }
+  }
+
+  private static Text getClusterId(Token<AuthenticationTokenIdentifier> token)
+      throws IOException {
+    return token.getService() != null
+        ? token.getService() : new Text("default");
   }
 
   public static void obtainAndCacheToken(final Configuration conf,
@@ -99,11 +107,12 @@ public class TokenUtil {
       if (token == null) {
         throw new IOException("No token returned for user "+user.getUserName());
       }
+      Text clusterId = getClusterId(token);
       if (LOG.isDebugEnabled()) {
         LOG.debug("Obtained token "+token.getKind().toString()+" for user "+
-            user.getUserName());
+            user.getUserName() + " on cluster "+clusterId.toString());
       }
-      job.getCredentials().addToken(new Text("hbase"), token);
+      job.getCredentials().addToken(clusterId, token);
     } catch (IOException ioe) {
       throw ioe;
     } catch (InterruptedException ie) {
@@ -130,11 +139,12 @@ public class TokenUtil {
       if (token == null) {
         throw new IOException("No token returned for user "+user.getUserName());
       }
+      Text clusterId = getClusterId(token);
       if (LOG.isDebugEnabled()) {
         LOG.debug("Obtained token "+token.getKind().toString()+" for user "+
-            user.getUserName());
+            user.getUserName()+" on cluster "+clusterId.toString());
       }
-      job.getCredentials().addToken(new Text("hbase"), token);
+      job.getCredentials().addToken(clusterId, token);
     } catch (IOException ioe) {
       throw ioe;
     } catch (InterruptedException ie) {

@@ -34,8 +34,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
+import org.apache.hadoop.hbase.zookeeper.ClusterId;
 import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
+import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.Token;
@@ -54,6 +56,7 @@ public class AuthenticationTokenSecretManager
   private long tokenMaxLifetime;
   private ZKSecretWatcher zkWatcher;
   private LeaderElector leaderElector;
+  private ClusterId clusterId;
 
   private ConcurrentMap<Integer,AuthenticationKey> allKeys = Maps.newConcurrentMap();
   private AuthenticationKey currentKey;
@@ -77,6 +80,7 @@ public class AuthenticationTokenSecretManager
     this.tokenMaxLifetime = tokenMaxLifetime;
     this.leaderElector = new LeaderElector(zk, serverName);
     this.name = NAME_PREFIX+serverName;
+    this.clusterId = new ClusterId(zk, zk);
   }
 
   public void start() {
@@ -139,7 +143,12 @@ public class AuthenticationTokenSecretManager
   public Token<AuthenticationTokenIdentifier> generateToken(String username) {
     AuthenticationTokenIdentifier ident =
         new AuthenticationTokenIdentifier(username);
-    return new Token<AuthenticationTokenIdentifier>(ident, this);
+    Token<AuthenticationTokenIdentifier> token =
+        new Token<AuthenticationTokenIdentifier>(ident, this);
+    if (clusterId.hasId()) {
+      token.setService(new Text(clusterId.getId()));
+    }
+    return token;
   }
 
   public void addKey(AuthenticationKey key) throws IOException {

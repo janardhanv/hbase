@@ -120,9 +120,7 @@ public class SecureClient extends HBaseClient {
           TokenSelector<? extends TokenIdentifier> tokenSelector =
               tokenHandlers.get(tokenInfo.value());
           if (tokenSelector != null) {
-            InetSocketAddress addr = remoteId.getAddress();
-            token = tokenSelector.selectToken(new Text(addr.getAddress()
-                .getHostAddress() + ":" + addr.getPort()),
+            token = tokenSelector.selectToken(new Text(clusterId),
                 ticket.getTokens());
           } else if (LOG.isDebugEnabled()) {
             LOG.debug("No token selector found for type "+tokenInfo.value());

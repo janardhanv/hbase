@@ -38,7 +38,8 @@ public class AuthenticationTokenSelector
       Collection<Token<? extends TokenIdentifier>> tokens) {
     if (serviceName != null) {
       for (Token ident : tokens) {
-        if (AuthenticationTokenIdentifier.AUTH_TOKEN_TYPE.equals(ident.getKind())) {
+        if (serviceName.equals(ident.getService()) &&
+            AuthenticationTokenIdentifier.AUTH_TOKEN_TYPE.equals(ident.getKind())) {
           return (Token<AuthenticationTokenIdentifier>)ident;
         }
       }
