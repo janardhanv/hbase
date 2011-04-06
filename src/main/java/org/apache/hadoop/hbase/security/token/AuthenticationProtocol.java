@@ -18,30 +18,25 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
-
-import com.google.common.collect.Multimap;
-import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
-import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
-import org.apache.hadoop.security.token.Token;
+package org.apache.hadoop.hbase.security.token;
 
 import java.io.IOException;
-import java.util.Map;
-import java.util.List;
 
-/**
- * Coprocessor Endpoint protocol defined for access control of security.
- */
-public interface AccessControllerProtocol extends CoprocessorProtocol {
-  public boolean grant(byte[] user, TablePermission permission)
+import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
+import org.apache.hadoop.security.token.Token;
+
+public interface AuthenticationProtocol extends CoprocessorProtocol {
+  /**
+   * Obtains a token capable of authenticating as the current user for future
+   * connections.
+   * @return an authentication token for the current user
+   * @throws IOException
+   */
+  public Token<AuthenticationTokenIdentifier> getAuthenticationToken()
       throws IOException;
 
-  public boolean revoke(byte[] user, TablePermission permission)
-      throws IOException;
-
-//  public Map<String, List<TablePermission>> getTablePermissions(byte[] table)
-//      throws IOException;
-
-  public List<UserPermission> getUserPermissions(byte[] tableName)
-      throws IOException;
+  /**
+   * Returns the currently authenticated username.
+   */
+  public String whoami();
 }

@@ -46,8 +46,8 @@ public class TokenUtil {
     HTable meta = null;
     try {
       meta = new HTable(conf, ".META.");
-      AccessControllerProtocol prot = meta.coprocessorProxy(
-          AccessControllerProtocol.class, HConstants.EMPTY_START_ROW);
+      AuthenticationProtocol prot = meta.coprocessorProxy(
+          AuthenticationProtocol.class, HConstants.EMPTY_START_ROW);
       return prot.getAuthenticationToken();
     } finally {
       if (meta != null) {
@@ -108,10 +108,8 @@ public class TokenUtil {
         throw new IOException("No token returned for user "+user.getUserName());
       }
       Text clusterId = getClusterId(token);
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Obtained token "+token.getKind().toString()+" for user "+
-            user.getUserName() + " on cluster "+clusterId.toString());
-      }
+      LOG.info("Obtained token "+token.getKind().toString()+" for user "+
+          user.getUserName() + " on cluster "+clusterId.toString());
       job.getCredentials().addToken(clusterId, token);
     } catch (IOException ioe) {
       throw ioe;
@@ -140,10 +138,8 @@ public class TokenUtil {
         throw new IOException("No token returned for user "+user.getUserName());
       }
       Text clusterId = getClusterId(token);
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Obtained token "+token.getKind().toString()+" for user "+
-            user.getUserName()+" on cluster "+clusterId.toString());
-      }
+      LOG.info("Obtained token "+token.getKind().toString()+" for user "+
+          user.getUserName()+" on cluster "+clusterId.toString());
       job.getCredentials().addToken(clusterId, token);
     } catch (IOException ioe) {
       throw ioe;
