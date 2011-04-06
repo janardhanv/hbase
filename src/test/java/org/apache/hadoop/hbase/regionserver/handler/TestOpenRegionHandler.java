@@ -39,6 +39,7 @@ import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.regionserver.CompactionRequestor;
 import org.apache.hadoop.hbase.regionserver.FlushRequester;
 import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hbase.regionserver.RegionServerAccounting;
 import org.apache.hadoop.hbase.regionserver.RegionServerServices;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.zookeeper.ZKAssign;
@@ -185,6 +186,10 @@ public class TestOpenRegionHandler {
 
     @Override
     public ZooKeeperWatcher getZooKeeperWatcher() {
+      return null;
+    }
+    
+    public RegionServerAccounting getRegionServerAccounting() {
       return null;
     }
   };

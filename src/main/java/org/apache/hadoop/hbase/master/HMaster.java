@@ -25,7 +25,6 @@ import java.lang.reflect.InvocationTargetException;
 import java.net.InetSocketAddress;
 import java.net.UnknownHostException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
@@ -84,6 +83,7 @@ import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Sleeper;
 import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hbase.util.VersionInfo;
+import org.apache.hadoop.hbase.zookeeper.ClusterId;
 import org.apache.hadoop.hbase.zookeeper.ClusterStatusTracker;
 import org.apache.hadoop.hbase.zookeeper.RegionServerTracker;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
@@ -351,6 +351,10 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
 
     // TODO: Do this using Dependency Injection, using PicoContainer, Guice or Spring.
     this.fileSystemManager = new MasterFileSystem(this, metrics);
+    // publish cluster ID
+    ClusterId.setClusterId(this.zooKeeper,
+        fileSystemManager.getClusterId());
+
     this.connection = HConnectionManager.getConnection(conf);
     this.executorService = new ExecutorService(getServerName());
 
@@ -489,7 +493,14 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   }
 
   public long getProtocolVersion(String protocol, long clientVersion) {
-    return HMasterInterface.VERSION;
+    if (HMasterInterface.class.getName().equals(protocol)) {
+      return HMasterInterface.VERSION;
+    } else if (HMasterRegionInterface.class.getName().equals(protocol)) {
+      return HMasterRegionInterface.VERSION;
+    }
+    // unknown protocol
+    LOG.warn("Version requested for unimplemented protocol: "+protocol);
+    return -1;
   }
 
   /** @return InfoServer object. Maybe null.*/
@@ -704,6 +715,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     // Do this call outside of synchronized block.
     int maximumBalanceTime = getBalancerCutoffTime();
     long cutoffTime = System.currentTimeMillis() + maximumBalanceTime;
+    boolean balancerRan;
     synchronized (this.balancer) {
       // Only allow one balance run at at time.
       if (this.assignmentManager.isRegionsInTransition()) {
@@ -745,6 +757,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       List<RegionPlan> plans = this.balancer.balanceCluster(assignments);
       int rpCount = 0;	// number of RegionPlans balanced so far
       long totalRegPlanExecTime = 0;
+      balancerRan = plans != null;
       if (plans != null && !plans.isEmpty()) {
         for (RegionPlan plan: plans) {
           LOG.info("balance " + plan);
@@ -770,7 +783,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
         }
       }
     }
-    return true;
+    return balancerRan;
   }
 
   @Override
@@ -1092,7 +1105,12 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     status.setServerInfo(serverManager.getOnlineServers().values());
     status.setDeadServers(serverManager.getDeadServers());
     status.setRegionsInTransition(assignmentManager.getRegionsInTransition());
+    status.setClusterId(fileSystemManager.getClusterId());
     return status;
+  }
+
+  public String getClusterId() {
+    return fileSystemManager.getClusterId();
   }
 
   @Override

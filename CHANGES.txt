@@ -4,6 +4,8 @@ Release 0.91.0 - Unreleased
   INCOMPATIBLE CHANGES
    HBASE-2002  Coprocessors: Client side support; Support RPC interface
                changes at runtime (Gary Helmling via Andrew Purtell)
+   HBASE-3677  Generate a globally unique cluster ID (changed
+               ClusterStatus serialization)
 
   BUG FIXES
    HBASE-3280  YouAreDeadException being swallowed in HRS getMaster
@@ -51,6 +53,20 @@ Release 0.91.0 - Unreleased
                Andrew Purtell)
    HBASE-3688  Setters of class HTableDescriptor do not work properly
    HBASE-3702  Fix NPE in Exec method parameter serialization
+   HBASE-3709  HFile compression not sharing configuration
+   HBASE-3711  importtsv fails if rowkey length exceeds MAX_ROW_LENGTH
+               (Kazuki Ohta via todd)
+   HBASE-3716  Intermittent TestRegionRebalancing failure
+               (Ted Yu via Stack)
+   HBASE-3712  HTable.close() doesn't shutdown thread pool
+               (Ted Yu via Stack)
+   HBASE-3238  HBase needs to have the CREATE permission on the parent of its
+               ZooKeeper parent znode (Alex Newman via Stack)
+   HBASE-3728  NPE in HTablePool.closeTablePool (Ted Yu via Stack)
+   HBASE-3733  MemStoreFlusher.flushOneForGlobalPressure() shouldn't
+               be using TreeSet for HRegion (Ted Yu via J-D)
+   HBASE-3739  HMaster.getProtocolVersion() should distinguish
+               HMasterInterface and HMasterRegionInterface versions
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -105,11 +121,26 @@ Release 0.91.0 - Unreleased
                MiniZooKeeperCluster for test writing (Liyin Tang via Stack)
    HBASE-3696  isMajorCompaction() check triggers lots of listStatus DFS RPC
                calls from HBase (Liyin Tang via Stack)
+   HBASE-3717  deprecate HTable isTableEnabled() methods in favor of
+               HBaseAdmin methods (David Butler via Stack)
+   HBASE-3720  Book.xml - porting conceptual-view / physical-view sections of
+               HBaseArchitecture wiki (Doug Meil via Stack)
+   HBASE-3705  Allow passing timestamp into importtsv (Andy Sautins via Stack)
+   HBASE-3715  Book.xml - adding architecture section on client, adding section
+               on spec-ex under mapreduce (Doug Meil via Stack)
+   HBASE-3684  Support column range filter (Jerry Chen via Stack)
+   HBASE-3647  Distinguish read and write request count in region
+               (Ted Yu via Stack)
+   HBASE-3704  Show per region request count in table.jsp
+               (Ted Yu via Stack)
+   HBASE-3694  high multiput latency due to checking global mem store size
+               in a synchronized function (Liyin Tang via Stack)
 
   TASK
    HBASE-3559  Move report of split to master OFF the heartbeat channel
    HBASE-3573  Move shutdown messaging OFF hearbeat; prereq for fix of
                hbase-1502
+   HBASE-3071  Graceful decommissioning of a regionserver
 
 
   NEW FEATURES
@@ -130,6 +161,8 @@ Release 0.91.0 - Unreleased
    HBASE-3257  Coprocessors: Extend server side API to include HLog operations
                (Mingjie Lai via Andrew Purtell)
    HBASE-3606  Create an package integration project (Eric Yang via Ryan)
+   HBASE-3488  Add CellCounter to count multiple versions of rows
+               (Subbu M. Iyer via Stack)
 
 
 Release 0.90.2 - Unreleased
