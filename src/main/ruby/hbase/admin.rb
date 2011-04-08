@@ -232,13 +232,13 @@ module Hbase
 
       #TODO: need to validate user name
 
-      # invoke cp endpiont to perform access control
+      # invoke cp endpoint to perform access control
       fambytes = family.to_java_bytes if (family != nil)
       qualbytes = qualifier.to_java_bytes if (qualifier != nil)
       tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, permissions.to_java_bytes)
-      first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
-      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, 
+                                             org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       protocol.grant(user.to_java_bytes, tp)
     end
 
@@ -256,9 +256,9 @@ module Hbase
       fambytes = family.to_java_bytes if (family != nil)
       qualbytes = qualifier.to_java_bytes if (qualifier != nil)
       tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, "".to_java_bytes)
-      first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
-      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class,
+                                             org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       protocol.revoke(user.to_java_bytes, tp)
     end
 
@@ -266,9 +266,9 @@ module Hbase
     def user_permission(table_name)
       raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
 
-      first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
-      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, first.to_java_bytes);
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, 
+                                             org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       perms = protocol.getUserPermissions(table_name.to_java_bytes)
 
       res = {}
@@ -291,30 +291,6 @@ module Hbase
       end
       
       return ((block_given?) ? count : res)
-    end
-
-    #----------------------------------------------------------------------------------------------
-
-    def get_first_region(table_name)
-      #return the name of the first region for the given table name.
-      #for example, given "foo", this will return something like:
-      # "foo,,1285018739013.639eb6f8570828eb2fcab130b7914c25."
-      region = nil
-      scan = org.apache.hadoop.hbase.client.Scan.new
-      scan.setStartRow(org.apache.hadoop.hbase.util.Bytes.toBytes(table_name+",,"))
-      scan.setCaching(1);
-      scanner = @meta.getScanner(scan)
-      iter = scanner.iterator
-      row = iter.next
-      row_string = row.to_s
-      kv = row.list[0]
-
-      #kv.to_s looks like e.g. : "foo,,1285018739013.639eb6f8570828eb2fcab130b7914c25."
-      parts = kv.to_s.split(/,/)
-      region = parts[0]+",,"+parts[2].split(/\//)[0]
-
-      scanner.close
-      return region
     end
 
     #----------------------------------------------------------------------------------------------
