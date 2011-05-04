@@ -25,6 +25,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Semaphore;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -71,6 +72,11 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
   private final List<ZooKeeperListener> listeners =
     new CopyOnWriteArrayList<ZooKeeperListener>();
 
+  // Used by ZKUtil:waitForZKConnectionIfAuthenticating() wait for SASL
+  // negotiation to complete.
+  // When secure ZK sends a saslAuthenticated event, this will be set to true.
+  public Semaphore saslLock;
+
   // set of unassigned nodes watched
   private Set<String> unassignedNodes = new HashSet<String>();
 
@@ -95,7 +101,7 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
   // znode used for log splitting work assignment
   public String splitLogZNode;
 
-  // Certain Zookeeper nodes need to be world-readable.
+  // Certain Zookeeper nodes within /hbase need to be world-readable.
   public static final ArrayList<ACL> CREATOR_ALL_AND_WORLD_READABLE =
     new ArrayList<ACL>() { {
       add(new ACL(ZooDefs.Perms.ALL,ZooDefs.Ids.AUTH_IDS));
@@ -131,6 +137,10 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
     this.identifier = descriptor;
     this.abortable = abortable;
     setNodeNames(conf);
+    if (System.getProperty("java.security.auth.login.config") != null) {
+      this.saslLock = new Semaphore(1);
+      this.saslLock.acquireUninterruptibly();
+    }
     this.zooKeeper = ZKUtil.connect(conf, quorum, this, descriptor);
     try {
       // Create all the necessary "directories" of znodes
@@ -350,17 +360,30 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
         LOG.debug(this.identifier + " connected");
         break;
 
+      case SaslAuthenticated:
+        // release semaphore so that a ZKUtil object can know that it can proceed.
+        if (System.getProperty("java.security.auth.login.config") != null) {
+          saslLock.release();
+        }
+        break;
+
       // Abort the server if Disconnected or Expired
-      // TODO: Åny reason to handle these two differently?
+      // TODO: Any reason to handle these two differently?
       case Disconnected:
+        if (System.getProperty("java.security.auth.login.config") != null) {
+            saslLock.acquireUninterruptibly();
+        }
         LOG.debug(prefix("Received Disconnected from ZooKeeper, ignoring"));
         break;
 
       case Expired:
+        if (System.getProperty("java.security.auth.login.config") != null) {
+            saslLock.acquireUninterruptibly();
+        }
         String msg = prefix(this.identifier + " received expired from " +
           "ZooKeeper, aborting");
         // TODO: One thought is to add call to ZooKeeperListener so say,
-        // ZooKeperNodeTracker can zero out its data values.
+        // ZooKeeperNodeTracker can zero out its data values.
         if (this.abortable != null) this.abortable.abort(msg,
             new KeeperException.SessionExpiredException());
         break;
