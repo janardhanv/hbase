@@ -20,6 +20,7 @@
 package org.apache.hadoop.hbase.zookeeper;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
@@ -35,7 +36,9 @@ import org.apache.hadoop.hbase.util.Threads;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.WatchedEvent;
 import org.apache.zookeeper.Watcher;
+import org.apache.zookeeper.ZooDefs;
 import org.apache.zookeeper.ZooKeeper;
+import org.apache.zookeeper.data.ACL;
 
 /**
  * Acts as the single ZooKeeper Watcher.  One instance of this is instantiated
@@ -91,6 +94,14 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
   public String clusterIdZNode;
   // znode used for log splitting work assignment
   public String splitLogZNode;
+
+  // Certain Zookeeper nodes need to be world-readable.
+  public static final ArrayList<ACL> CREATOR_ALL_AND_WORLD_READABLE =
+    new ArrayList<ACL>() { {
+      add(new ACL(ZooDefs.Perms.ALL,ZooDefs.Ids.AUTH_IDS));
+      add(new ACL(ZooDefs.Perms.READ,ZooDefs.Ids.ANYONE_ID_UNSAFE));
+    }};
+
 
   private final Configuration conf;
 

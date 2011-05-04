@@ -661,8 +661,16 @@ public class ZKUtil {
     setData(zkw, znode, data, -1);
   }
 
-  private static ArrayList<ACL> createACL() {
+  private static ArrayList<ACL> createACL(ZooKeeperWatcher zkw, String node) {
     if (System.getProperty("java.security.auth.login.config") != null) {
+      // Certain ZNodes within /hbase must be readable by non-authenticated Zookeeper nodes.
+      // Currently these are the node containing the -ROOT- region server address,
+      // and the node containing the HMaster server address.
+      if ((node.equals(zkw.rootServerZNode) == true) ||
+          (node.equals(zkw.masterAddressZNode) == true)) {
+        return ZooKeeperWatcher.CREATOR_ALL_AND_WORLD_READABLE;
+      }
+      // default:
       return Ids.CREATOR_ALL_ACL;
     }
     else {
@@ -715,7 +723,7 @@ public class ZKUtil {
   throws KeeperException {
     try {
       waitForZKConnectionIfAuthenticating(zkw.getZooKeeper());
-      zkw.getZooKeeper().create(znode, data, createACL(),
+      zkw.getZooKeeper().create(znode, data, createACL(zkw,znode),
           CreateMode.EPHEMERAL);
     } catch (KeeperException.NodeExistsException nee) {
       if(!watchAndCheckExists(zkw, znode)) {
@@ -755,7 +763,7 @@ public class ZKUtil {
   throws KeeperException {
     try {
       waitForZKConnectionIfAuthenticating(zkw.getZooKeeper());
-      zkw.getZooKeeper().create(znode, data, createACL(),
+      zkw.getZooKeeper().create(znode, data, createACL(zkw,znode),
           CreateMode.PERSISTENT);
     } catch (KeeperException.NodeExistsException nee) {
       try {
@@ -793,7 +801,7 @@ public class ZKUtil {
   throws KeeperException, KeeperException.NodeExistsException {
     try {
       waitForZKConnectionIfAuthenticating(zkw.getZooKeeper());
-      zkw.getZooKeeper().create(znode, data, createACL(),
+      zkw.getZooKeeper().create(znode, data, createACL(zkw,znode),
           CreateMode.PERSISTENT);
       return zkw.getZooKeeper().exists(znode, zkw).getVersion();
     } catch (InterruptedException e) {
@@ -827,7 +835,7 @@ public class ZKUtil {
     catch (InterruptedException e) {
         //...
     }
-    zkw.getZooKeeper().create(znode, data, createACL(),
+    zkw.getZooKeeper().create(znode, data, createACL(zkw,znode),
        CreateMode.PERSISTENT, cb, ctx);
   }
 
@@ -848,7 +856,7 @@ public class ZKUtil {
       ZooKeeper zk = zkw.getZooKeeper();
       waitForZKConnectionIfAuthenticating(zk);
       if (zk.exists(znode, false) == null) {
-        zk.create(znode, new byte[0], createACL(),
+        zk.create(znode, new byte[0], createACL(zkw,znode),
             CreateMode.PERSISTENT);
       }
     } catch(KeeperException.NodeExistsException nee) {
@@ -885,7 +893,7 @@ public class ZKUtil {
         return;
       }
       waitForZKConnectionIfAuthenticating(zkw.getZooKeeper());
-      zkw.getZooKeeper().create(znode, new byte[0], createACL(),
+      zkw.getZooKeeper().create(znode, new byte[0], createACL(zkw,znode),
           CreateMode.PERSISTENT);
     } catch(KeeperException.NodeExistsException nee) {
       return;
