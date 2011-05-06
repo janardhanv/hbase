@@ -100,13 +100,13 @@ public class TestZooKeeperACL {
   }
 
   /**
-   * Create a node and check its ACL. When authentication is enabled on Zookeeper, all nodes (except /hbase/root-region-server and /hbase/master) should be created with
-   * ZKUtil.createX (X in {createWithParents,createEphemeralNodeAndWatch,createNodeIfNotExistsAndWatch,createAndWatch,...})
+   * Create a node and check its ACL. When authentication is enabled on Zookeeper, all nodes 
+   * (except /hbase/root-region-server, /hbase/master and /hbase/hbaseid)
    * should be created so that only the hbase server user (master or region server user)
    * that created them can access them, and this user should have all permissions on this node.
-   * For /hbase/root-region-server and /hbase/master, the permissions should be as
-   * above, but should also be world-readable. The latter set is checked in the 
-   * next test.
+   * For /hbase/root-region-server, /hbase/master, and /hbase/hbaseid, the permissions should be as
+   * above, but should also be world-readable. First we check the general case of /hbase nodes in the following test,
+   * and then check the subset of world-readable nodes in the three tests after that.
    * @throws Exception
    */
   @Test
@@ -195,9 +195,46 @@ public class TestZooKeeperACL {
     assertTrue(foundHBaseOwnerAcl);
   }
 
+  /**
+   * When authentication is enabled on Zookeeper,
+   * /hbase/hbaseid should be created with 2 ACLs: one specifies that
+   * the hbase user has full access to the node; the other, that it is world-readable.
+   * @throws Exception
+   */
+  @Test
+  public void testHBaseIDZNodeACL() throws Exception {
+    ZooKeeperWatcher zkw = new ZooKeeperWatcher(
+      new Configuration(TEST_UTIL.getConfiguration()),
+      TestZooKeeper.class.getName(), null);
+    List<ACL> acls = zkw.getZooKeeper().getACL("/hbase/hbaseid", new Stat());
+    assertEquals(acls.size(),2);
+
+    boolean foundWorldReadableAcl = false;
+    boolean foundHBaseOwnerAcl = false;
+    for(int i = 0; i < 2; i++) {
+      if (acls.get(i).getId().getScheme().equals("world") == true) {
+        assertEquals(acls.get(0).getId().getId(),"anyone");
+        assertEquals(acls.get(0).getPerms(), ZooDefs.Perms.READ);
+        foundWorldReadableAcl = true;
+      }
+      else {
+        if (acls.get(i).getId().getScheme().equals("sasl") == true) {
+          assertEquals(acls.get(1).getId().getId(),"hbase");
+          assertEquals(acls.get(1).getId().getScheme(),"sasl");
+          foundHBaseOwnerAcl = true;
+        }
+        else { // error: should not get here: test fails.
+          assertTrue(false);
+        }
+      }
+    }
+    assertTrue(foundWorldReadableAcl);
+    assertTrue(foundHBaseOwnerAcl);
+  }
 
   /**
-    * Same as above tests, but create a new node ("/testACLNode") outside of the /hbase hierarchy. Should have same permssions as other nodes within the /hbase hierarchy.
+    * Create a new node ("/testACLNode") outside of the /hbase hierarchy. Should have same permissions as other nodes
+    * within the /hbase hierarchy (except the three world-readable ones metioned in the preceding three tests).
     * @throws Exception
    */
   @Test

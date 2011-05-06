@@ -668,7 +668,8 @@ public class ZKUtil {
       // Currently these are the node containing the -ROOT- region server address,
       // and the node containing the HMaster server address.
       if ((node.equals(zkw.rootServerZNode) == true) ||
-          (node.equals(zkw.masterAddressZNode) == true)) {
+          (node.equals(zkw.masterAddressZNode) == true) ||
+          (node.equals(zkw.clusterIdZNode) == true)) {
         return ZooKeeperWatcher.CREATOR_ALL_AND_WORLD_READABLE;
       }
       // default:
