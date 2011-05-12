@@ -104,8 +104,8 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
   // Certain Zookeeper nodes within /hbase need to be world-readable.
   public static final ArrayList<ACL> CREATOR_ALL_AND_WORLD_READABLE =
     new ArrayList<ACL>() { {
-      add(new ACL(ZooDefs.Perms.ALL,ZooDefs.Ids.AUTH_IDS));
       add(new ACL(ZooDefs.Perms.READ,ZooDefs.Ids.ANYONE_ID_UNSAFE));
+      add(new ACL(ZooDefs.Perms.ALL,ZooDefs.Ids.AUTH_IDS));
     }};
 
 
