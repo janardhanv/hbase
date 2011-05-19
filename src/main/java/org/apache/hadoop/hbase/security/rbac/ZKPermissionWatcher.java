@@ -50,7 +50,11 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
   public void start() throws KeeperException {
     watcher.registerListener(this);
     if (ZKUtil.watchAndCheckExists(watcher, aclZNode)) {
-      ZKUtil.watchAndGetNewChildren(watcher, aclZNode);
+      List<ZKUtil.NodeAndData> existing =
+          ZKUtil.watchAndGetNewChildren(watcher, aclZNode);
+      if (existing != null) {
+        refreshNodes(existing);
+      }
     }
   }
 
@@ -109,6 +113,10 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
     for (ZKUtil.NodeAndData n : nodes) {
       String path = n.getNode();
       String table = ZKUtil.getNodeName(path);
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Updating permissions cache from node "+table+" with data: "+
+            Bytes.toStringBinary(n.getData()));
+      }
       try {
         authManager.refreshCacheFromWritable(Bytes.toBytes(table),
           n.getData());
