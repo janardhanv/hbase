@@ -290,7 +290,7 @@ public class Result implements Writable, WritableWithSize {
    * Map of families to all versions of its qualifiers and values.
    * <p>
    * Returns a three level Map of the form:
-   * <code>Map<family,Map&lt;qualifier,Map&lt;timestamp,value>>></code>
+   * <code>Map&amp;family,Map&lt;qualifier,Map&lt;timestamp,value>>></code>
    * <p>
    * Note: All other map returning methods make use of this map internally.
    * @return map from families to qualifiers to versions
@@ -335,7 +335,7 @@ public class Result implements Writable, WritableWithSize {
   /**
    * Map of families to their most recent qualifiers and values.
    * <p>
-   * Returns a two level Map of the form: <code>Map<family,Map&lt;qualifier,value>></code>
+   * Returns a two level Map of the form: <code>Map&amp;family,Map&lt;qualifier,value>></code>
    * <p>
    * The most recent version of each qualifier will be used.
    * @return map from families to qualifiers and value
@@ -664,7 +664,7 @@ public class Result implements Writable, WritableWithSize {
       throws Exception {
     if (res2 == null) {
       throw new Exception("There wasn't enough rows, we stopped at "
-          + Bytes.toString(res1.getRow()));
+          + Bytes.toStringBinary(res1.getRow()));
     }
     if (res1.size() != res2.size()) {
       throw new Exception("This row doesn't have the same number of KVs: "

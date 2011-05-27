@@ -21,13 +21,13 @@ package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
 
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
 import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.zookeeper.KeeperException;
+import java.util.Set;
 
 /**
  * Services provided by {@link HRegionServer}
@@ -42,16 +42,6 @@ public interface RegionServerServices extends OnlineRegions {
   public HLog getWAL();
 
   /**
-   * @return Implementation of {@link CatalogTracker} or null.
-   */
-  public CatalogTracker getCatalogTracker();
-
-  /*
-   * @return Implementation of {@link ZooKeeperWatcher} or null.
-   */
-  public ZooKeeperWatcher getZooKeeperWatcher();
-
-  /**
    * @return Implementation of {@link CompactionRequestor} or null.
    */
   public CompactionRequestor getCompactionRequester();
@@ -61,12 +51,6 @@ public interface RegionServerServices extends OnlineRegions {
    */
   public FlushRequester getFlushRequester();
 
-  /**
-   * Return data structure that has Server address and startcode.
-   * @return The HServerInfo for this RegionServer.
-   */
-  public HServerInfo getServerInfo();
-  
   /**
    * @return the RegionServerAccounting for this Region Server
    */
@@ -94,4 +78,10 @@ public interface RegionServerServices extends OnlineRegions {
    * Returns a reference to the region server's RPC server
    */
   public RpcServer getRpcServer();
+
+  /**
+   * Get the regions that are currently being opened or closed in the RS
+   * @return set of regions in transition in this RS
+   */
+  public Set<byte[]> getRegionsInTransitionInRS();
 }

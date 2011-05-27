@@ -47,7 +47,7 @@ public class TestCoprocessorInterface extends HBaseTestCase {
   private static final HBaseTestingUtility TEST_UTIL =
     new HBaseTestingUtility();
 
-  public static class CoprocessorImpl extends BaseRegionObserverCoprocessor {
+  public static class CoprocessorImpl extends BaseRegionObserver {
 
     private boolean startCalled;
     private boolean stopCalled;
@@ -73,43 +73,43 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     }
 
     @Override
-    public void preOpen(RegionCoprocessorEnvironment e) {
+    public void preOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
       preOpenCalled = true;
     }
     @Override
-    public void postOpen(RegionCoprocessorEnvironment e) {
+    public void postOpen(ObserverContext<RegionCoprocessorEnvironment> e) {
       postOpenCalled = true;
     }
     @Override
-    public void preClose(RegionCoprocessorEnvironment e, boolean abortRequested) {
+    public void preClose(ObserverContext<RegionCoprocessorEnvironment> e, boolean abortRequested) {
       preCloseCalled = true;
     }
     @Override
-    public void postClose(RegionCoprocessorEnvironment e, boolean abortRequested) {
+    public void postClose(ObserverContext<RegionCoprocessorEnvironment> e, boolean abortRequested) {
       postCloseCalled = true;
     }
     @Override
-    public void preCompact(RegionCoprocessorEnvironment e, boolean willSplit) {
+    public void preCompact(ObserverContext<RegionCoprocessorEnvironment> e, boolean willSplit) {
       preCompactCalled = true;
     }
     @Override
-    public void postCompact(RegionCoprocessorEnvironment e, boolean willSplit) {
+    public void postCompact(ObserverContext<RegionCoprocessorEnvironment> e, boolean willSplit) {
       postCompactCalled = true;
     }
     @Override
-    public void preFlush(RegionCoprocessorEnvironment e) {
+    public void preFlush(ObserverContext<RegionCoprocessorEnvironment> e) {
       preFlushCalled = true;
     }
     @Override
-    public void postFlush(RegionCoprocessorEnvironment e) {
+    public void postFlush(ObserverContext<RegionCoprocessorEnvironment> e) {
       postFlushCalled = true;
     }
     @Override
-    public void preSplit(RegionCoprocessorEnvironment e) {
+    public void preSplit(ObserverContext<RegionCoprocessorEnvironment> e) {
       preSplitCalled = true;
     }
     @Override
-    public void postSplit(RegionCoprocessorEnvironment e, HRegion l, HRegion r) {
+    public void postSplit(ObserverContext<RegionCoprocessorEnvironment> e, HRegion l, HRegion r) {
       postSplitCalled = true;
     }
 
@@ -143,9 +143,10 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     Configuration hc = initSplit();
     HRegion region = initHRegion(tableName, getName(), hc,
       CoprocessorImpl.class, families);
-
-    addContent(region, fam3);
-    region.flushcache();
+    for (int i = 0; i < 3; i++) {
+      addContent(region, fam3);
+      region.flushcache();
+    }
     byte [] splitRow = region.compactStores();
     assertNotNull(splitRow);
     HRegion [] regions = split(region, splitRow);
@@ -154,9 +155,8 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     }
     region.close();
     region.getLog().closeAndDelete();
-
-    Coprocessor c = region.getCoprocessorHost()
-      .findCoprocessor(CoprocessorImpl.class.getName());
+    Coprocessor c = region.getCoprocessorHost().
+      findCoprocessor(CoprocessorImpl.class.getName());
     assertTrue("Coprocessor not started", ((CoprocessorImpl)c).wasStarted());
     assertTrue("Coprocessor not stopped", ((CoprocessorImpl)c).wasStopped());
     assertTrue(((CoprocessorImpl)c).wasOpened());

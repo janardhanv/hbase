@@ -21,7 +21,6 @@
 package org.apache.hadoop.hbase.ipc;
 
 import java.io.ByteArrayInputStream;
-import java.io.ByteArrayOutputStream;
 import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
@@ -41,7 +40,13 @@ import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.WritableByteChannel;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -52,6 +57,8 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.io.WritableWithSize;
+import org.apache.hadoop.hbase.io.WritableDelayed;
+import org.apache.hadoop.hbase.util.ByteBufferOutputStream;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
@@ -59,7 +66,6 @@ import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
-import org.apache.hadoop.hbase.util.ByteBufferOutputStream;
 
 import com.google.common.base.Function;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
@@ -84,18 +90,7 @@ public abstract class HBaseServer implements RpcServer {
   /**
    * How many calls/handler are allowed in the queue.
    */
-  private static final int MAX_QUEUE_SIZE_PER_HANDLER = 100;
-  private static final int IPC_SERVER_HANDLER_QUEUE_SIZE_DEFAULT = 100;
-  private static final String  IPC_SERVER_HANDLER_QUEUE_SIZE_KEY =
-                                            "ipc.server.handler.queue.size";
-
-  /**
-   * Initial and max size of response buffer
-   */
-  static int INITIAL_RESP_BUF_SIZE = 10240;
-  static final String IPC_SERVER_RPC_MAX_RESPONSE_SIZE_KEY =
-                        "ipc.server.max.response.size";
-  static final int IPC_SERVER_RPC_MAX_RESPONSE_SIZE_DEFAULT = 64*1024;
+  private static final int DEFAULT_MAX_QUEUE_SIZE_PER_HANDLER = 10;
 
   private static final String WARN_RESPONSE_SIZE =
       "hbase.ipc.warn.response.size";
@@ -103,7 +98,7 @@ public abstract class HBaseServer implements RpcServer {
   /** Default value for above param */
   private static final int DEFAULT_WARN_RESPONSE_SIZE = 100 * 1024 * 1024;
 
-  protected final int warnResponseSize;
+  protected static int warnResponseSize;
 
   public static final Log LOG =
     LogFactory.getLog("org.apache.hadoop.ipc.HBaseServer");
@@ -156,6 +151,25 @@ public abstract class HBaseServer implements RpcServer {
     }
     return null;
   }
+  /**
+   * If invoked from inside an RPC, startDelay tells the current call to not 
+   * send out * responses back to the client until endDelay() is invoked.
+   */
+  public static void startDelay(Object o) {
+    Call call = (Call) o;
+    if (call != null) {
+      call.startDelay();
+    }
+  }
+  public static void endDelay(Object o) throws IOException {
+    Call call = (Call) o;
+    if (call != null) {
+      call.endDelay();
+    }
+  }
+  public static Object getCall() {
+    return CurCall.get();
+  }
   /** Returns remote address as a string when invoked inside an RPC.
    *  Returns null in case of an error.
    *  @return String
@@ -190,7 +204,6 @@ public abstract class HBaseServer implements RpcServer {
   protected int socketSendBufferSize;
   protected final boolean tcpNoDelay;   // if T then disable Nagle's Algorithm
   protected final boolean tcpKeepAlive; // if T then use keepalives
-  protected final int maxRespSize;
 
   volatile protected boolean running = true;         // true while server runs
   protected BlockingQueue<Call> callQueue; // queued calls
@@ -248,13 +261,19 @@ public abstract class HBaseServer implements RpcServer {
     protected long timestamp;      // the time received when response is null
                                    // the time served when response is not null
     protected ByteBuffer response;                // the response for this call
+    private boolean delayResponse; // shall the RPC layer delay the response?
+    private boolean doneResponse;  // have we already responded to the client?
+    private Responder responder;   // the thread that sends out responses
 
-    public Call(int id, Writable param, Connection connection) {
+    public Call(int id, Writable param, Connection connection, Responder responder) {
       this.id = id;
       this.param = param;
       this.connection = connection;
       this.timestamp = System.currentTimeMillis();
       this.response = null;
+      this.delayResponse = false;
+      this.doneResponse = false;
+      this.responder = responder;
     }
 
     @Override
@@ -262,8 +281,39 @@ public abstract class HBaseServer implements RpcServer {
       return param.toString() + " from " + connection.toString();
     }
 
-    public void setResponse(ByteBuffer response) {
+    public synchronized void setResponse(ByteBuffer response) {
       this.response = response;
+    }
+
+    /**
+     * Delay this call, do not send its response back to the client
+     */
+    public synchronized void startDelay() {
+      this.delayResponse = true;
+    }
+
+    /**
+     * It is ok to send responses back to the client now. This is
+     * typically called by a non-server-handler thread.
+     */
+    public synchronized void endDelay() throws IOException {
+      this.delayResponse = false;
+      if (response != null && !doneResponse) {
+        doneResponse = true;
+        responder.doRespond(this);
+      }
+    }
+
+    /*
+     * If we have a reponse, and delay is not set, then respond
+     * immediately. Otherwise, do not respond to client. This is
+     * called the by the RPC code in the context of the Handler thread.
+     */
+    public synchronized void sendResponseIfReady() throws IOException {
+      if (response != null && !doneResponse && !delayResponse) {
+        doneResponse = true; // going to respond as soon as this call returns.
+        responder.doRespond(this);
+      }
     }
   }
 
@@ -815,14 +865,39 @@ public abstract class HBaseServer implements RpcServer {
     }
 
     //
+    // Enqueue for background thread to send responses out later.
+    //
+    private void enqueueInSelector(Call call) throws IOException {
+      incPending();
+      try {
+        // Wakeup the thread blocked on select, only then can the call
+        // to channel.register() complete.
+        SocketChannel channel = call.connection.channel;
+        writeSelector.wakeup();
+        channel.register(writeSelector, SelectionKey.OP_WRITE, call);
+       } catch (ClosedChannelException e) {
+         //Its ok. channel might be closed else where.
+       } finally {
+         decPending();
+       }
+    }
+
+    //
     // Enqueue a response from the application.
     //
-    protected void doRespond(Call call) throws IOException {
+    void doRespond(Call call) throws IOException {
+      // set the serve time when the response has to be sent later
+      call.timestamp = System.currentTimeMillis();
+
+      boolean doRegister = false;
       synchronized (call.connection.responseQueue) {
         call.connection.responseQueue.addLast(call);
         if (call.connection.responseQueue.size() == 1) {
-          processResponse(call.connection.responseQueue, true);
+          doRegister = !processResponse(call.connection.responseQueue, false);
         }
+      }
+      if (doRegister) {
+        enqueueInSelector(call); // tell background thread to send it out later
       }
     }
 
@@ -1018,7 +1093,7 @@ public abstract class HBaseServer implements RpcServer {
       Writable param = ReflectionUtils.newInstance(paramClass, conf);           // read param
       param.readFields(dis);
 
-      Call call = new Call(id, param, this);
+      Call call = new Call(id, param, this, responder);
 
       if (priorityCallQueue != null && getQosLevel(param) > highPriorityLevel) {
         priorityCallQueue.put(call);
@@ -1102,6 +1177,10 @@ public abstract class HBaseServer implements RpcServer {
           }
           CurCall.set(null);
 
+          if (!(value instanceof WritableDelayed)) {
+            processRpcResponse(call, value, error, errorClass);
+          }
+
           int size = BUFFER_INITIAL_SIZE;
           if (value instanceof WritableWithSize) {
             // get the size hint.
@@ -1119,8 +1198,8 @@ public abstract class HBaseServer implements RpcServer {
               }
             }
           }
-          ByteBufferOutputStream buf = new ByteBufferOutputStream(size);
 
+          ByteBufferOutputStream buf = new ByteBufferOutputStream(size);
           doResponse(buf, call, value, errorClass, error, getName());
         } catch (InterruptedException e) {
           if (running) {                          // unexpected -- log it
@@ -1145,6 +1224,32 @@ public abstract class HBaseServer implements RpcServer {
       LOG.info(getName() + ": exiting");
     }
 
+  }
+
+  // Packages the rpc invocation response back into the call.
+  public void processRpcResponse(Object callobj, Writable value,
+    String error, String errorClass) throws IOException {
+    Call call = (Call)callobj;
+
+    int size = Handler.BUFFER_INITIAL_SIZE;
+    if (value instanceof WritableWithSize) {
+      // get the size hint.
+      WritableWithSize ohint = (WritableWithSize)value;
+      long hint = ohint.getWritableSize() + Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT;
+      if (hint > 0) {
+        if ((hint) > Integer.MAX_VALUE) {
+          // oops, new problem.
+          IOException ioe = 
+            new IOException("Result buffer size too large: " + hint);
+          errorClass = ioe.getClass().getName();
+          error = StringUtils.stringifyException(ioe);
+        } else {
+          size = (int)hint;
+        }
+      }
+    }
+    ByteBufferOutputStream buf = new ByteBufferOutputStream(size);
+    doResponse(buf, call, value, errorClass, error, null);
   }
 
   /**
@@ -1189,9 +1294,9 @@ public abstract class HBaseServer implements RpcServer {
     this.handlerCount = handlerCount;
     this.priorityHandlerCount = priorityHandlerCount;
     this.socketSendBufferSize = 0;
-    this.maxRespSize = conf.getInt(IPC_SERVER_RPC_MAX_RESPONSE_SIZE_KEY,
-                                   IPC_SERVER_RPC_MAX_RESPONSE_SIZE_DEFAULT);
-    this.maxQueueSize = handlerCount * MAX_QUEUE_SIZE_PER_HANDLER;
+    this.maxQueueSize =
+      this.conf.getInt("ipc.server.max.queue.size",
+        handlerCount * DEFAULT_MAX_QUEUE_SIZE_PER_HANDLER);
      this.readThreads = conf.getInt(
         "ipc.server.read.threadpool.size",
         10);
@@ -1252,9 +1357,12 @@ public abstract class HBaseServer implements RpcServer {
       LOG.warn(handler+", responseTooLarge for: "+call+": Size: "
                + StringUtils.humanReadableInt(buf.size()));
     }
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("Served: " + ((Invocation)call.param).getMethodName());
+    }
 
     call.setResponse(buf.getByteBuffer());
-    responder.doRespond(call);
+    call.sendResponseIfReady(); // maybe delay sending out response to the client
   }
 
   /** Sets the socket buffer size used for responding to RPCs.

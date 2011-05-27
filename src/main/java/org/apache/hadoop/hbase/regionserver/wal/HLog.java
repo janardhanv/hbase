@@ -40,7 +40,6 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
@@ -57,8 +56,8 @@ import org.apache.hadoop.fs.Syncable;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ClassSize;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -126,7 +125,6 @@ public class HLog implements Syncable {
     new CopyOnWriteArrayList<WALObserver>();
   private final long optionalFlushInterval;
   private final long blocksize;
-  private final int flushlogentries;
   private final String prefix;
   private final Path oldLogDir;
   private boolean logRollRequested;
@@ -145,9 +143,6 @@ public class HLog implements Syncable {
   private int initialReplication;    // initial replication factor of SequenceFile.writer
   private Method getNumCurrentReplicas; // refers to DFSOutputStream.getNumCurrentReplicas
   final static Object [] NO_ARGS = new Object []{};
-
-  // used to indirectly tell syncFs to force the sync
-  private boolean forceSync = false;
 
   public interface Reader {
     void init(FileSystem fs, Path path, Configuration c) throws IOException;
@@ -340,8 +335,6 @@ public class HLog implements Syncable {
         registerWALActionsListener(i);
       }
     }
-    this.flushlogentries =
-      conf.getInt("hbase.regionserver.flushlogentries", 1);
     this.blocksize = conf.getLong("hbase.regionserver.hlog.blocksize",
       this.fs.getDefaultBlockSize());
     // Roll at 95% of block size.
@@ -367,7 +360,6 @@ public class HLog implements Syncable {
       StringUtils.byteDesc(this.blocksize) +
       ", rollsize=" + StringUtils.byteDesc(this.logrollsize) +
       ", enabled=" + this.enabled +
-      ", flushlogentries=" + this.flushlogentries +
       ", optionallogflushinternal=" + this.optionalFlushInterval + "ms");
     // If prefix is null||empty then just name it hlog
     this.prefix = prefix == null || prefix.isEmpty() ?
@@ -485,8 +477,7 @@ public class HLog implements Syncable {
       long currentFilenum = this.filenum;
       this.filenum = System.currentTimeMillis();
       Path newPath = computeFilename();
-      HLog.Writer nextWriter = this.createWriterInstance(fs, newPath,
-          HBaseConfiguration.create(conf));
+      HLog.Writer nextWriter = this.createWriterInstance(fs, newPath, conf);
       int nextInitialReplication = fs.getFileStatus(newPath).getReplication();
       // Can we get at the dfsclient outputstream?  If an instance of
       // SFLW, it'll have done the necessary reflection to get at the
@@ -634,7 +625,7 @@ public class HLog implements Syncable {
         LOG.debug("Found " + logsToRemove + " hlogs to remove" +
           " out of total " + this.outputfiles.size() + ";" +
           " oldest outstanding sequenceid is " + oldestOutstandingSeqNum +
-          " from region " + Bytes.toString(oldestRegion));
+          " from region " + Bytes.toStringBinary(oldestRegion));
       }
       for (Long seq : sequenceNumbers) {
         archiveLogFile(this.outputfiles.remove(seq), seq);
@@ -950,8 +941,6 @@ public class HLog implements Syncable {
 
     private final long optionalFlushInterval;
 
-    private boolean syncerShuttingDown = false;
-
     LogSyncer(long optionalFlushInterval) {
       this.optionalFlushInterval = optionalFlushInterval;
     }
@@ -972,12 +961,12 @@ public class HLog implements Syncable {
       } catch (InterruptedException e) {
         LOG.debug(getName() + " interrupted while waiting for sync requests");
       } finally {
-        syncerShuttingDown = true;
         LOG.info(getName() + " exiting");
       }
     }
   }
 
+  @Override
   public void sync() throws IOException {
     synchronized (this.updateLock) {
       if (this.closed) {
@@ -1279,36 +1268,10 @@ public class HLog implements Syncable {
   /**
    * Construct the HLog directory name
    *
-   * @param info HServerInfo for server
+   * @param serverName Server name formatted as described in {@link ServerName}
    * @return the HLog directory name
    */
-  public static String getHLogDirectoryName(HServerInfo info) {
-    return getHLogDirectoryName(info.getServerName());
-  }
-
-  /**
-   * Construct the HLog directory name
-   *
-   * @param serverAddress
-   * @param startCode
-   * @return the HLog directory name
-   */
-  public static String getHLogDirectoryName(String serverAddress,
-      long startCode) {
-    if (serverAddress == null || serverAddress.length() == 0) {
-      return null;
-    }
-    return getHLogDirectoryName(
-        HServerInfo.getServerName(serverAddress, startCode));
-  }
-
-  /**
-   * Construct the HLog directory name
-   *
-   * @param serverName
-   * @return the HLog directory name
-   */
-  public static String getHLogDirectoryName(String serverName) {
+  public static String getHLogDirectoryName(final String serverName) {
     StringBuilder dirName = new StringBuilder(HConstants.HREGION_LOGDIR_NAME);
     dirName.append("/");
     dirName.append(serverName);

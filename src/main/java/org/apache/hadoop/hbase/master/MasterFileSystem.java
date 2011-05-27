@@ -20,7 +20,7 @@
 package org.apache.hadoop.hbase.master;
 
 import java.io.IOException;
-import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -34,9 +34,9 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
 import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.Store;
@@ -44,6 +44,7 @@ import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.HLogSplitter;
 import org.apache.hadoop.hbase.regionserver.wal.OrphanHLogAfterSplitException;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
 
 /**
@@ -71,6 +72,8 @@ public class MasterFileSystem {
   private final Path rootdir;
   // create the split log lock
   final Lock splitLogLock = new ReentrantLock();
+  final boolean distributedLogSplitting;
+  final SplitLogManager splitLogManager;
 
   public MasterFileSystem(Server master, MasterMetrics metrics)
   throws IOException {
@@ -88,6 +91,15 @@ public class MasterFileSystem {
     String fsUri = this.fs.getUri().toString();
     conf.set("fs.default.name", fsUri);
     conf.set("fs.defaultFS", fsUri);
+    this.distributedLogSplitting =
+      conf.getBoolean("hbase.master.distributed.log.splitting", true);
+    if (this.distributedLogSplitting) {
+      this.splitLogManager = new SplitLogManager(master.getZooKeeper(),
+          master.getConfiguration(), master, master.getServerName().toString());
+      this.splitLogManager.finishInitialization();
+    } else {
+      this.splitLogManager = null;
+    }
     // setup the filesystem variable
     // set up the archived logs path
     this.oldLogDir = new Path(this.rootdir, HConstants.HREGION_OLDLOGDIR_NAME);
@@ -135,6 +147,7 @@ public class MasterFileSystem {
     if (this.fsOk) {
       try {
         FSUtils.checkFileSystemAvailable(this.fs);
+        FSUtils.checkDfsSafeMode(this.conf);
       } catch (IOException e) {
         master.abort("Shutting down HBase cluster: file system not available", e);
         this.fsOk = false;
@@ -163,9 +176,9 @@ public class MasterFileSystem {
    * Inspect the log directory to recover any log file without
    * an active region server.
    * @param onlineServers Map of online servers keyed by
-   * {@link HServerInfo#getServerName()}
+   * {@link ServerName}
    */
-  void splitLogAfterStartup(final Map<String, HServerInfo> onlineServers) {
+  void splitLogAfterStartup(final Set<ServerName> onlineServers) {
     Path logsDirPath = new Path(this.rootdir, HConstants.HREGION_LOGDIR_NAME);
     try {
       if (!this.fs.exists(logsDirPath)) {
@@ -185,8 +198,8 @@ public class MasterFileSystem {
       return;
     }
     for (FileStatus status : logFolders) {
-      String serverName = status.getPath().getName();
-      if (onlineServers.get(serverName) == null) {
+      ServerName serverName = new ServerName(status.getPath().getName());
+      if (!onlineServers.contains(serverName)) {
         LOG.info("Log folder " + status.getPath() + " doesn't belong " +
           "to a known region server, splitting");
         splitLog(serverName);
@@ -197,28 +210,50 @@ public class MasterFileSystem {
     }
   }
 
-  public void splitLog(final String serverName) {
-    this.splitLogLock.lock();
+  public void splitLog(final ServerName serverName) {
     long splitTime = 0, splitLogSize = 0;
-    Path logDir = new Path(this.rootdir, HLog.getHLogDirectoryName(serverName));
-    try {
-      HLogSplitter splitter = HLogSplitter.createLogSplitter(
-        conf, rootdir, logDir, oldLogDir, this.fs);
+    Path logDir = new Path(this.rootdir, HLog.getHLogDirectoryName(serverName.toString()));
+    if (distributedLogSplitting) {
+      splitTime = EnvironmentEdgeManager.currentTimeMillis();
       try {
-        splitter.splitLog();
-      } catch (OrphanHLogAfterSplitException e) {
-        LOG.warn("Retrying splitting because of:", e);
-        // An HLogSplitter instance can only be used once.  Get new instance.
-        splitter = HLogSplitter.createLogSplitter(conf, rootdir, logDir,
-          oldLogDir, this.fs);
-        splitter.splitLog();
+        try {
+          splitLogSize = splitLogManager.splitLogDistributed(logDir);
+        } catch (OrphanHLogAfterSplitException e) {
+          LOG.warn("Retrying distributed splitting for " +
+              serverName + "because of:", e);
+          splitLogManager.splitLogDistributed(logDir);
+        }
+      } catch (IOException e) {
+        LOG.error("Failed distributed splitting " + serverName, e);
       }
-      splitTime = splitter.getTime();
-      splitLogSize = splitter.getSize();
-    } catch (IOException e) {
-      LOG.error("Failed splitting " + logDir.toString(), e);
-    } finally {
-      this.splitLogLock.unlock();
+      splitTime = EnvironmentEdgeManager.currentTimeMillis() - splitTime;
+    } else {
+      // splitLogLock ensures that dead region servers' logs are processed
+      // one at a time
+      this.splitLogLock.lock();
+
+      try {
+        HLogSplitter splitter = HLogSplitter.createLogSplitter(
+            conf, rootdir, logDir, oldLogDir, this.fs);
+        try {
+          // If FS is in safe mode, just wait till out of it.
+          FSUtils.waitOnSafeMode(conf,
+            conf.getInt(HConstants.THREAD_WAKE_FREQUENCY, 1000));  
+          splitter.splitLog();
+        } catch (OrphanHLogAfterSplitException e) {
+          LOG.warn("Retrying splitting because of:", e);
+          // An HLogSplitter instance can only be used once.  Get new instance.
+          splitter = HLogSplitter.createLogSplitter(conf, rootdir, logDir,
+              oldLogDir, this.fs);
+          splitter.splitLog();
+        }
+        splitTime = splitter.getTime();
+        splitLogSize = splitter.getSize();
+      } catch (IOException e) {
+        LOG.error("Failed splitting " + logDir.toString(), e);
+      } finally {
+        this.splitLogLock.unlock();
+      }
     }
     if (this.metrics != null) {
       this.metrics.addSplit(splitTime, splitLogSize);
@@ -337,5 +372,11 @@ public class MasterFileSystem {
     fs.delete(Store.getStoreHomedir(
         new Path(rootdir, region.getTableDesc().getNameAsString()),
         region.getEncodedName(), familyName), true);
+  }
+
+  public void stop() {
+    if (splitLogManager != null) {
+      this.splitLogManager.stop();
+    }
   }
 }

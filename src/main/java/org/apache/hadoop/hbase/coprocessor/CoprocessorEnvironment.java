@@ -20,8 +20,6 @@ import java.io.IOException;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.client.HTableInterface;
-import org.apache.hadoop.hbase.regionserver.HRegion;
-import org.apache.hadoop.hbase.regionserver.RegionServerServices;
 
 /**
  * Coprocessor environment state.
@@ -40,6 +38,9 @@ public interface CoprocessorEnvironment {
   /** @return the priority assigned to the loaded coprocessor */
   public Coprocessor.Priority getPriority();
 
+  /** @return the load sequence number */
+  public int getLoadSequence();
+
   /**
    * @return an interface for accessing the given table
    * @throws IOException
@@ -50,18 +51,4 @@ public interface CoprocessorEnvironment {
    * @return the current configuration
    */
   public Configuration getConf();
-
-  /* Control flow changes */
-
-  /**
-   * Causes framework to bypass default actions and return with the results
-   * from a preXXX chain.
-   */
-  public void bypass();
-
-  /**
-   * Mark coprocessor chain processing as complete. Causes framework to return
-   * immediately without calling any additional chained coprocessors.
-   */
-  public void complete();
 }

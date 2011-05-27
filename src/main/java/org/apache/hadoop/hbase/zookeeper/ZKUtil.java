@@ -33,8 +33,6 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HServerAddress;
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.executor.RegionTransitionData;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.zookeeper.AsyncCallback;
@@ -126,19 +124,6 @@ public class ZKUtil {
   }
 
   /**
-   * Get the unique node-name for the specified regionserver.
-   *
-   * Used when a server puts up an ephemeral node for itself and needs to use
-   * a unique name.
-   *
-   * @param serverInfo server information
-   * @return unique, zookeeper-safe znode path for the server instance
-   */
-  public static String getNodeName(HServerInfo serverInfo) {
-    return serverInfo.getServerName();
-  }
-
-  /**
    * Get the name of the current node from the specified fully-qualified path.
    * @param path fully-qualified path
    * @return name of the current node
@@ -169,7 +154,7 @@ public class ZKUtil {
         "[\\t\\n\\x0B\\f\\r]", ""));
     StringBuilder builder = new StringBuilder(ensemble);
     builder.append(":");
-    builder.append(conf.get("hbase.zookeeper.property.clientPort"));
+    builder.append(conf.get(HConstants.ZOOKEEPER_CLIENT_PORT));
     builder.append(":");
     builder.append(conf.get(HConstants.ZOOKEEPER_ZNODE_PARENT));
     if (name != null && !name.isEmpty()) {
@@ -320,7 +305,7 @@ public class ZKUtil {
    * @return list of znode names, null if the node doesn't exist
    * @throws KeeperException
    */
-  public static List<String> listChildrenAndWatchThem(ZooKeeperWatcher zkw, 
+  public static List<String> listChildrenAndWatchThem(ZooKeeperWatcher zkw,
       String znode) throws KeeperException {
     List<String> children = listChildrenAndWatchForNewChildren(zkw, znode);
     if (children == null) {
@@ -330,38 +315,6 @@ public class ZKUtil {
       watchAndCheckExists(zkw, joinZNode(znode, child));
     }
     return children;
-  }
-
-  /**
-   * Lists the children of the specified znode, retrieving the data of each
-   * child as a server address.
-   *
-   * Used to list the currently online regionservers and their addresses.
-   *
-   * Sets no watches at all, this method is best effort.
-   *
-   * Returns an empty list if the node has no children.  Returns null if the
-   * parent node itself does not exist.
-   *
-   * @param zkw zookeeper reference
-   * @param znode node to get children of as addresses
-   * @return list of data of children of specified znode, empty if no children,
-   *         null if parent does not exist
-   * @throws KeeperException if unexpected zookeeper exception
-   */
-  public static List<HServerAddress> listChildrenAndGetAsAddresses(
-      ZooKeeperWatcher zkw, String znode)
-  throws KeeperException {
-    List<String> children = listChildrenNoWatch(zkw, znode);
-    if(children == null) {
-      return null;
-    }
-    List<HServerAddress> addresses =
-      new ArrayList<HServerAddress>(children.size());
-    for(String child : children) {
-      addresses.add(getDataAsAddress(zkw, joinZNode(znode, child)));
-    }
-    return addresses;
   }
 
   /**
@@ -575,7 +528,7 @@ public class ZKUtil {
    *
    * @param zkw zk reference
    * @param znode path of node
-   * @param stat node status to set if node exists
+   * @param stat node status to get if node exists
    * @return data of the specified znode, or null if node does not exist
    * @throws KeeperException if unexpected zookeeper exception
    */
@@ -583,7 +536,7 @@ public class ZKUtil {
       Stat stat)
   throws KeeperException {
     try {
-      byte [] data = zkw.getZooKeeper().getData(znode, zkw, stat);
+      byte [] data = zkw.getZooKeeper().getData(znode, null, stat);
       logRetrievedMsg(zkw, znode, data, false);
       return data;
     } catch (KeeperException.NoNodeException e) {
@@ -599,32 +552,6 @@ public class ZKUtil {
       zkw.interruptedException(e);
       return null;
     }
-  }
-
-  /**
-   * Get the data at the specified znode, deserialize it as an HServerAddress,
-   * and set a watch.
-   *
-   * Returns the data as a server address and sets a watch if the node exists.
-   * Returns null and no watch is set if the node does not exist or there is an
-   * exception.
-   *
-   * @param zkw zk reference
-   * @param znode path of node
-   * @return data of the specified node as a server address, or null
-   * @throws KeeperException if unexpected zookeeper exception
-   */
-  public static HServerAddress getDataAsAddress(ZooKeeperWatcher zkw,
-      String znode)
-  throws KeeperException {
-    byte [] data = getDataAndWatch(zkw, znode);
-    if(data == null) {
-      return null;
-    }
-    String addrString = Bytes.toString(data);
-    LOG.debug(zkw.prefix("Read server address from znode " + znode + ": " +
-      addrString));
-    return new HServerAddress(addrString);
   }
 
   /**
@@ -655,31 +582,6 @@ public class ZKUtil {
   //
   // Data setting
   //
-
-  /**
-   * Set the specified znode to be an ephemeral node carrying the specified
-   * server address.  Used by masters for their ephemeral node and regionservers
-   * for their ephemeral node.
-   *
-   * If the node is created successfully, a watcher is also set on the node.
-   *
-   * If the node is not created successfully because it already exists, this
-   * method will also set a watcher on the node.
-   *
-   * If there is another problem, a KeeperException will be thrown.
-   *
-   * @param zkw zk reference
-   * @param znode path of node
-   * @param address server address
-   * @return true if address set, false if not, watch set in both cases
-   * @throws KeeperException if unexpected zookeeper exception
-   */
-  public static boolean setAddressAndWatch(ZooKeeperWatcher zkw,
-      String znode, HServerAddress address)
-  throws KeeperException {
-    return createEphemeralNodeAndWatch(zkw, znode,
-        Bytes.toBytes(address.toString()));
-  }
 
   /**
    * Sets the data of the existing znode to be the specified data.  Ensures that
@@ -718,7 +620,7 @@ public class ZKUtil {
    * @param zkw zk reference
    * @param znode path of node
    * @param data data to set for node
-   * @throws KeeperException 
+   * @throws KeeperException
    */
   public static void createSetData(final ZooKeeperWatcher zkw, final String znode,
       final byte [] data)
@@ -745,8 +647,7 @@ public class ZKUtil {
    * @param data data to set for node
    * @throws KeeperException if unexpected zookeeper exception
    */
-  public static void setData(ZooKeeperWatcher zkw, String znode,
-      byte [] data)
+  public static void setData(ZooKeeperWatcher zkw, String znode, byte [] data)
   throws KeeperException, KeeperException.NoNodeException {
     setData(zkw, znode, data, -1);
   }
@@ -879,8 +780,7 @@ public class ZKUtil {
    */
   public static void asyncCreate(ZooKeeperWatcher zkw,
       String znode, byte [] data, final AsyncCallback.StringCallback cb,
-      final Object ctx)
-  throws KeeperException, KeeperException.NodeExistsException {
+      final Object ctx) {
     zkw.getZooKeeper().create(znode, data, Ids.OPEN_ACL_UNSAFE,
        CreateMode.PERSISTENT, cb, ctx);
   }
@@ -899,8 +799,11 @@ public class ZKUtil {
       String znode)
   throws KeeperException {
     try {
-      zkw.getZooKeeper().create(znode, new byte[0], Ids.OPEN_ACL_UNSAFE,
-          CreateMode.PERSISTENT);
+      ZooKeeper zk = zkw.getZooKeeper();
+      if (zk.exists(znode, false) == null) {
+        zk.create(znode, new byte[0], Ids.OPEN_ACL_UNSAFE,
+            CreateMode.PERSISTENT);
+      }
     } catch(KeeperException.NodeExistsException nee) {
     } catch(KeeperException.NoAuthException nee){
       try {
@@ -1022,10 +925,9 @@ public class ZKUtil {
   public static void deleteChildrenRecursively(ZooKeeperWatcher zkw, String node)
   throws KeeperException {
     List<String> children = ZKUtil.listChildrenNoWatch(zkw, node);
-    if(children != null || !children.isEmpty()) {
-      for(String child : children) {
-        deleteNodeRecursively(zkw, joinZNode(node, child));
-      }
+    if (children == null || children.isEmpty()) return;
+    for(String child : children) {
+      deleteNodeRecursively(zkw, joinZNode(node, child));
     }
   }
 
@@ -1039,13 +941,12 @@ public class ZKUtil {
     try {
       sb.append("HBase is rooted at ").append(zkw.baseZNode);
       sb.append("\nMaster address: ").append(
-          getDataAsAddress(zkw, zkw.masterAddressZNode));
+        Bytes.toStringBinary(getData(zkw, zkw.masterAddressZNode)));
       sb.append("\nRegion server holding ROOT: ").append(
-          getDataAsAddress(zkw, zkw.rootServerZNode));
+        Bytes.toStringBinary(getData(zkw, zkw.rootServerZNode)));
       sb.append("\nRegion servers:");
-      for (HServerAddress address : listChildrenAndGetAsAddresses(zkw,
-          zkw.rsZNode)) {
-        sb.append("\n ").append(address);
+      for (String child: listChildrenNoWatch(zkw, zkw.rsZNode)) {
+        sb.append("\n ").append(child);
       }
       sb.append("\nQuorum Server Statistics:");
       String[] servers = zkw.getQuorum().split(",");
@@ -1117,9 +1018,9 @@ public class ZKUtil {
     LOG.debug(zkw.prefix("Retrieved " + ((data == null)? 0: data.length) +
       " byte(s) of data from znode " + znode +
       (watcherSet? " and set watcher; ": "; data=") +
-      (data == null? "null": (
+      (data == null? "null": data.length == 0? "empty": (
           znode.startsWith(zkw.assignmentZNode) ?
               RegionTransitionData.fromBytes(data).toString()
-              : StringUtils.abbreviate(Bytes.toString(data), 32)))));
+              : StringUtils.abbreviate(Bytes.toStringBinary(data), 32)))));
   }
 }

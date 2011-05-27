@@ -34,9 +34,15 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.NavigableMap;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.SynchronousQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -113,6 +119,154 @@ public class TestFromClientSide {
   public void tearDown() throws Exception {
     // Nothing to do.
   }
+
+  /**
+   * HBASE-2468 use case 1 and 2: region info de/serialization
+   */
+   @Test
+   public void testRegionCacheDeSerialization() throws Exception {
+     // 1. test serialization.
+     LOG.info("Starting testRegionCacheDeSerialization");
+     final byte[] TABLENAME = Bytes.toBytes("testCachePrewarm2");
+     final byte[] FAMILY = Bytes.toBytes("family");
+     Configuration conf = TEST_UTIL.getConfiguration();
+     TEST_UTIL.createTable(TABLENAME, FAMILY);
+
+     // Set up test table:
+     // Create table:
+     HTable table = new HTable(conf, TABLENAME);
+
+     // Create multiple regions for this table
+     TEST_UTIL.createMultiRegions(table, FAMILY);
+     Scan s = new Scan();
+     ResultScanner scanner = table.getScanner(s);
+     while (scanner.next() != null) continue;
+
+     Path tempPath = new Path(HBaseTestingUtility.getTestDir(), "regions.dat");
+
+     final String tempFileName = tempPath.toString();
+
+     FileOutputStream fos = new FileOutputStream(tempFileName);
+     DataOutputStream dos = new DataOutputStream(fos);
+
+     // serialize the region info and output to a local file.
+     table.serializeRegionInfo(dos);
+     dos.flush();
+     dos.close();
+
+     // read a local file and deserialize the region info from it.
+     FileInputStream fis = new FileInputStream(tempFileName);
+     DataInputStream dis = new DataInputStream(fis);
+
+     Map<HRegionInfo, HServerAddress> deserRegions =
+       table.deserializeRegionInfo(dis);
+     dis.close();
+
+     // regions obtained from meta scanner.
+     Map<HRegionInfo, HServerAddress> loadedRegions =
+       table.getRegionsInfo();
+
+     // set the deserialized regions to the global cache.
+     table.getConnection().clearRegionCache();
+
+     table.getConnection().prewarmRegionCache(table.getTableName(),
+         deserRegions);
+
+     // verify whether the 2 maps are identical or not.
+     assertEquals("Number of cached region is incorrect",
+         HConnectionManager.getCachedRegionCount(conf, TABLENAME),
+         loadedRegions.size());
+
+     // verify each region is prefetched or not.
+     for (Map.Entry<HRegionInfo, HServerAddress> e: loadedRegions.entrySet()) {
+       HRegionInfo hri = e.getKey();
+       assertTrue(HConnectionManager.isRegionCached(conf,
+           hri.getTableDesc().getName(), hri.getStartKey()));
+     }
+
+     // delete the temp file
+     File f = new java.io.File(tempFileName);
+     f.delete();
+     LOG.info("Finishing testRegionCacheDeSerialization");
+   }
+
+  /**
+   * HBASE-2468 use case 3:
+   */
+  @Test
+  public void testRegionCachePreWarm() throws Exception {
+    LOG.info("Starting testRegionCachePreWarm");
+    final byte [] TABLENAME = Bytes.toBytes("testCachePrewarm");
+    Configuration conf = TEST_UTIL.getConfiguration();
+
+    // Set up test table:
+    // Create table:
+    TEST_UTIL.createTable(TABLENAME, FAMILY);
+
+    // disable region cache for the table.
+    HTable.setRegionCachePrefetch(conf, TABLENAME, false);
+    assertFalse("The table is disabled for region cache prefetch",
+        HTable.getRegionCachePrefetch(conf, TABLENAME));
+
+    HTable table = new HTable(conf, TABLENAME);
+
+    // create many regions for the table.
+    TEST_UTIL.createMultiRegions(table, FAMILY);
+    // This count effectively waits until the regions have been
+    // fully assigned
+    TEST_UTIL.countRows(table);
+    table.getConnection().clearRegionCache();
+    assertEquals("Clearing cache should have 0 cached ", 0,
+        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
+
+    // A Get is suppose to do a region lookup request
+    Get g = new Get(Bytes.toBytes("aaa"));
+    table.get(g);
+
+    // only one region should be cached if the cache prefetch is disabled.
+    assertEquals("Number of cached region is incorrect ", 1,
+        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
+
+    // now we enable cached prefetch.
+    HTable.setRegionCachePrefetch(conf, TABLENAME, true);
+    assertTrue("The table is enabled for region cache prefetch",
+        HTable.getRegionCachePrefetch(conf, TABLENAME));
+
+    HTable.setRegionCachePrefetch(conf, TABLENAME, false);
+    assertFalse("The table is disabled for region cache prefetch",
+        HTable.getRegionCachePrefetch(conf, TABLENAME));
+
+    HTable.setRegionCachePrefetch(conf, TABLENAME, true);
+    assertTrue("The table is enabled for region cache prefetch",
+        HTable.getRegionCachePrefetch(conf, TABLENAME));
+
+    table.getConnection().clearRegionCache();
+
+    assertEquals("Number of cached region is incorrect ", 0,
+        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
+
+    // if there is a cache miss, some additional regions should be prefetched.
+    Get g2 = new Get(Bytes.toBytes("bbb"));
+    table.get(g2);
+
+    // Get the configured number of cache read-ahead regions.
+    int prefetchRegionNumber = conf.getInt("hbase.client.prefetch.limit", 10);
+
+    // the total number of cached regions == region('aaa") + prefeched regions.
+    LOG.info("Testing how many regions cached");
+    assertEquals("Number of cached region is incorrect ", prefetchRegionNumber,
+        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
+
+    table.getConnection().clearRegionCache();
+
+    Get g3 = new Get(Bytes.toBytes("abc"));
+    table.get(g3);
+    assertEquals("Number of cached region is incorrect ", prefetchRegionNumber,
+        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
+
+    LOG.info("Finishing testRegionCachePreWarm");
+  }
+
 
   /**
    * Verifies that getConfiguration returns the same Configuration object used
@@ -512,7 +666,7 @@ public class TestFromClientSide {
     assertEquals(count, 10);
     scanner.close();
   }
-  
+
   /**
    * Test simple table and non-existent row cases.
    */
@@ -3756,150 +3910,7 @@ public class TestFromClientSide {
     assertTrue(scan.getFamilyMap().containsKey(FAMILY));
   }
 
-  /**
-   * HBASE-2468 use case 1 and 2: region info de/serialization
-   */
-   @Test
-   public void testRegionCacheDeSerialization() throws Exception {
-     // 1. test serialization.
-     LOG.info("Starting testRegionCacheDeSerialization");
-     final byte[] TABLENAME = Bytes.toBytes("testCachePrewarm2");
-     final byte[] FAMILY = Bytes.toBytes("family");
-     Configuration conf = TEST_UTIL.getConfiguration();
-     TEST_UTIL.createTable(TABLENAME, FAMILY);
-
-     // Set up test table:
-     // Create table:
-     HTable table = new HTable(conf, TABLENAME);
-
-     // Create multiple regions for this table
-     TEST_UTIL.createMultiRegions(table, FAMILY);
-
-     Path tempPath = new Path(HBaseTestingUtility.getTestDir(), "regions.dat");
-
-     final String tempFileName = tempPath.toString();
-
-     FileOutputStream fos = new FileOutputStream(tempFileName);
-     DataOutputStream dos = new DataOutputStream(fos);
-
-     // serialize the region info and output to a local file.
-     table.serializeRegionInfo(dos);
-     dos.flush();
-     dos.close();
-
-     // read a local file and deserialize the region info from it.
-     FileInputStream fis = new FileInputStream(tempFileName);
-     DataInputStream dis = new DataInputStream(fis);
-
-     Map<HRegionInfo, HServerAddress> deserRegions =
-       table.deserializeRegionInfo(dis);
-     dis.close();
-
-     // regions obtained from meta scanner.
-     Map<HRegionInfo, HServerAddress> loadedRegions =
-       table.getRegionsInfo();
-
-     // set the deserialized regions to the global cache.
-     table.getConnection().clearRegionCache();
-
-     table.getConnection().prewarmRegionCache(table.getTableName(),
-         deserRegions);
-
-     // verify whether the 2 maps are identical or not.
-     assertEquals("Number of cached region is incorrect",
-         HConnectionManager.getCachedRegionCount(conf, TABLENAME),
-         loadedRegions.size());
-
-     // verify each region is prefetched or not.
-     for (Map.Entry<HRegionInfo, HServerAddress> e: loadedRegions.entrySet()) {
-       HRegionInfo hri = e.getKey();
-       assertTrue(HConnectionManager.isRegionCached(conf,
-           hri.getTableDesc().getName(), hri.getStartKey()));
-     }
-
-     // delete the temp file
-     File f = new java.io.File(tempFileName);
-     f.delete();
-     LOG.info("Finishing testRegionCacheDeSerialization");
-   }
-
-  /**
-   * HBASE-2468 use case 3:
-   */
-  @Test
-  public void testRegionCachePreWarm() throws Exception {
-    LOG.info("Starting testRegionCachePreWarm");
-    final byte [] TABLENAME = Bytes.toBytes("testCachePrewarm");
-    Configuration conf = TEST_UTIL.getConfiguration();
-
-    // Set up test table:
-    // Create table:
-    TEST_UTIL.createTable(TABLENAME, FAMILY);
-
-    // disable region cache for the table.
-    HTable.setRegionCachePrefetch(conf, TABLENAME, false);
-    assertFalse("The table is disabled for region cache prefetch",
-        HTable.getRegionCachePrefetch(conf, TABLENAME));
-
-    HTable table = new HTable(conf, TABLENAME);
-
-    // create many regions for the table.
-    TEST_UTIL.createMultiRegions(table, FAMILY);
-    // This count effectively waits until the regions have been
-    // fully assigned
-    TEST_UTIL.countRows(table);
-    table.getConnection().clearRegionCache();
-    assertEquals("Clearing cache should have 0 cached ", 0,
-        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
-
-    // A Get is suppose to do a region lookup request
-    Get g = new Get(Bytes.toBytes("aaa"));
-    table.get(g);
-
-    // only one region should be cached if the cache prefetch is disabled.
-    assertEquals("Number of cached region is incorrect ", 1,
-        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
-
-    // now we enable cached prefetch.
-    HTable.setRegionCachePrefetch(conf, TABLENAME, true);
-    assertTrue("The table is enabled for region cache prefetch",
-        HTable.getRegionCachePrefetch(conf, TABLENAME));
-
-    HTable.setRegionCachePrefetch(conf, TABLENAME, false);
-    assertFalse("The table is disabled for region cache prefetch",
-        HTable.getRegionCachePrefetch(conf, TABLENAME));
-
-    HTable.setRegionCachePrefetch(conf, TABLENAME, true);
-    assertTrue("The table is enabled for region cache prefetch",
-        HTable.getRegionCachePrefetch(conf, TABLENAME));
-
-    table.getConnection().clearRegionCache();
-
-    assertEquals("Number of cached region is incorrect ", 0,
-        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
-
-    // if there is a cache miss, some additional regions should be prefetched.
-    Get g2 = new Get(Bytes.toBytes("bbb"));
-    table.get(g2);
-
-    // Get the configured number of cache read-ahead regions.
-    int prefetchRegionNumber = conf.getInt("hbase.client.prefetch.limit", 10);
-
-    // the total number of cached regions == region('aaa") + prefeched regions.
-    LOG.info("Testing how many regions cached");
-    assertEquals("Number of cached region is incorrect ", prefetchRegionNumber,
-        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
-
-    table.getConnection().clearRegionCache();
-
-    Get g3 = new Get(Bytes.toBytes("abc"));
-    table.get(g3);
-    assertEquals("Number of cached region is incorrect ", prefetchRegionNumber,
-        HConnectionManager.getCachedRegionCount(conf, TABLENAME));
-
-    LOG.info("Finishing testRegionCachePreWarm");
-  }
-
+ 
   @Test
   public void testIncrement() throws Exception {
     LOG.info("Starting testIncrement");
@@ -3969,6 +3980,176 @@ public class TestFromClientSide {
     for (int i=0;i<QUALIFIERS.length;i++) {
       assertIncrementKey(kvs[i], ROWS[0], FAMILY, QUALIFIERS[i], 2*(i+1));
     }
+  }
+
+  /**
+   * This test demonstrates how we use ThreadPoolExecutor.
+   * It needs to show that we only use as many threads in the pool as we have
+   * region servers. To do this, instead of doing real requests, we use a
+   * SynchronousQueue where each put must wait for a take (and vice versa)
+   * so that way we have full control of the number of active threads.
+   * @throws IOException
+   * @throws InterruptedException
+   */
+  @Test
+  public void testPoolBehavior() throws IOException, InterruptedException {
+    byte[] someBytes = Bytes.toBytes("pool");
+    HTable table = TEST_UTIL.createTable(someBytes, someBytes);
+    ThreadPoolExecutor pool = (ThreadPoolExecutor)table.getPool();
+
+    // Make sure that the TPE stars with a core pool size of one and 0
+    // initialized worker threads
+    assertEquals(1, pool.getCorePoolSize());
+    assertEquals(0, pool.getPoolSize());
+
+    // Build a SynchronousQueue that we use for thread coordination
+    final SynchronousQueue<Object> queue = new SynchronousQueue<Object>();
+    List<Thread> threads = new ArrayList<Thread>(5);
+    for (int i = 0; i < 5; i++) {
+      threads.add(new Thread() {
+        public void run() {
+          try {
+            // The thread blocks here until we decide to let it go
+            queue.take();
+          } catch (InterruptedException ie) { }
+        }
+      });
+    }
+    // First, add two threads and make sure the pool size follows
+    pool.submit(threads.get(0));
+    assertEquals(1, pool.getPoolSize());
+    pool.submit(threads.get(1));
+    assertEquals(2, pool.getPoolSize());
+
+    // Next, terminate those threads and then make sure the pool is still the
+    // same size
+    queue.put(new Object());
+    threads.get(0).join();
+    queue.put(new Object());
+    threads.get(1).join();
+    assertEquals(2, pool.getPoolSize());
+
+    // Now let's simulate adding a RS meaning that we'll go up to three
+    // concurrent threads. The pool should not grow larger than three.
+    pool.submit(threads.get(2));
+    pool.submit(threads.get(3));
+    pool.submit(threads.get(4));
+    assertEquals(3, pool.getPoolSize());
+    queue.put(new Object());
+    queue.put(new Object());
+    queue.put(new Object());
+  }
+
+  @Test
+  public void testClientPoolRoundRobin() throws IOException {
+    final byte[] tableName = Bytes.toBytes("testClientPoolRoundRobin");
+
+    int poolSize = 3;
+    int numVersions = poolSize * 2;
+    Configuration conf = TEST_UTIL.getConfiguration();
+    conf.set(HConstants.HBASE_CLIENT_IPC_POOL_TYPE, "round-robin");
+    conf.setInt(HConstants.HBASE_CLIENT_IPC_POOL_SIZE, poolSize);
+
+    HTable table = TEST_UTIL.createTable(tableName, new byte[][] { FAMILY },
+        conf, Integer.MAX_VALUE);
+    table.setAutoFlush(true);
+    Put put = new Put(ROW);
+    put.add(FAMILY, QUALIFIER, VALUE);
+
+    Get get = new Get(ROW);
+    get.addColumn(FAMILY, QUALIFIER);
+    get.setMaxVersions();
+
+    for (int versions = 1; versions <= numVersions; versions++) {
+      table.put(put);
+
+      Result result = table.get(get);
+      NavigableMap<Long, byte[]> navigableMap = result.getMap().get(FAMILY)
+          .get(QUALIFIER);
+
+      assertEquals("The number of versions of '" + FAMILY + ":" + QUALIFIER
+          + " did not match " + versions, versions, navigableMap.size());
+      for (Map.Entry<Long, byte[]> entry : navigableMap.entrySet()) {
+        assertTrue("The value at time " + entry.getKey()
+            + " did not match what was put",
+            Bytes.equals(VALUE, entry.getValue()));
+      }
+    }
+  }
+
+  @Test
+  public void testClientPoolThreadLocal() throws IOException {
+    final byte[] tableName = Bytes.toBytes("testClientPoolThreadLocal");
+
+    int poolSize = Integer.MAX_VALUE;
+    int numVersions = 3;
+    Configuration conf = TEST_UTIL.getConfiguration();
+    conf.set(HConstants.HBASE_CLIENT_IPC_POOL_TYPE, "thread-local");
+    conf.setInt(HConstants.HBASE_CLIENT_IPC_POOL_SIZE, poolSize);
+
+    final HTable table = TEST_UTIL.createTable(tableName,
+        new byte[][] { FAMILY }, conf);
+    table.setAutoFlush(true);
+    final Put put = new Put(ROW);
+    put.add(FAMILY, QUALIFIER, VALUE);
+
+    final Get get = new Get(ROW);
+    get.addColumn(FAMILY, QUALIFIER);
+    get.setMaxVersions();
+
+    for (int versions = 1; versions <= numVersions; versions++) {
+      table.put(put);
+
+      Result result = table.get(get);
+      NavigableMap<Long, byte[]> navigableMap = result.getMap().get(FAMILY)
+          .get(QUALIFIER);
+
+      assertEquals("The number of versions of '" + FAMILY + ":" + QUALIFIER
+          + " did not match " + versions, versions, navigableMap.size());
+      for (Map.Entry<Long, byte[]> entry : navigableMap.entrySet()) {
+        assertTrue("The value at time " + entry.getKey()
+            + " did not match what was put",
+            Bytes.equals(VALUE, entry.getValue()));
+      }
+    }
+
+    final Object waitLock = new Object();
+
+    ExecutorService executorService = Executors.newFixedThreadPool(numVersions);
+    for (int versions = numVersions; versions < numVersions * 2; versions++) {
+      final int versionsCopy = versions;
+      executorService.submit(new Callable<Void>() {
+        @Override
+        public Void call() {
+          try {
+            table.put(put);
+
+            Result result = table.get(get);
+            NavigableMap<Long, byte[]> navigableMap = result.getMap()
+                .get(FAMILY).get(QUALIFIER);
+
+            assertEquals("The number of versions of '" + FAMILY + ":"
+                + QUALIFIER + " did not match " + versionsCopy, versionsCopy,
+                navigableMap.size());
+            for (Map.Entry<Long, byte[]> entry : navigableMap.entrySet()) {
+              assertTrue("The value at time " + entry.getKey()
+                  + " did not match what was put",
+                  Bytes.equals(VALUE, entry.getValue()));
+            }
+            synchronized (waitLock) {
+              waitLock.wait();
+            }
+          } catch (Exception e) {
+          }
+
+          return null;
+        }
+      });
+    }
+    synchronized (waitLock) {
+      waitLock.notifyAll();
+    }
+    executorService.shutdownNow();
   }
 }
 

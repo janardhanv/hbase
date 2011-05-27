@@ -74,9 +74,7 @@ public class TestTablePermissions {
     UTIL.startMiniCluster();
     ZKW = new ZooKeeperWatcher(UTIL.getConfiguration(),
       "TestMetaReaderEditor", ABORTABLE);
-    HConnection connection =
-      HConnectionManager.getConnection(UTIL.getConfiguration());
-    CT = new CatalogTracker(ZKW, connection, ABORTABLE);
+    CT = new CatalogTracker(ZKW, UTIL.getConfiguration(), ABORTABLE);
     CT.start();
 
     UTIL.createTable(TEST_TABLE, TEST_FAMILY);

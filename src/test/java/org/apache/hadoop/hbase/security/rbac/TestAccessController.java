@@ -40,6 +40,7 @@ import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MiniHBaseCluster;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
@@ -48,6 +49,7 @@ import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.coprocessor.Coprocessor;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
+import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.master.MasterCoprocessorHost;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.security.User;
@@ -102,9 +104,7 @@ public class TestAccessController {
     conf.set("hbase.superuser", "admin");
     TEST_UTIL.startMiniCluster();
     ZKW = new ZooKeeperWatcher(conf, "TestMetaReaderEditor", ABORTABLE);
-    HConnection connection =
-      HConnectionManager.getConnection(conf);
-    CT = new CatalogTracker(ZKW, connection, ABORTABLE);
+    CT = new CatalogTracker(ZKW, conf, ABORTABLE);
     CT.start();
     MasterCoprocessorHost cpHost = TEST_UTIL.getMiniHBaseCluster()
         .getMaster().getCoprocessorHost();
@@ -112,7 +112,7 @@ public class TestAccessController {
     ACCESS_CONTROLLER = (AccessController)cpHost.findCoprocessor(
         AccessController.class.getName());
     CP_ENV = cpHost.createEnvironment(AccessController.class, ACCESS_CONTROLLER,
-        Coprocessor.Priority.HIGHEST);
+        Coprocessor.Priority.HIGHEST, 1);
 
 
     // create a set of test users
@@ -185,7 +185,8 @@ public class TestAccessController {
       public Object run() throws Exception {
         HTableDescriptor htd = new HTableDescriptor("testnewtable");
         htd.addFamily(new HColumnDescriptor(TEST_FAMILY));
-        ACCESS_CONTROLLER.preCreateTable(CP_ENV, htd, null);
+        ACCESS_CONTROLLER.preCreateTable(
+            ObserverContext.createAndPrepare(CP_ENV, null), htd, null);
         return null;
       }
     };
@@ -207,7 +208,7 @@ public class TestAccessController {
         HTableDescriptor htd = new HTableDescriptor(TEST_TABLE);
         htd.addFamily(new HColumnDescriptor(TEST_FAMILY));
         htd.addFamily(new HColumnDescriptor("fam_"+User.getCurrent().getShortName()));
-        ACCESS_CONTROLLER.preModifyTable(CP_ENV, TEST_TABLE, htd);
+        ACCESS_CONTROLLER.preModifyTable(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE, htd);
         return null;
       }
     };
@@ -226,7 +227,7 @@ public class TestAccessController {
   public void testTableDelete() throws Exception {
     PrivilegedExceptionAction disableTable = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preDeleteTable(CP_ENV, TEST_TABLE);
+        ACCESS_CONTROLLER.preDeleteTable(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE);
         return null;
       }
     };
@@ -246,7 +247,7 @@ public class TestAccessController {
     final HColumnDescriptor hcd = new HColumnDescriptor("fam_new");
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preAddColumn(CP_ENV, TEST_TABLE, hcd);
+        ACCESS_CONTROLLER.preAddColumn(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE, hcd);
         return null;
       }
     };
@@ -267,7 +268,7 @@ public class TestAccessController {
     hcd.setMaxVersions(10);
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preModifyColumn(CP_ENV, TEST_TABLE, hcd);
+        ACCESS_CONTROLLER.preModifyColumn(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE, hcd);
         return null;
       }
     };
@@ -286,7 +287,7 @@ public class TestAccessController {
   public void testDeleteColumn() throws Exception {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preDeleteColumn(CP_ENV, TEST_TABLE, TEST_FAMILY);
+        ACCESS_CONTROLLER.preDeleteColumn(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE, TEST_FAMILY);
         return null;
       }
     };
@@ -305,7 +306,7 @@ public class TestAccessController {
   public void testTableDisable() throws Exception {
     PrivilegedExceptionAction disableTable = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preDisableTable(CP_ENV, TEST_TABLE);
+        ACCESS_CONTROLLER.preDisableTable(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE);
         return null;
       }
     };
@@ -324,7 +325,7 @@ public class TestAccessController {
   public void testTableEnable() throws Exception {
     PrivilegedExceptionAction enableTable = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preEnableTable(CP_ENV, TEST_TABLE);
+        ACCESS_CONTROLLER.preEnableTable(ObserverContext.createAndPrepare(CP_ENV, null), TEST_TABLE);
         return null;
       }
     };
@@ -345,11 +346,11 @@ public class TestAccessController {
     Map<HRegionInfo,HServerAddress> regions = table.getRegionsInfo();
     final Map.Entry<HRegionInfo,HServerAddress> firstRegion =
         regions.entrySet().iterator().next();
-    final HServerInfo server = TEST_UTIL.getHBaseCluster().getRegionServer(0).getHServerInfo();
-
+    final ServerName server = TEST_UTIL.getHBaseCluster().getRegionServer(0).getServerName();
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preMove(CP_ENV, firstRegion.getKey(), server, server);
+        ACCESS_CONTROLLER.preMove(ObserverContext.createAndPrepare(CP_ENV, null),
+            firstRegion.getKey(), server, server);
         return null;
       }
     };
@@ -373,7 +374,7 @@ public class TestAccessController {
 
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preAssign(CP_ENV,
+        ACCESS_CONTROLLER.preAssign(ObserverContext.createAndPrepare(CP_ENV, null),
             firstRegion.getKey().getRegionName(), false);
         return null;
       }
@@ -398,7 +399,7 @@ public class TestAccessController {
 
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preUnassign(CP_ENV, firstRegion.getKey().getRegionName(),
+        ACCESS_CONTROLLER.preUnassign(ObserverContext.createAndPrepare(CP_ENV, null), firstRegion.getKey().getRegionName(),
             false);
         return null;
       }
@@ -418,7 +419,7 @@ public class TestAccessController {
   public void testBalance() throws Exception {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preBalance(CP_ENV);
+        ACCESS_CONTROLLER.preBalance(ObserverContext.createAndPrepare(CP_ENV, null));
         return null;
       }
     };
@@ -437,7 +438,7 @@ public class TestAccessController {
   public void testBalanceSwitch() throws Exception {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preBalanceSwitch(CP_ENV, true);
+        ACCESS_CONTROLLER.preBalanceSwitch(ObserverContext.createAndPrepare(CP_ENV, null), true);
         return null;
       }
     };
@@ -456,7 +457,7 @@ public class TestAccessController {
   public void testShutdown() throws Exception {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preShutdown(CP_ENV);
+        ACCESS_CONTROLLER.preShutdown(ObserverContext.createAndPrepare(CP_ENV, null));
         return null;
       }
     };
@@ -475,7 +476,7 @@ public class TestAccessController {
   public void testStopMaster() throws Exception {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preStopMaster(CP_ENV);
+        ACCESS_CONTROLLER.preStopMaster(ObserverContext.createAndPrepare(CP_ENV, null));
         return null;
       }
     };

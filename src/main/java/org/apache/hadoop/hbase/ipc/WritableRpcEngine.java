@@ -51,7 +51,9 @@ import org.apache.hadoop.metrics.util.MetricsTimeVaryingRate;
 
 /** An RpcEngine implementation for Writable data. */
 class WritableRpcEngine implements RpcEngine {
-  private static final Log LOG = LogFactory.getLog(HBaseRPC.class);
+  // LOG is NOT in hbase subpackage intentionally so that the default HBase
+  // DEBUG log level does NOT emit RPC-level logging. 
+  private static final Log LOG = LogFactory.getLog("org.apache.hadoop.ipc.RPCEngine");
 
   /* Cache a client using its socket factory as the hash key */
   static private class ClientCache {
@@ -147,6 +149,7 @@ class WritableRpcEngine implements RpcEngine {
         client.call(new Invocation(method, args), address,
                     protocol, ticket, rpcTimeout);
       if (logDebug) {
+        // FIGURE HOW TO TURN THIS OFF!
         long callTime = System.currentTimeMillis() - startTime;
         LOG.debug("Call: " + method.getName() + " " + callTime);
       }

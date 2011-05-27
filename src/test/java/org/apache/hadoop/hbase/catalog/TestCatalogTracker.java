@@ -36,9 +36,9 @@ import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerAddress;
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.NotAllMetaRegionsOnlineException;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.Result;
@@ -63,8 +63,8 @@ import org.mockito.Mockito;
 public class TestCatalogTracker {
   private static final Log LOG = LogFactory.getLog(TestCatalogTracker.class);
   private static final HBaseTestingUtility UTIL = new HBaseTestingUtility();
-  private static final HServerAddress HSA =
-    new HServerAddress("example.org:1234");
+  private static final ServerName SN =
+    new ServerName("example.org", 1234, System.currentTimeMillis());
   private ZooKeeperWatcher watcher;
   private Abortable abortable;
 
@@ -98,7 +98,8 @@ public class TestCatalogTracker {
 
   private CatalogTracker constructAndStartCatalogTracker(final HConnection c)
   throws IOException, InterruptedException {
-    CatalogTracker ct = new CatalogTracker(this.watcher, c, this.abortable);
+    CatalogTracker ct = new CatalogTracker(this.watcher, null, c,
+        this.abortable, 0);
     ct.start();
     return ct;
   }
@@ -115,7 +116,7 @@ public class TestCatalogTracker {
     final CatalogTracker ct = constructAndStartCatalogTracker(connection);
     try {
       RootLocationEditor.setRootLocation(this.watcher,
-        new HServerAddress("example.com:1234"));
+        new ServerName("example.com", 1234, System.currentTimeMillis()));
     } finally {
       // Clean out root location or later tests will be confused... they presume
       // start fresh in zk.
@@ -131,9 +132,9 @@ public class TestCatalogTracker {
   @Test public void testInterruptWaitOnMetaAndRoot()
   throws IOException, InterruptedException {
     final CatalogTracker ct = constructAndStartCatalogTracker();
-    HServerAddress hsa = ct.getRootLocation();
+    ServerName hsa = ct.getRootLocation();
     Assert.assertNull(hsa);
-    HServerAddress meta = ct.getMetaLocation();
+    ServerName meta = ct.getMetaLocation();
     Assert.assertNull(meta);
     Thread t = new Thread() {
       @Override
@@ -169,7 +170,7 @@ public class TestCatalogTracker {
     final CatalogTracker ct = constructAndStartCatalogTracker(connection);
     try {
       RootLocationEditor.setRootLocation(this.watcher,
-        new HServerAddress("example.com:1234"));
+        new ServerName("example.com", 1234, System.currentTimeMillis()));
       Assert.assertFalse(ct.verifyMetaRegionLocation(100));
     } finally {
       // Clean out root location or later tests will be confused... they presume
@@ -200,7 +201,7 @@ public class TestCatalogTracker {
     final CatalogTracker ct = constructAndStartCatalogTracker(connection);
     try {
       RootLocationEditor.setRootLocation(this.watcher,
-        new HServerAddress("example.com:1234"));
+        new ServerName("example.com", 1234, System.currentTimeMillis()));
       Assert.assertFalse(ct.verifyRootRegionLocation(100));
     } finally {
       // Clean out root location or later tests will be confused... they presume
@@ -232,7 +233,7 @@ public class TestCatalogTracker {
   @Test public void testNoTimeoutWaitForRoot()
   throws IOException, InterruptedException, KeeperException {
     final CatalogTracker ct = constructAndStartCatalogTracker();
-    HServerAddress hsa = ct.getRootLocation();
+    ServerName hsa = ct.getRootLocation();
     Assert.assertNull(hsa);
 
     // Now test waiting on root location getting set.
@@ -246,9 +247,9 @@ public class TestCatalogTracker {
     Assert.assertTrue(ct.getRootLocation().equals(hsa));
   }
 
-  private HServerAddress setRootLocation() throws KeeperException {
-    RootLocationEditor.setRootLocation(this.watcher, HSA);
-    return HSA;
+  private ServerName setRootLocation() throws KeeperException {
+    RootLocationEditor.setRootLocation(this.watcher, SN);
+    return SN;
   }
 
   /**
@@ -266,11 +267,11 @@ public class TestCatalogTracker {
     HRegionInterface  mockHRI = Mockito.mock(HRegionInterface.class);
     // Make the HRI return an answer no matter how Get is called.  Same for
     // getHRegionInfo.  Thats enough for this test.
-    Mockito.when(connection.getHRegionConnection((HServerAddress)Mockito.any(), Mockito.anyBoolean())).
-      thenReturn(mockHRI);
+    Mockito.when(connection.getHRegionConnection((String)Mockito.any(),
+      Matchers.anyInt())).thenReturn(mockHRI);
 
     final CatalogTracker ct = constructAndStartCatalogTracker(connection);
-    HServerAddress hsa = ct.getMetaLocation();
+    ServerName hsa = ct.getMetaLocation();
     Assert.assertNull(hsa);
 
     // Now test waiting on meta location getting set.
@@ -289,7 +290,10 @@ public class TestCatalogTracker {
     List<KeyValue> kvs = new ArrayList<KeyValue>();
     kvs.add(new KeyValue(HConstants.EMPTY_BYTE_ARRAY,
       HConstants.CATALOG_FAMILY, HConstants.SERVER_QUALIFIER,
-      Bytes.toBytes(HSA.toString())));
+      Bytes.toBytes(SN.getHostAndPort())));
+    kvs.add(new KeyValue(HConstants.EMPTY_BYTE_ARRAY,
+      HConstants.CATALOG_FAMILY, HConstants.STARTCODE_QUALIFIER,
+      Bytes.toBytes(SN.getStartcode())));
     final Result result = new Result(kvs);
     Mockito.when(mockHRI.get((byte [])Mockito.any(), (Get)Mockito.any())).
       thenReturn(result);
@@ -300,13 +304,12 @@ public class TestCatalogTracker {
     // been assigned.
     String node = ct.getMetaNodeTracker().getNode();
     ZKUtil.createAndFailSilent(this.watcher, node);
-    MetaEditor.updateMetaLocation(ct, HRegionInfo.FIRST_META_REGIONINFO,
-      new HServerInfo(HSA, -1, "example.com"));
+    MetaEditor.updateMetaLocation(ct, HRegionInfo.FIRST_META_REGIONINFO, SN);
     ZKUtil.deleteNode(this.watcher, node);
     // Join the thread... should exit shortly.
     t.join();
     // Now meta is available.
-    Assert.assertTrue(ct.getMetaLocation().equals(HSA));
+    Assert.assertTrue(ct.getMetaLocation().equals(SN));
   }
 
   private void startWaitAliveThenWaitItLives(final Thread t, final int ms) {

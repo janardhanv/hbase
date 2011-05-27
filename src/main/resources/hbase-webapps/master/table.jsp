@@ -4,8 +4,11 @@
   import="org.apache.hadoop.conf.Configuration"
   import="org.apache.hadoop.hbase.client.HTable"
   import="org.apache.hadoop.hbase.client.HBaseAdmin"
+  import="org.apache.hadoop.hbase.client.HConnectionManager"
   import="org.apache.hadoop.hbase.HRegionInfo"
+  import="org.apache.hadoop.hbase.ServerName"
   import="org.apache.hadoop.hbase.HServerAddress"
+  import="org.apache.hadoop.hbase.ServerName"
   import="org.apache.hadoop.hbase.HServerInfo"
   import="org.apache.hadoop.hbase.HServerLoad"
   import="org.apache.hadoop.hbase.HServerLoad.RegionLoad"
@@ -21,12 +24,15 @@
   String tableName = request.getParameter("name");
   HTable table = new HTable(conf, tableName);
   String tableHeader = "<h2>Table Regions</h2><table><tr><th>Name</th><th>Region Server</th><th>Start Key</th><th>End Key</th><th>Requests</th></tr>";
-  HServerAddress rl = master.getCatalogTracker().getRootLocation();
+  ServerName rl = master.getCatalogTracker().getRootLocation();
   boolean showFragmentation = conf.getBoolean("hbase.master.ui.fragmentation.enabled", false);
   Map<String, Integer> frags = null;
   if (showFragmentation) {
       frags = FSUtils.getTableFragmentation(master);
   }
+  // HARDCODED FOR NOW TODO: FIX GET FROM ZK
+  // This port might be wrong if RS actually ended up using something else.
+  int infoPort = conf.getInt("hbase.regionserver.info.port", 60030);
 %>
 
 <?xml version="1.0" encoding="UTF-8" ?>
@@ -83,7 +89,6 @@
 %>
 <%= tableHeader %>
 <%
-  int infoPort = master.getServerManager().getHServerInfo(rl).getInfoPort();
   String url = "http://" + rl.getHostname() + ":" + infoPort + "/";
 %>
 <tr>
@@ -101,9 +106,8 @@
 <%
   // NOTE: Presumes one meta region only.
   HRegionInfo meta = HRegionInfo.FIRST_META_REGIONINFO;
-  HServerAddress metaLocation = master.getCatalogTracker().getMetaLocation();
+  ServerName metaLocation = master.getCatalogTracker().getMetaLocation();
   for (int i = 0; i < 1; i++) {
-    int infoPort = master.getServerManager().getHServerInfo(metaLocation).getInfoPort();
     String url = "http://" + metaLocation.getHostname() + ":" + infoPort + "/";
 %>
 <tr>
@@ -136,27 +140,25 @@
 </table>
 <%
   Map<String, Integer> regDistribution = new HashMap<String, Integer>();
-  Map<HRegionInfo, HServerAddress> regions = table.getRegionsInfo();
+  Map<HRegionInfo, ServerName> regions = table.getRegionLocations();
   if(regions != null && regions.size() > 0) { %>
 <%=     tableHeader %>
 <%
-  for(Map.Entry<HRegionInfo, HServerAddress> hriEntry : regions.entrySet()) {
+  for (Map.Entry<HRegionInfo, ServerName> hriEntry : regions.entrySet()) {
     HRegionInfo regionInfo = hriEntry.getKey();
-    HServerAddress addr = hriEntry.getValue();
+    ServerName addr = hriEntry.getValue();
     long req = 0;
 
-    int infoPort = 0;
     String urlRegionServer = null;
 
     if (addr != null) {
-      HServerInfo info = master.getServerManager().getHServerInfo(addr);
-      if (info != null) {
-        HServerLoad sl = info.getLoad();
+      HServerLoad sl = master.getServerManager().getLoad(addr);
+      if (sl != null) {
         Map<byte[], RegionLoad> map = sl.getRegionsLoad();
         if (map.containsKey(regionInfo.getRegionName())) {
           req = map.get(regionInfo.getRegionName()).getRequestsCount();
         }
-        infoPort = info.getInfoPort();
+        // This port might be wrong if RS actually ended up using something else.
         urlRegionServer =
             "http://" + addr.getHostname().toString() + ":" + infoPort + "/";
         Integer i = regDistribution.get(urlRegionServer);
@@ -202,6 +204,8 @@
   ex.printStackTrace(System.err);
 }
 } // end else
+
+HConnectionManager.deleteConnection(hbadmin.getConfiguration(), false);
 %>
 
 <p><hr><p>

@@ -43,6 +43,7 @@ import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.io.hfile.HFile;
+import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.regionserver.FlushRequester;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.Store;
@@ -56,6 +57,7 @@ import org.junit.AfterClass;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+import org.mockito.Mockito;
 
 /**
  * Test replay of edits out of a WAL split.
@@ -76,7 +78,6 @@ public class TestWALReplay {
     conf.setBoolean("dfs.support.append", true);
     // The below config supported by 0.20-append and CDH3b2
     conf.setInt("dfs.client.block.recovery.retries", 2);
-    conf.setInt("hbase.regionserver.flushlogentries", 1);
     TEST_UTIL.startMiniDFSCluster(3);
     TEST_UTIL.setNameNodeNameSystemLeasePeriod(100, 10000);
     Path hbaseRootDir =
@@ -382,7 +383,7 @@ public class TestWALReplay {
     final Configuration newConf = HBaseConfiguration.create(this.conf);
     User user = HBaseTestingUtility.getDifferentUser(newConf,
       ".replay.wal.secondtime");
-    user.runAs(new PrivilegedExceptionAction(){
+    user.runAs(new PrivilegedExceptionAction() {
       public Object run() throws Exception {
         runWALSplit(newConf);
         FileSystem newFS = FileSystem.get(newConf);
@@ -392,18 +393,21 @@ public class TestWALReplay {
         HLog newWal = createWAL(newConf);
         final AtomicInteger flushcount = new AtomicInteger(0);
         try {
-          final HRegion region = new HRegion(basedir, newWal, newFS, newConf, hri,
-              null) {
-            protected boolean internalFlushcache(HLog wal, long myseqid)
+          final HRegion region =
+              new HRegion(basedir, newWal, newFS, newConf, hri, null) {
+            protected boolean internalFlushcache(
+                final HLog wal, final long myseqid, MonitoredTask status)
             throws IOException {
-              boolean b = super.internalFlushcache(wal, myseqid);
+              LOG.info("InternalFlushCache Invoked");
+              boolean b = super.internalFlushcache(wal, myseqid,
+                  Mockito.mock(MonitoredTask.class));
               flushcount.incrementAndGet();
               return b;
             };
           };
           long seqid = region.initialize();
           // We flushed during init.
-          assertTrue(flushcount.get() > 0);
+          assertTrue("Flushcount=" + flushcount.get(), flushcount.get() > 0);
           assertTrue(seqid > wal.getSequenceNumber());
 
           Get get = new Get(rowName);
@@ -493,7 +497,7 @@ public class TestWALReplay {
         this.hbaseRootDir, this.logDir, this.oldLogDir, fs);
     List<Path> splits = logSplitter.splitLog();
     // Split should generate only 1 file since there's only 1 region
-    assertEquals(1, splits.size());
+    assertEquals("splits=" + splits, 1, splits.size());
     // Make sure the file exists
     assertTrue(fs.exists(splits.get(0)));
     LOG.info("Split file=" + splits.get(0));

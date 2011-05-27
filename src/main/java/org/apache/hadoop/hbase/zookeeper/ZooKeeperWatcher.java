@@ -89,6 +89,8 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
   public String tableZNode;
   // znode containing the unique cluster ID
   public String clusterIdZNode;
+  // znode used for log splitting work assignment
+  public String splitLogZNode;
 
   private final Configuration conf;
 
@@ -127,7 +129,8 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
       // Apparently this is recoverable.  Retry a while.
       // See http://wiki.apache.org/hadoop/ZooKeeper/ErrorHandling
       // TODO: Generalize out in ZKUtil.
-      long wait = conf.getLong("hbase.zookeeper.recoverable.waittime", 10000);
+      long wait = conf.getLong(HConstants.ZOOKEEPER_RECOVERABLE_WAITTIME,
+          HConstants.DEFAULT_ZOOKEPER_RECOVERABLE_WAITIME);
       long finished = System.currentTimeMillis() + wait;
       KeeperException ke = null;
       do {
@@ -146,13 +149,29 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
         }
       } while (isFinishedRetryingRecoverable(finished));
       // Convert connectionloss exception to ZKCE.
-      if (ke != null) throw new ZooKeeperConnectionException(ke);
+      if (ke != null) {
+        try {
+          // If we don't close it, the zk connection managers won't be killed
+          this.zooKeeper.close();
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          LOG.warn("Interrupted while closing", e);
+        }
+        throw new ZooKeeperConnectionException("HBase is able to connect to" +
+            " ZooKeeper but the connection closes immediately. This could be" +
+            " a sign that the server has too many connections (30 is the" +
+            " default). Consider inspecting your ZK server logs for that" +
+            " error and then make sure you are reusing HBaseConfiguration" +
+            " as often as you can. See HTable's javadoc for more information.",
+            ke);
+      }
       ZKUtil.createAndFailSilent(this, assignmentZNode);
       ZKUtil.createAndFailSilent(this, rsZNode);
       ZKUtil.createAndFailSilent(this, tableZNode);
+      ZKUtil.createAndFailSilent(this, splitLogZNode);
     } catch (KeeperException e) {
-      LOG.error(prefix("Unexpected KeeperException creating base node"), e);
-      throw new IOException(e);
+      throw new ZooKeeperConnectionException(
+          prefix("Unexpected KeeperException creating base node"), e);
     }
   }
 
@@ -195,6 +214,8 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
         conf.get("zookeeper.znode.tableEnableDisable", "table"));
     clusterIdZNode = ZKUtil.joinZNode(baseZNode,
         conf.get("zookeeper.znode.clusterId", "hbaseid"));
+    splitLogZNode = ZKUtil.joinZNode(baseZNode,
+        conf.get("zookeeper.znode.splitlog", "splitlog"));
   }
 
   /**
@@ -232,7 +253,7 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
 
   /**
    * Method called from ZooKeeper for events and connection status.
-   *
+   * <p>
    * Valid events are passed along to listeners.  Connection status changes
    * are dealt with locally.
    */
@@ -287,12 +308,12 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
 
   /**
    * Called when there is a connection-related event via the Watcher callback.
-   *
+   * <p>
    * If Disconnected or Expired, this should shutdown the cluster. But, since
    * we send a KeeperException.SessionExpiredException along with the abort
    * call, it's possible for the Abortable to catch it and try to create a new
    * session with ZooKeeper. This is what the client does in HCM.
-   *
+   * <p>
    * @param event
    */
   private void connectionEvent(WatchedEvent event) {
@@ -361,11 +382,11 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
 
   /**
    * Handles KeeperExceptions in client calls.
-   *
+   * <p>
    * This may be temporary but for now this gives one place to deal with these.
-   *
+   * <p>
    * TODO: Currently this method rethrows the exception to let the caller handle
-   *
+   * <p>
    * @param ke
    * @throws KeeperException
    */
@@ -377,13 +398,13 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
 
   /**
    * Handles InterruptedExceptions in client calls.
-   *
+   * <p>
    * This may be temporary but for now this gives one place to deal with these.
-   *
+   * <p>
    * TODO: Currently, this method does nothing.
    *       Is this ever expected to happen?  Do we abort or can we let it run?
    *       Maybe this should be logged as WARN?  It shouldn't happen?
-   *
+   * <p>
    * @param ie
    */
   public void interruptedException(InterruptedException ie) {

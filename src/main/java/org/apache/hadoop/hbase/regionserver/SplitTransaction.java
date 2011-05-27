@@ -39,6 +39,7 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.catalog.MetaEditor;
 import org.apache.hadoop.hbase.executor.RegionTransitionData;
 import org.apache.hadoop.hbase.executor.EventHandler.EventType;
@@ -155,6 +156,8 @@ public class SplitTransaction {
    */
   public boolean prepare() {
     if (this.parent.isClosed() || this.parent.isClosing()) return false;
+    // Split key can be false if this region is unsplittable; i.e. has refs.
+    if (this.splitrow == null) return false;
     HRegionInfo hri = this.parent.getRegionInfo();
     parent.prepareToSplit();
     // Check splitrow.
@@ -163,7 +166,7 @@ public class SplitTransaction {
     if (Bytes.equals(startKey, splitrow) ||
         !this.parent.getRegionInfo().containsRow(splitrow)) {
       LOG.info("Split row is not inside region key range or is equal to " +
-          "startkey: " + Bytes.toString(this.splitrow));
+          "startkey: " + Bytes.toStringBinary(this.splitrow));
       return false;
     }
     long rid = getDaughterRegionIdTimestamp(hri);
@@ -476,7 +479,7 @@ public class SplitTransaction {
     }
 
     // Look for any exception
-    for (Future future : futures) {
+    for (Future<Void> future: futures) {
       try {
         future.get();
       } catch (InterruptedException e) {
@@ -593,6 +596,7 @@ public class SplitTransaction {
         break;
 
       case CREATE_SPLIT_DIR:
+    	this.parent.writestate.writesEnabled = true;
         cleanupSplitDir(fs, this.splitdir);
         break;
 
@@ -690,7 +694,7 @@ public class SplitTransaction {
    * @throws IOException 
    */
   private static int createNodeSplitting(final ZooKeeperWatcher zkw,
-      final HRegionInfo region, final String serverName)
+      final HRegionInfo region, final ServerName serverName)
   throws KeeperException, IOException {
     LOG.debug(zkw.prefix("Creating ephemeral node for " +
       region.getEncodedName() + " in SPLITTING state"));
@@ -744,7 +748,7 @@ public class SplitTransaction {
    * @throws IOException 
    */
   private static int transitionNodeSplit(ZooKeeperWatcher zkw,
-      HRegionInfo parent, HRegionInfo a, HRegionInfo b, String serverName,
+      HRegionInfo parent, HRegionInfo a, HRegionInfo b, ServerName serverName,
       final int znodeVersion)
   throws KeeperException, IOException {
     byte [] payload = Writables.getBytes(a, b);
@@ -755,7 +759,7 @@ public class SplitTransaction {
 
   private static int transitionNodeSplitting(final ZooKeeperWatcher zkw,
       final HRegionInfo parent,
-      final String serverName, final int version)
+      final ServerName serverName, final int version)
   throws KeeperException, IOException {
     return ZKAssign.transitionNode(zkw, parent, serverName,
       EventType.RS_ZK_REGION_SPLITTING, EventType.RS_ZK_REGION_SPLITTING, version);

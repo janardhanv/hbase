@@ -525,6 +525,47 @@
           </execution>
         </executions>
       </plugin>
+      <plugin>
+        <groupId>org.jamon</groupId>
+        <artifactId>jamon-maven-plugin</artifactId>
+        <version>2.3.4</version>
+        <executions>
+          <execution>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>translate</goal>
+            </goals>
+            <configuration>
+              <templateSourceDir>src/main/jamon</templateSourceDir>
+              <templateOutputDir>target/generated-jamon</templateOutputDir>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-eclipse-plugin</artifactId>
+        <configuration>
+          <additionalProjectnatures>
+            <projectnature>org.jamon.project.jamonnature</projectnature>
+          </additionalProjectnatures>
+          <buildcommands>
+            <buildcommand>org.jamon.project.templateBuilder</buildcommand>
+            <buildcommand>org.eclipse.jdt.core.javabuilder</buildcommand>
+            <buildcommand>org.jamon.project.markerUpdater</buildcommand>
+          </buildcommands>
+          <additionalConfig>
+             <file>
+                 <name>.settings/org.jamon.prefs</name>
+                 <content># now
+    eclipse.preferences.version=1
+    templateSourceDir=src/main/jamon
+    templateOutputDir=target/generated-jamon
+    </content>
+            </file>
+          </additionalConfig>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 
@@ -539,7 +580,11 @@
     <commons-lang.version>2.5</commons-lang.version>
     <commons-logging.version>1.1.1</commons-logging.version>
     <commons-math.version>2.1</commons-math.version>
-    <guava.version>r06</guava.version>
+    <guava.version>r09</guava.version>
+    <!--The below was made by patching branch-0.20-append
+    at revision 1034499 with this hdfs-895 patch:
+    https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
+    -->
     <hadoop.version>0.20.104.3-append-SNAPSHOT</hadoop.version>
     <jasper.version>5.5.23</jasper.version>
     <jaxb-api.version>2.1</jaxb-api.version>
@@ -554,8 +599,8 @@
     <protobuf.version>2.3.0</protobuf.version>
     <slf4j.version>1.5.8</slf4j.version><!-- newer version available -->
     <stax-api.version>1.0.1</stax-api.version>
-    <thrift.version>0.5.0</thrift.version><!-- newer version available -->
-    <zookeeper.version>3.3.2</zookeeper.version>
+    <thrift.version>0.6.1</thrift.version>
+    <zookeeper.version>3.3.3</zookeeper.version>
 
     <package.prefix>/usr</package.prefix>	           
     <package.conf.dir>/etc/hbase</package.conf.dir>  
@@ -564,7 +609,6 @@
     <package.release>1</package.release>	       
     <!-- also must update this when we bump version -->
     <package.version>0.91.0</package.version>	       
-    <final.name>${artifactId}-${version}</final.name>
 
     <!-- For flaky tests exclusion -->
     <test.exclude></test.exclude>
@@ -680,7 +724,7 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.hadoop</groupId>
+      <groupId>org.apache.thrift</groupId>
       <artifactId>libthrift</artifactId>
       <version>${thrift.version}</version>
       <exclusions>
@@ -780,6 +824,12 @@
           <artifactId>servlet-api</artifactId>
         </exclusion>
       </exclusions>
+    </dependency>
+
+    <dependency>
+      <groupId>org.jamon</groupId>
+      <artifactId>jamon-runtime</artifactId>
+      <version>2.3.1</version>
     </dependency>
 
     <!-- REST dependencies -->
@@ -919,7 +969,7 @@
                 <phase>package</phase>
                 <configuration>
                   <target>
-                    <property name="artifactId" value="${artifactId}" />
+                    <property name="artifactId" value="${project.artifactId}" />
                     <ant antfile="${basedir}/src/packages/build.xml">
                       <target name="package-deb"/>
                       <target name="package-conf-pseudo-deb"/>

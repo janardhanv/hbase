@@ -139,6 +139,26 @@ public class FSUtils {
   }
 
   /**
+   * Check whether dfs is in safemode. 
+   * @param conf 
+   * @return true if dfs is in safemode.
+   * @throws IOException
+   */
+  public static void checkDfsSafeMode(final Configuration conf) 
+  throws IOException {
+    boolean isInSafeMode = false;
+    FileSystem fs = FileSystem.get(conf);
+    if (fs instanceof DistributedFileSystem) {
+      DistributedFileSystem dfs = (DistributedFileSystem)fs;
+      // Check whether dfs is on safemode.
+      isInSafeMode = dfs.setSafeMode(FSConstants.SafeModeAction.SAFEMODE_GET);
+    }
+    if (isInSafeMode) {
+      throw new IOException("File system is in safemode, it can't be written now");
+    }
+  }
+  
+  /**
    * Verifies current version of file system
    *
    * @param fs filesystem object
@@ -250,26 +270,26 @@ public class FSUtils {
    */
   public static void setVersion(FileSystem fs, Path rootdir, String version,
       int wait) throws IOException {
-    while (true) try {
-      FSDataOutputStream s =
-        fs.create(new Path(rootdir, HConstants.VERSION_FILE_NAME));
-      s.writeUTF(version);
-      s.close();
-      LOG.debug("Created version file at " + rootdir.toString() +
-        " set its version at:" + version);
-      return;
-    } catch (IOException e) {
-      if (wait > 0) {
-        LOG.warn("Unable to create version file at " + rootdir.toString() +
-          ", retrying: " + StringUtils.stringifyException(e));
-        try {
-          Thread.sleep(wait);
-        } catch (InterruptedException ex) {
-          // ignore
+    Path versionFile = new Path(rootdir, HConstants.VERSION_FILE_NAME);
+    while (true) {
+      try {
+        FSDataOutputStream s = fs.create(versionFile);
+        s.writeUTF(version);
+        LOG.debug("Created version file at " + rootdir.toString() +
+            " set its version at:" + version);
+        s.close();
+        return;
+      } catch (IOException e) {
+        if (wait > 0) {
+          LOG.warn("Unable to create version file at " + rootdir.toString() +
+              ", retrying: " + e.getMessage());
+          fs.delete(versionFile, false);
+          try {
+            Thread.sleep(wait);
+          } catch (InterruptedException ex) {
+            // ignore
+          }
         }
-      } else {
-        // rethrow
-        throw e;
       }
     }
   }

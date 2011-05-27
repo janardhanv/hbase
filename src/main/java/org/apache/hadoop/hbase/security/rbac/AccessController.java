@@ -27,6 +27,7 @@ import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.catalog.MetaReader;
@@ -36,11 +37,12 @@ import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.coprocessor.BaseRegionObserverCoprocessor;
+import org.apache.hadoop.hbase.coprocessor.BaseRegionObserver;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorException;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.MasterObserver;
+import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.coprocessor.RegionCoprocessorEnvironment;
 import org.apache.hadoop.hbase.filter.CompareFilter;
 import org.apache.hadoop.hbase.filter.FilterList;
@@ -55,7 +57,7 @@ import org.apache.hadoop.security.UserGroupInformation;
 import java.io.IOException;
 import java.util.*;
 
-public class AccessController extends BaseRegionObserverCoprocessor
+public class AccessController extends BaseRegionObserver
     implements MasterObserver, AccessControllerProtocol {
   public static final Log LOG = LogFactory.getLog(AccessController.class);
 
@@ -302,7 +304,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
     if (env instanceof MasterCoprocessorEnvironment) {
       MasterCoprocessorEnvironment e = (MasterCoprocessorEnvironment)env;
       this.authManager = TableAuthManager.get(
-          e.getMasterServices().getZooKeeperWatcher(),
+          e.getMasterServices().getZooKeeper(),
           e.getConf());
     }
 
@@ -317,146 +319,149 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public void preCreateTable(MasterCoprocessorEnvironment env,
+  public void preCreateTable(ObserverContext<MasterCoprocessorEnvironment> c,
       HTableDescriptor desc, byte[][] splitKeys) throws IOException {
-    requirePermission(Permission.Action.CREATE, env);
+    requirePermission(Permission.Action.CREATE, c.getEnvironment());
   }
   @Override
-  public void postCreateTable(MasterCoprocessorEnvironment env,
+  public void postCreateTable(ObserverContext<MasterCoprocessorEnvironment> c,
       HRegionInfo[] regions, boolean sync) throws IOException {}
 
   @Override
-  public void preDeleteTable(MasterCoprocessorEnvironment env, byte[] tableName)
-      throws IOException {
-    requirePermission(Permission.Action.CREATE, env);
+  public void preDeleteTable(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName) throws IOException {
+    requirePermission(Permission.Action.CREATE, c.getEnvironment());
   }
   @Override
-  public void postDeleteTable(MasterCoprocessorEnvironment env,
+  public void postDeleteTable(ObserverContext<MasterCoprocessorEnvironment> c,
       byte[] tableName) throws IOException {}
 
 
   @Override
-  public void preModifyTable(MasterCoprocessorEnvironment env, byte[] tableName,
-      HTableDescriptor htd) throws IOException {
-    requirePermission(Permission.Action.CREATE, env);
+  public void preModifyTable(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName, HTableDescriptor htd) throws IOException {
+    requirePermission(Permission.Action.CREATE, c.getEnvironment());
   }
   @Override
-  public void postModifyTable(MasterCoprocessorEnvironment env,
+  public void postModifyTable(ObserverContext<MasterCoprocessorEnvironment> c,
       byte[] tableName, HTableDescriptor htd) throws IOException {}
 
 
   @Override
-  public void preAddColumn(MasterCoprocessorEnvironment env, byte[] tableName,
-      HColumnDescriptor column) throws IOException {
-    requirePermission(Permission.Action.CREATE, env);
+  public void preAddColumn(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName, HColumnDescriptor column) throws IOException {
+    requirePermission(Permission.Action.CREATE, c.getEnvironment());
   }
   @Override
-  public void postAddColumn(MasterCoprocessorEnvironment env, byte[] tableName,
-      HColumnDescriptor column) throws IOException {}
+  public void postAddColumn(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName, HColumnDescriptor column) throws IOException {}
 
 
   @Override
-  public void preModifyColumn(MasterCoprocessorEnvironment env,
+  public void preModifyColumn(ObserverContext<MasterCoprocessorEnvironment> c,
       byte[] tableName, HColumnDescriptor descriptor) throws IOException {
-    requirePermission(Permission.Action.CREATE, env);
+    requirePermission(Permission.Action.CREATE, c.getEnvironment());
   }
   @Override
-  public void postModifyColumn(MasterCoprocessorEnvironment env,
+  public void postModifyColumn(ObserverContext<MasterCoprocessorEnvironment> c,
       byte[] tableName, HColumnDescriptor descriptor) throws IOException {}
 
 
   @Override
-  public void preDeleteColumn(MasterCoprocessorEnvironment env,
-      byte[] tableName, byte[] c) throws IOException {
-    requirePermission(Permission.Action.CREATE, env);
+  public void preDeleteColumn(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName, byte[] col) throws IOException {
+    requirePermission(Permission.Action.CREATE, c.getEnvironment());
   }
   @Override
-  public void postDeleteColumn(MasterCoprocessorEnvironment env,
-      byte[] tableName, byte[] c) throws IOException {}
+  public void postDeleteColumn(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName, byte[] col) throws IOException {}
 
 
   @Override
-  public void preEnableTable(MasterCoprocessorEnvironment env, byte[] tableName)
-      throws IOException {
-    // TODO: enable/disable required to alter a table, should ADMIN be required here?
-    requirePermission(Permission.Action.ADMIN, env);
-  }
-  @Override
-  public void postEnableTable(MasterCoprocessorEnvironment env,
-      byte[] tableName) throws IOException {}
-
-  @Override
-  public void preDisableTable(MasterCoprocessorEnvironment env,
+  public void preEnableTable(ObserverContext<MasterCoprocessorEnvironment> c,
       byte[] tableName) throws IOException {
     // TODO: enable/disable required to alter a table, should ADMIN be required here?
-    requirePermission(Permission.Action.ADMIN, env);
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
   @Override
-  public void postDisableTable(MasterCoprocessorEnvironment env,
+  public void postEnableTable(ObserverContext<MasterCoprocessorEnvironment> c,
       byte[] tableName) throws IOException {}
 
   @Override
-  public void preMove(MasterCoprocessorEnvironment env, HRegionInfo region,
-      HServerInfo srcServer, HServerInfo destServer)
-    throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+  public void preDisableTable(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName) throws IOException {
+    // TODO: enable/disable required to alter a table, should ADMIN be required here?
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
   @Override
-  public void postMove(MasterCoprocessorEnvironment env, HRegionInfo region,
-      HServerInfo srcServer, HServerInfo destServer)
+  public void postDisableTable(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] tableName) throws IOException {}
+
+  @Override
+  public void preMove(ObserverContext<MasterCoprocessorEnvironment> c,
+      HRegionInfo region, ServerName srcServer, ServerName destServer)
+    throws IOException {
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
+  }
+  @Override
+  public void postMove(ObserverContext<MasterCoprocessorEnvironment> c,
+      HRegionInfo region, ServerName srcServer, ServerName destServer)
     throws UnknownRegionException {}
 
   @Override
-  public void preAssign(MasterCoprocessorEnvironment env, byte[] regionName,
-      boolean force) throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+  public void preAssign(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] regionName, boolean force) throws IOException {
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
   @Override
-  public void postAssign(MasterCoprocessorEnvironment env,
+  public void postAssign(ObserverContext<MasterCoprocessorEnvironment> c,
       HRegionInfo regionInfo) throws IOException {}
 
   @Override
-  public void preUnassign(MasterCoprocessorEnvironment env, byte[] regionName,
-      boolean force) throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+  public void preUnassign(ObserverContext<MasterCoprocessorEnvironment> c,
+      byte[] regionName, boolean force) throws IOException {
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
   @Override
-  public void postUnassign(MasterCoprocessorEnvironment env,
+  public void postUnassign(ObserverContext<MasterCoprocessorEnvironment> c,
       HRegionInfo regionInfo, boolean force) throws IOException {}
 
   @Override
-  public void preBalance(MasterCoprocessorEnvironment env) throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+  public void preBalance(ObserverContext<MasterCoprocessorEnvironment> c)
+      throws IOException {
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
   @Override
-  public void postBalance(MasterCoprocessorEnvironment env)
+  public void postBalance(ObserverContext<MasterCoprocessorEnvironment> c)
       throws IOException {}
 
   @Override
-  public boolean preBalanceSwitch(MasterCoprocessorEnvironment env,
+  public boolean preBalanceSwitch(ObserverContext<MasterCoprocessorEnvironment> c,
       boolean newValue) throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
     return newValue;
   }
   @Override
-  public void postBalanceSwitch(MasterCoprocessorEnvironment env,
+  public void postBalanceSwitch(ObserverContext<MasterCoprocessorEnvironment> c,
       boolean oldValue, boolean newValue) throws IOException {}
 
   @Override
-  public void preShutdown(MasterCoprocessorEnvironment env) throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+  public void preShutdown(ObserverContext<MasterCoprocessorEnvironment> c)
+      throws IOException {
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
 
   @Override
-  public void preStopMaster(MasterCoprocessorEnvironment env)
+  public void preStopMaster(ObserverContext<MasterCoprocessorEnvironment> c)
       throws IOException {
-    requirePermission(Permission.Action.ADMIN, env);
+    requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
 
   /* ---- RegionObserver implementation ---- */
 
   @Override
-  public void postOpen(RegionCoprocessorEnvironment e) {
+  public void postOpen(ObserverContext<RegionCoprocessorEnvironment> c) {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     final HRegion region = e.getRegion();
     HRegionInfo regionInfo = null;
     HTableDescriptor tableDesc = null;
@@ -468,7 +473,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
     }
 
     this.authManager = TableAuthManager.get(
-        e.getRegionServerServices().getZooKeeperWatcher(),
+        e.getRegionServerServices().getZooKeeper(),
         e.getRegion().getConf());
 
     if (regionInfo.isRootRegion()) {
@@ -489,24 +494,24 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public void preGetClosestRowBefore(final RegionCoprocessorEnvironment e,
+  public void preGetClosestRowBefore(final ObserverContext<RegionCoprocessorEnvironment> c,
       final byte [] row, final byte [] family, final Result result)
       throws IOException {
-    requirePermission(TablePermission.Action.READ, e,
+    requirePermission(TablePermission.Action.READ, c.getEnvironment(),
         (family != null ? Lists.newArrayList(family) : null));
   }
 
   @Override
-  public void preGet(final RegionCoprocessorEnvironment e, final Get get,
+  public void preGet(final ObserverContext<RegionCoprocessorEnvironment> c, final Get get,
       final List<KeyValue> result) throws IOException {
     /*
      if column family level checks fail, check for a qualifier level permission
      in one of the families.  If it is present, then continue with the AccessControlFilter.
       */
-    if (!permissionGranted(TablePermission.Action.READ, e, get.familySet())) {
-      if (hasFamilyQualifierPermission(TablePermission.Action.READ, e,
+    if (!permissionGranted(TablePermission.Action.READ, c.getEnvironment(), get.familySet())) {
+      if (hasFamilyQualifierPermission(TablePermission.Action.READ, c.getEnvironment(),
           get.familySet())) {
-        byte[] table = getTableName(e);
+        byte[] table = getTableName(c.getEnvironment());
         AccessControlFilter filter = new AccessControlFilter(authManager,
             UserGroupInformation.getCurrentUser(), table);
 
@@ -523,90 +528,92 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public boolean preExists(final RegionCoprocessorEnvironment e, final Get get,
+  public boolean preExists(final ObserverContext<RegionCoprocessorEnvironment> c, final Get get,
       final boolean exists) throws IOException {
-    requirePermission(TablePermission.Action.READ, e, get.familySet());
+    requirePermission(TablePermission.Action.READ, c.getEnvironment(), get.familySet());
     return exists;
   }
 
   @Override
-  public void prePut(final RegionCoprocessorEnvironment e,
+  public void prePut(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
-    requirePermission(TablePermission.Action.WRITE, e, familyMap.keySet());
+    requirePermission(TablePermission.Action.WRITE, c.getEnvironment(), familyMap.keySet());
   }
 
   @Override
-  public void postPut(final RegionCoprocessorEnvironment e,
+  public void postPut(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL) {
     if (isMetaRegion) {
-      updateACL(e, familyMap);
+      updateACL(c.getEnvironment(), familyMap);
     }
   }
 
   @Override
-  public void preDelete(final RegionCoprocessorEnvironment e,
+  public void preDelete(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
-    requirePermission(TablePermission.Action.WRITE, e, familyMap.keySet());
+    requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
+        familyMap.keySet());
   }
 
   @Override
-  public void postDelete(final RegionCoprocessorEnvironment e,
+  public void postDelete(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
     if (isMetaRegion) {
-      updateACL(e, familyMap);
+      updateACL(c.getEnvironment(), familyMap);
     }
   }
 
   @Override
-  public boolean preCheckAndPut(final RegionCoprocessorEnvironment e,
+  public boolean preCheckAndPut(final ObserverContext<RegionCoprocessorEnvironment> c,
       final byte [] row, final byte [] family, final byte [] qualifier,
       final CompareFilter.CompareOp compareOp,
       final WritableByteArrayComparable comparator, final Put put,
       final boolean result) throws IOException {
-    requirePermission(TablePermission.Action.READ, e,
+    requirePermission(TablePermission.Action.READ, c.getEnvironment(),
         Arrays.asList(new byte[][]{family}));
     return result;
   }
 
   @Override
-  public boolean preCheckAndDelete(final RegionCoprocessorEnvironment e,
+  public boolean preCheckAndDelete(final ObserverContext<RegionCoprocessorEnvironment> c,
       final byte [] row, final byte [] family, final byte [] qualifier,
       final CompareFilter.CompareOp compareOp,
       final WritableByteArrayComparable comparator, final Delete delete,
       final boolean result) throws IOException {
-    requirePermission(TablePermission.Action.READ, e,
+    requirePermission(TablePermission.Action.READ, c.getEnvironment(),
         Arrays.asList( new byte[][] {family}));
     return result;
   }
 
   @Override
-  public long preIncrementColumnValue(final RegionCoprocessorEnvironment e,
+  public long preIncrementColumnValue(final ObserverContext<RegionCoprocessorEnvironment> c,
       final byte [] row, final byte [] family, final byte [] qualifier,
       final long amount, final boolean writeToWAL)
       throws IOException {
-    requirePermission(TablePermission.Action.READ, e, 
+    requirePermission(TablePermission.Action.READ, c.getEnvironment(),
         Arrays.asList(new byte[][]{family}));
     return -1;
   }
 
   @Override
-  public void preIncrement(final RegionCoprocessorEnvironment e,
+  public void preIncrement(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Increment increment, final Result result)
       throws IOException {
-    requirePermission(TablePermission.Action.READ, e,
+    requirePermission(TablePermission.Action.READ, c.getEnvironment(),
         increment.getFamilyMap().keySet());
   }
 
   @Override
-  public InternalScanner preScannerOpen(final RegionCoprocessorEnvironment e,
+  public InternalScanner preScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Scan scan, final InternalScanner s) throws IOException {
     /*
      if column family level checks fail, check for a qualifier level permission
      in one of the families.  If it is present, then continue with the AccessControlFilter.
       */
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     UserGroupInformation user = RequestContext.getRequestUser();
     List<byte[]> families = Arrays.asList(scan.getFamilies());
     if (!permissionGranted(TablePermission.Action.READ, e, families)) {
@@ -634,7 +641,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public InternalScanner postScannerOpen(final RegionCoprocessorEnvironment e,
+  public InternalScanner postScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Scan scan, final InternalScanner s) throws IOException {
     UserGroupInformation user = RequestContext.getRequestUser();
     if (user != null && user.getShortUserName() != null) {
@@ -645,7 +652,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public boolean preScannerNext(final RegionCoprocessorEnvironment e,
+  public boolean preScannerNext(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s, final List<Result> result,
       final int limit, final boolean hasNext) throws IOException {
     // verify that requesting user matches the user who created the scanner
@@ -662,7 +669,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public void preScannerClose(final RegionCoprocessorEnvironment e,
+  public void preScannerClose(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s) throws IOException {
     // Verify, when called through RPC, that the caller is the scanner owner
     if (RequestContext.isInRequestContext()) {
@@ -675,7 +682,7 @@ public class AccessController extends BaseRegionObserverCoprocessor
   }
 
   @Override
-  public void postScannerClose(final RegionCoprocessorEnvironment e,
+  public void postScannerClose(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s) throws IOException {
     // clean up any associated owner mapping
     scannerOwners.remove(s);

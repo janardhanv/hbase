@@ -33,6 +33,7 @@ import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.MiniHBaseCluster;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.client.Delete;
@@ -43,6 +44,7 @@ import org.apache.hadoop.hbase.executor.RegionTransitionData;
 import org.apache.hadoop.hbase.master.handler.SplitRegionHandler;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.JVMClusterUtil.RegionServerThread;
+import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hbase.zookeeper.ZKAssign;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.KeeperException.NodeExistsException;
@@ -150,7 +152,7 @@ public class TestSplitTransactionOnCluster {
   }
 
   /**
-   * Test that intentionally has master fail the processing of the split message.
+   * A test that intentionally has master fail the processing of the split message.
    * Tests that the regionserver split ephemeral node gets cleaned up if it
    * crashes and that after we process server shutdown, the daughters are up on
    * line.
@@ -200,7 +202,9 @@ public class TestSplitTransactionOnCluster {
       RegionTransitionData rtd =
         ZKAssign.getData(t.getConnection().getZooKeeperWatcher(),
           hri.getEncodedName());
-      assertTrue(rtd.getEventType().equals(EventType.RS_ZK_REGION_SPLIT));
+      // State could be SPLIT or SPLITTING.
+      assertTrue(rtd.getEventType().equals(EventType.RS_ZK_REGION_SPLIT) ||
+        rtd.getEventType().equals(EventType.RS_ZK_REGION_SPLITTING));
       // Now crash the server
       cluster.abortRegionServer(tableRegionIndex);
       while(server.getOnlineRegions().size() > 0) {
@@ -256,7 +260,7 @@ public class TestSplitTransactionOnCluster {
       // Insert into zk a blocking znode, a znode of same name as region
       // so it gets in way of our splitting.
       ZKAssign.createNodeClosing(t.getConnection().getZooKeeperWatcher(),
-        hri, "anyOldServer");
+        hri, new ServerName("any.old.server", 1234, -1));
       // Now try splitting.... should fail.  And each should successfully
       // rollback.
       this.admin.split(hri.getRegionNameAsString());
@@ -379,7 +383,21 @@ public class TestSplitTransactionOnCluster {
       assertTrue(daughters.size() >= 2);
       // Now split one of the daughters.
       regionCount = server.getOnlineRegions().size();
-      split(daughters.get(0).getRegionInfo(), server, regionCount);
+      HRegionInfo daughter = daughters.get(0).getRegionInfo();
+      // Compact first to ensure we have cleaned up references -- else the split
+      // will fail.
+      this.admin.compact(daughter.getRegionName());
+      daughters = cluster.getRegions(tableName);
+      HRegion daughterRegion = null;
+      for (HRegion r: daughters) {
+        if (r.getRegionInfo().equals(daughter)) daughterRegion = r;
+      }
+      assertTrue(daughterRegion != null);
+      while (true) {
+        if (!daughterRegion.hasReferences()) break;
+        Threads.sleep(100);
+      }
+      split(daughter, server, regionCount);
       // Get list of daughters
       daughters = cluster.getRegions(tableName);
       // Now crash the server
@@ -453,7 +471,7 @@ public class TestSplitTransactionOnCluster {
       HRegionServer hrs = getOtherRegionServer(cluster, metaRegionServer);
       LOG.info("Moving " + hri.getRegionNameAsString() + " to " +
         hrs.getServerName() + "; metaServerIndex=" + metaServerIndex);
-      admin.move(hri.getEncodedNameAsBytes(), Bytes.toBytes(hrs.getServerName()));
+      admin.move(hri.getEncodedNameAsBytes(), hrs.getServerName().getBytes());
     }
     // Wait till table region is up on the server that is NOT carrying .META..
     while (true) {

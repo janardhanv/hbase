@@ -117,8 +117,8 @@ public interface HTableInterface {
    * @return The data coming from the specified rows, if it exists.  If the row
    *         specified doesn't exist, the {@link Result} instance returned won't
    *         contain any {@link KeyValue}, as indicated by {@link Result#isEmpty()}.
-   *         A null in the return array means that the get operation for that
-   *         Get failed, even after retries.
+   *         If there are any failures even after retries, there will be a null in
+   *         the results array for those Gets, AND an exception will be thrown.
    * @throws IOException if a remote or network exception occurs.
    *
    * @since 0.90.0
@@ -185,13 +185,10 @@ public interface HTableInterface {
    * <p>
    * If {@link #isAutoFlush isAutoFlush} is false, the update is buffered
    * until the internal buffer is full.
-   * @param puts The list of mutations to apply.  The list gets modified by this
-   * method (in particular it gets re-ordered, so the order in which the elements
-   * are inserted in the list gives no guarantee as to the order in which the
-   * {@link Put}s are executed).
-   * @throws IOException if a remote or network exception occurs. In that case
-   * the {@code puts} argument will contain the {@link Put} instances that
-   * have not be successfully applied.
+   * @param puts The list of mutations to apply. The batch put is done by
+   * aggregating the iteration of the Puts over the write buffer
+   * at the client-side for a single RPC call.
+   * @throws IOException if a remote or network exception occurs.
    * @since 0.20.0
    */
   void put(List<Put> puts) throws IOException;

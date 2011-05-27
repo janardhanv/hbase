@@ -39,6 +39,7 @@ import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.NotAllMetaRegionsOnlineException;
 import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.executor.ExecutorService;
@@ -84,31 +85,28 @@ public class TestCatalogJanitor {
     }
 
     @Override
-    public String getServerName() {
-      // TODO Auto-generated method stub
-      return null;
+    public ServerName getServerName() {
+      return new ServerName("mockserver.example.org", 1234, -1L);
     }
 
     @Override
     public ZooKeeperWatcher getZooKeeper() {
-      // TODO Auto-generated method stub
       return null;
     }
 
     @Override
     public void abort(String why, Throwable e) {
-      // TODO Auto-generated method stub
+      //no-op
     }
 
     @Override
     public boolean isStopped() {
-      // TODO Auto-generated method stub
       return false;
     }
 
     @Override
     public void stop(String why) {
-      // TODO Auto-generated method stub
+      //no-op
     }
     
   }
@@ -125,18 +123,16 @@ public class TestCatalogJanitor {
 
     @Override
     public void checkTableModifiable(byte[] tableName) throws IOException {
-      // TODO Auto-generated method stub
+      //no-op
     }
 
     @Override
     public AssignmentManager getAssignmentManager() {
-      // TODO Auto-generated method stub
       return null;
     }
 
     @Override
     public ExecutorService getExecutorService() {
-      // TODO Auto-generated method stub
       return null;
     }
 
@@ -147,18 +143,42 @@ public class TestCatalogJanitor {
 
     @Override
     public ServerManager getServerManager() {
-      // TODO Auto-generated method stub
       return null;
     }
 
     @Override
-    public ZooKeeperWatcher getZooKeeperWatcher() {
+    public ZooKeeperWatcher getZooKeeper() {
       return null;
     }
 
     @Override
     public CatalogTracker getCatalogTracker() {
       return null;
+    }
+
+    @Override
+    public Configuration getConfiguration() {
+      return null;
+    }
+
+    @Override
+    public ServerName getServerName() {
+      return null;
+    }
+
+    @Override
+    public void abort(String why, Throwable e) {
+      //no-op
+    }
+
+    @Override
+    public void stop(String why) {
+      //no-op
+    }
+
+    @Override
+    public boolean isStopped() {
+      return false;
     }
   }
 

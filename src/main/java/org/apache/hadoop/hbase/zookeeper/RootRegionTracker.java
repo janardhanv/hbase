@@ -20,9 +20,9 @@
 package org.apache.hadoop.hbase.zookeeper;
 
 import org.apache.hadoop.hbase.Abortable;
-import org.apache.hadoop.hbase.HServerAddress;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.catalog.RootLocationEditor;
-import org.apache.hadoop.hbase.regionserver.RegionServerServices;
+import org.apache.hadoop.hbase.util.Addressing;
 import org.apache.hadoop.hbase.util.Bytes;
 
 /**
@@ -54,31 +54,45 @@ public class RootRegionTracker extends ZooKeeperNodeTracker {
 
   /**
    * Gets the root region location, if available.  Null if not.  Does not block.
-   * @return server address for server hosting root region, null if none available
+   * @return server name
    * @throws InterruptedException 
    */
-  public HServerAddress getRootRegionLocation() throws InterruptedException {
-    return dataToHServerAddress(super.getData());
+  public ServerName getRootRegionLocation() throws InterruptedException {
+    return dataToServerName(super.getData());
   }
 
   /**
    * Gets the root region location, if available, and waits for up to the
    * specified timeout if not immediately available.
    * @param timeout maximum time to wait, in millis
-   * @return server address for server hosting root region, null if timed out
+   * @return server name for server hosting root region formatted as per
+   * {@link ServerName}, or null if none available
    * @throws InterruptedException if interrupted while waiting
    */
-  public HServerAddress waitRootRegionLocation(long timeout)
+  public ServerName waitRootRegionLocation(long timeout)
   throws InterruptedException {
-    return dataToHServerAddress(super.blockUntilAvailable(timeout));
+    return dataToServerName(super.blockUntilAvailable(timeout));
   }
 
   /*
    * @param data
    * @return Returns null if <code>data</code> is null else converts passed data
-   * to an HServerAddress instance.
+   * to a ServerName instance.
    */
-  private static HServerAddress dataToHServerAddress(final byte [] data) {
-    return data == null ? null: new HServerAddress(Bytes.toString(data));
+  private static ServerName dataToServerName(final byte [] data) {
+    // The str returned could be old style -- pre hbase-1502 -- which was
+    // hostname and port seperated by a colon rather than hostname, port and
+    // startcode delimited by a ','.
+    if (data == null || data.length <= 0) return null;
+    String str = Bytes.toString(data);
+    int index = str.indexOf(ServerName.SERVERNAME_SEPARATOR);
+    if (index != -1) {
+      // Presume its ServerName.toString() format.
+      return new ServerName(str);
+    }
+    // Presume it a hostname:port format.
+    String hostname = Addressing.parseHostname(str);
+    int port = Addressing.parsePort(str);
+    return new ServerName(hostname, port, -1L);
   }
 }

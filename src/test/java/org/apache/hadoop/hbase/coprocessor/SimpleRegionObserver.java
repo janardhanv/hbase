@@ -34,6 +34,7 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -42,7 +43,7 @@ import org.apache.hadoop.hbase.util.Bytes;
  * A sample region observer that tests the RegionObserver interface.
  * It works with TestRegionObserverInterface to provide the test case.
  */
-public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
+public class SimpleRegionObserver extends BaseRegionObserver {
   static final Log LOG = LogFactory.getLog(TestRegionObserverInterface.class);
 
   boolean beforeDelete = true;
@@ -73,14 +74,16 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   boolean hadPostScannerNext = false;
   boolean hadPreScannerClose = false;
   boolean hadPostScannerClose = false;
+  boolean hadPreScannerOpen = false;
+  boolean hadPostScannerOpen = false;
 
   @Override
-  public void preOpen(RegionCoprocessorEnvironment e) {
+  public void preOpen(ObserverContext<RegionCoprocessorEnvironment> c) {
     hadPreOpen = true;
   }
 
   @Override
-  public void postOpen(RegionCoprocessorEnvironment e) {
+  public void postOpen(ObserverContext<RegionCoprocessorEnvironment> c) {
     hadPostOpen = true;
   }
 
@@ -89,12 +92,12 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preClose(RegionCoprocessorEnvironment e, boolean abortRequested) {
+  public void preClose(ObserverContext<RegionCoprocessorEnvironment> c, boolean abortRequested) {
     hadPreClose = true;
   }
 
   @Override
-  public void postClose(RegionCoprocessorEnvironment e, boolean abortRequested) {
+  public void postClose(ObserverContext<RegionCoprocessorEnvironment> c, boolean abortRequested) {
     hadPostClose = true;
   }
 
@@ -103,12 +106,12 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preFlush(RegionCoprocessorEnvironment e) {
+  public void preFlush(ObserverContext<RegionCoprocessorEnvironment> c) {
     hadPreFlush = true;
   }
 
   @Override
-  public void postFlush(RegionCoprocessorEnvironment e) {
+  public void postFlush(ObserverContext<RegionCoprocessorEnvironment> c) {
     hadPostFlush = true;
   }
 
@@ -117,12 +120,12 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preSplit(RegionCoprocessorEnvironment e) {
+  public void preSplit(ObserverContext<RegionCoprocessorEnvironment> c) {
     hadPreSplit = true;
   }
 
   @Override
-  public void postSplit(RegionCoprocessorEnvironment e, HRegion l, HRegion r) {
+  public void postSplit(ObserverContext<RegionCoprocessorEnvironment> c, HRegion l, HRegion r) {
     hadPostSplit = true;
   }
 
@@ -131,18 +134,33 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preCompact(RegionCoprocessorEnvironment e, boolean willSplit) {
+  public void preCompact(ObserverContext<RegionCoprocessorEnvironment> c, boolean willSplit) {
     hadPreCompact = true;
   }
 
   @Override
-  public void postCompact(RegionCoprocessorEnvironment e, boolean willSplit) {
+  public void postCompact(ObserverContext<RegionCoprocessorEnvironment> c, boolean willSplit) {
     hadPostCompact = true;
   }
 
+  @Override
+  public InternalScanner preScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c,
+      final Scan scan,
+      final InternalScanner s) throws IOException {
+    hadPreScannerOpen = true;
+    return null;
+  }
 
   @Override
-  public boolean preScannerNext(final RegionCoprocessorEnvironment e,
+  public InternalScanner postScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c,
+      final Scan scan, final InternalScanner s)
+      throws IOException {
+    hadPostScannerOpen = true;
+    return s;
+  }
+
+  @Override
+  public boolean preScannerNext(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s, final List<Result> results,
       final int limit, final boolean hasMore) throws IOException {
     hadPreScannerNext = true;
@@ -150,7 +168,7 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public boolean postScannerNext(final RegionCoprocessorEnvironment e,
+  public boolean postScannerNext(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s, final List<Result> results, final int limit,
       final boolean hasMore) throws IOException {
     hadPostScannerNext = true;
@@ -158,13 +176,13 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preScannerClose(final RegionCoprocessorEnvironment e,
+  public void preScannerClose(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s) throws IOException {
     hadPreScannerClose = true;
   }
 
   @Override
-  public void postScannerClose(final RegionCoprocessorEnvironment e,
+  public void postScannerClose(final ObserverContext<RegionCoprocessorEnvironment> c,
       final InternalScanner s) throws IOException {
     hadPostScannerClose = true;
   }
@@ -174,8 +192,9 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preGet(final RegionCoprocessorEnvironment e, final Get get,
+  public void preGet(final ObserverContext<RegionCoprocessorEnvironment> c, final Get get,
       final List<KeyValue> results) throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(get);
@@ -184,8 +203,9 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void postGet(final RegionCoprocessorEnvironment e, final Get get,
+  public void postGet(final ObserverContext<RegionCoprocessorEnvironment> c, final Get get,
       final List<KeyValue> results) {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(get);
@@ -214,8 +234,9 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void prePut(final RegionCoprocessorEnvironment e, final Map<byte[],
+  public void prePut(final ObserverContext<RegionCoprocessorEnvironment> c, final Map<byte[],
       List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(familyMap);
@@ -241,8 +262,9 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void postPut(final RegionCoprocessorEnvironment e, final Map<byte[],
+  public void postPut(final ObserverContext<RegionCoprocessorEnvironment> c, final Map<byte[],
       List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(familyMap);
@@ -268,8 +290,9 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preDelete(final RegionCoprocessorEnvironment e, final Map<byte[],
+  public void preDelete(final ObserverContext<RegionCoprocessorEnvironment> c, final Map<byte[],
       List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(familyMap);
@@ -279,8 +302,9 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void postDelete(final RegionCoprocessorEnvironment e, final Map<byte[],
+  public void postDelete(final ObserverContext<RegionCoprocessorEnvironment> c, final Map<byte[],
       List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(familyMap);
@@ -289,9 +313,10 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preGetClosestRowBefore(final RegionCoprocessorEnvironment e,
+  public void preGetClosestRowBefore(final ObserverContext<RegionCoprocessorEnvironment> c,
       final byte[] row, final byte[] family, final Result result)
       throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(row);
@@ -302,9 +327,10 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void postGetClosestRowBefore(final RegionCoprocessorEnvironment e,
+  public void postGetClosestRowBefore(final ObserverContext<RegionCoprocessorEnvironment> c,
       final byte[] row, final byte[] family, final Result result)
       throws IOException {
+    RegionCoprocessorEnvironment e = c.getEnvironment();
     assertNotNull(e);
     assertNotNull(e.getRegion());
     assertNotNull(row);
@@ -313,13 +339,13 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
 
   @Override
-  public void preIncrement(final RegionCoprocessorEnvironment e,
+  public void preIncrement(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Increment increment, final Result result) throws IOException {
     hadPreIncrement = true;
   }
 
   @Override
-  public void postIncrement(final RegionCoprocessorEnvironment e,
+  public void postIncrement(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Increment increment, final Result result) throws IOException {
     hadPostIncrement = true;
   }
@@ -363,5 +389,11 @@ public class SimpleRegionObserver extends BaseRegionObserverCoprocessor {
   }
   public boolean wasScannerCloseCalled() {
     return hadPreScannerClose && hadPostScannerClose;
+  }
+  public boolean wasScannerOpenCalled() {
+    return hadPreScannerOpen && hadPostScannerOpen;
+  }
+  public boolean hadDeleted() {
+    return hadPreDeleted && hadPostDeleted;
   }
 }

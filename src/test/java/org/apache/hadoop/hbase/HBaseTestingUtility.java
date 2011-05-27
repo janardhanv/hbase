@@ -89,6 +89,7 @@ public class HBaseTestingUtility {
    */
   private boolean passedZkCluster = false;
   private MiniDFSCluster dfsCluster = null;
+
   private MiniHBaseCluster hbaseCluster = null;
   private MiniMRCluster mrCluster = null;
   // If non-null, then already a cluster running.
@@ -111,6 +112,10 @@ public class HBaseTestingUtility {
 
   public HBaseTestingUtility(Configuration conf) {
     this.conf = conf;
+  }
+
+  public MiniHBaseCluster getHbaseCluster() {
+    return hbaseCluster;
   }
 
   /**
@@ -532,6 +537,33 @@ public class HBaseTestingUtility {
     HTableDescriptor desc = new HTableDescriptor(tableName);
     for(byte[] family : families) {
       desc.addFamily(new HColumnDescriptor(family));
+    }
+    getHBaseAdmin().createTable(desc);
+    return new HTable(c, tableName);
+  }
+
+  /**
+   * Create a table.
+   * @param tableName
+   * @param families
+   * @param c Configuration to use
+   * @param numVersions
+   * @return An HTable instance for the created table.
+   * @throws IOException
+   */
+  public HTable createTable(byte[] tableName, byte[][] families,
+      final Configuration c, int numVersions)
+  throws IOException {
+    HTableDescriptor desc = new HTableDescriptor(tableName);
+    for(byte[] family : families) {
+      HColumnDescriptor hcd = new HColumnDescriptor(family, numVersions,
+          HColumnDescriptor.DEFAULT_COMPRESSION,
+          HColumnDescriptor.DEFAULT_IN_MEMORY,
+          HColumnDescriptor.DEFAULT_BLOCKCACHE,
+          HColumnDescriptor.DEFAULT_BLOCKSIZE, HColumnDescriptor.DEFAULT_TTL,
+          HColumnDescriptor.DEFAULT_BLOOMFILTER,
+          HColumnDescriptor.DEFAULT_REPLICATION_SCOPE);
+      desc.addFamily(hcd);
     }
     getHBaseAdmin().createTable(desc);
     return new HTable(c, tableName);

@@ -33,15 +33,14 @@ import org.apache.hadoop.hbase.regionserver.wal.HLogKey;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 
 /**
- * Class for testing WAL coprocessor extension. WAL write monitor is defined
- * in LogObserver while WAL Restore is in RegionObserver.
+ * Class for testing WALObserver coprocessor.
  *
- * It will monitor a WAL writing and Restore, modify passed-in WALEdit, i.e,
- * ignore specified columns when writing, and add a KeyValue. On the other
- * hand, it checks whether the ignored column is still in WAL when Restoreed
+ * It will monitor WAL writing and restoring, and modify passed-in WALEdit, i.e,
+ * ignore specified columns when writing, or add a KeyValue. On the other
+ * side, it checks whether the ignored column is still in WAL when Restoreed
  * at region reconstruct.
  */
-public class SampleRegionWALObserver extends BaseRegionObserverCoprocessor
+public class SampleRegionWALObserver extends BaseRegionObserver
 implements WALObserver {
 
   private static final Log LOG = LogFactory.getLog(SampleRegionWALObserver.class);
@@ -78,14 +77,14 @@ implements WALObserver {
 
 
   @Override
-  public void postWALWrite(CoprocessorEnvironment env, HRegionInfo info,
-      HLogKey logKey, WALEdit logEdit) throws IOException {
+  public void postWALWrite(ObserverContext<WALCoprocessorEnvironment> env,
+      HRegionInfo info, HLogKey logKey, WALEdit logEdit) throws IOException {
     postWALWriteCalled = true;
   }
 
   @Override
-  public boolean preWALWrite(CoprocessorEnvironment env, HRegionInfo info,
-      HLogKey logKey, WALEdit logEdit) throws IOException {
+  public boolean preWALWrite(ObserverContext<WALCoprocessorEnvironment> env,
+      HRegionInfo info, HLogKey logKey, WALEdit logEdit) throws IOException {
     boolean bypass = false;
     // check table name matches or not.
     if (!Arrays.equals(HRegionInfo.getTableName(info.getRegionName()), this.tableName)) {
@@ -125,8 +124,8 @@ implements WALObserver {
    * Restoreed.
    */
   @Override
-  public void preWALRestore(RegionCoprocessorEnvironment env, HRegionInfo info,
-      HLogKey logKey, WALEdit logEdit) throws IOException {
+  public void preWALRestore(ObserverContext<RegionCoprocessorEnvironment> env,
+      HRegionInfo info, HLogKey logKey, WALEdit logEdit) throws IOException {
     preWALRestoreCalled = true;
   }
 
@@ -135,7 +134,7 @@ implements WALObserver {
    * Restoreed.
    */
   @Override
-  public void postWALRestore(RegionCoprocessorEnvironment env,
+  public void postWALRestore(ObserverContext<RegionCoprocessorEnvironment> env,
       HRegionInfo info, HLogKey logKey, WALEdit logEdit) throws IOException {
     postWALRestoreCalled = true;
   }

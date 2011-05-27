@@ -21,7 +21,9 @@ package org.apache.hadoop.hbase.regionserver.handler;
 
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -29,9 +31,9 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
@@ -71,11 +73,11 @@ public class TestOpenRegionHandler {
    */
   static class MockServer implements Server {
     boolean stopped = false;
-    final static String NAME = "MockServer";
+    final static ServerName NAME = new ServerName("MockServer", 123, -1);
     final ZooKeeperWatcher zk;
 
     MockServer() throws ZooKeeperConnectionException, IOException {
-      this.zk =  new ZooKeeperWatcher(HTU.getConfiguration(), NAME, this);
+      this.zk =  new ZooKeeperWatcher(HTU.getConfiguration(), NAME.toString(), this);
     }
 
     @Override
@@ -112,7 +114,7 @@ public class TestOpenRegionHandler {
     }
 
     @Override
-    public String getServerName() {
+    public ServerName getServerName() {
       return NAME;
     }
   }
@@ -123,6 +125,7 @@ public class TestOpenRegionHandler {
   static class MockRegionServerServices implements RegionServerServices {
     final Map<String, HRegion> regions = new HashMap<String, HRegion>();
     boolean stopping = false;
+    Set<byte[]> rit = new HashSet<byte[]>();
 
     @Override
     public boolean removeFromOnlineRegions(String encodedRegionName) {
@@ -153,15 +156,15 @@ public class TestOpenRegionHandler {
     public HLog getWAL() {
       return null;
     }
-    
-    @Override
-    public HServerInfo getServerInfo() {
-      return null;
-    }
-    
+
     @Override
     public HBaseRpcMetrics getRpcMetrics() {
       return null;
+    }
+
+    @Override
+    public Set<byte[]> getRegionsInTransitionInRS() {
+      return rit;
     }
 
     @Override
@@ -185,13 +188,39 @@ public class TestOpenRegionHandler {
     }
 
     @Override
-    public ZooKeeperWatcher getZooKeeperWatcher() {
+    public ZooKeeperWatcher getZooKeeper() {
       return null;
     }
     
     public RegionServerAccounting getRegionServerAccounting() {
       return null;
     }
+
+    @Override
+    public ServerName getServerName() {
+      return null;
+    }
+
+    @Override
+    public Configuration getConfiguration() {
+      return null;
+    }
+
+    @Override
+    public void abort(String why, Throwable e) {
+       //no-op
+    }
+
+    @Override
+    public void stop(String why) {
+      //no-op
+    }
+
+    @Override
+    public boolean isStopped() {
+      return false;
+    }
+
   };
 
   /**

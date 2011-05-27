@@ -25,10 +25,12 @@ import java.util.List;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.NotServingRegionException;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.ZooKeeperConnectionException;
+import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HConnectionManager;
+import org.apache.hadoop.hbase.client.HConnectionManager.HConnectable;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.zookeeper.ZKAssign;
 import org.apache.zookeeper.KeeperException;
@@ -47,13 +49,13 @@ public class HBaseFsckRepair {
    * @throws InterruptedException
    */
   public static void fixDupeAssignment(Configuration conf, HRegionInfo region,
-      List<HServerAddress> servers)
+      List<ServerName> servers)
   throws IOException, KeeperException, InterruptedException {
 
     HRegionInfo actualRegion = new HRegionInfo(region);
 
     // Close region on the servers silently
-    for(HServerAddress server : servers) {
+    for(ServerName server : servers) {
       closeRegionSilentlyAndWait(conf, server, actualRegion);
     }
 
@@ -78,31 +80,55 @@ public class HBaseFsckRepair {
     forceOfflineInZK(conf, actualRegion);
   }
 
-  private static void forceOfflineInZK(Configuration conf, HRegionInfo region)
+  private static void forceOfflineInZK(Configuration conf, final HRegionInfo region)
   throws ZooKeeperConnectionException, KeeperException, IOException {
-    ZKAssign.createOrForceNodeOffline(
-        HConnectionManager.getConnection(conf).getZooKeeperWatcher(),
-        region, HConstants.HBCK_CODE_NAME);
+    HConnectionManager.execute(new HConnectable<Void>(conf) {
+      @Override
+      public Void connect(HConnection connection) throws IOException {
+        try {
+          ZKAssign.createOrForceNodeOffline(
+              connection.getZooKeeperWatcher(),
+              region, HConstants.HBCK_CODE_SERVERNAME);
+        } catch (KeeperException ke) {
+          throw new IOException(ke);
+        }
+        return null;
+      }
+    });
   }
 
   private static void closeRegionSilentlyAndWait(Configuration conf,
-      HServerAddress server, HRegionInfo region)
-  throws IOException, InterruptedException {
-    HRegionInterface rs =
-      HConnectionManager.getConnection(conf).getHRegionConnection(server);
-    rs.closeRegion(region, false);
-    long timeout = conf.getLong("hbase.hbck.close.timeout", 120000);
-    long expiration = timeout + System.currentTimeMillis();
-    while (System.currentTimeMillis() < expiration) {
-      try {
-        HRegionInfo rsRegion = rs.getRegionInfo(region.getRegionName());
-        if (rsRegion == null) throw new NotServingRegionException();
-      } catch (Exception e) {
-        return;
+      ServerName server, HRegionInfo region) throws IOException,
+      InterruptedException {
+    HConnection connection = HConnectionManager.getConnection(conf);
+    boolean success = false;
+    try {
+      HRegionInterface rs =
+        connection.getHRegionConnection(server.getHostname(), server.getPort());
+      rs.closeRegion(region, false);
+      long timeout = conf.getLong("hbase.hbck.close.timeout", 120000);
+      long expiration = timeout + System.currentTimeMillis();
+      while (System.currentTimeMillis() < expiration) {
+        try {
+          HRegionInfo rsRegion = rs.getRegionInfo(region.getRegionName());
+          if (rsRegion == null)
+            throw new NotServingRegionException();
+        } catch (Exception e) {
+          success = true;
+          return;
+        }
+        Thread.sleep(1000);
       }
-      Thread.sleep(1000);
+      throw new IOException("Region " + region + " failed to close within"
+          + " timeout " + timeout);
+    } finally {
+      try {
+        connection.close();
+      } catch (IOException ioe) {
+        if (success) {
+          throw ioe;
+        }
+      }
     }
-    throw new IOException("Region " + region + " failed to close within" +
-        " timeout " + timeout);
   }
 }

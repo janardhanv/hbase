@@ -632,9 +632,15 @@ public class SecureClient extends HBaseClient {
         Call call = calls.get(id);
 
         int state = in.readInt();     // read call status
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("call #"+id+" state is " + state);
+        }
         if (state == Status.SUCCESS.state) {
           Writable value = ReflectionUtils.newInstance(valueClass, conf);
           value.readFields(in);                 // read value
+          if (LOG.isDebugEnabled()) {
+            LOG.debug("call #"+id+", response is:\n"+value.toString());
+          }
           call.setValue(value);
           calls.remove(id);
         } else if (state == Status.ERROR.state) {

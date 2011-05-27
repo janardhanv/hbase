@@ -50,6 +50,7 @@ import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -57,6 +58,7 @@ import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManagerTestHelper;
 import org.apache.hadoop.hbase.util.IncrementingEnvironmentEdge;
 import org.apache.hadoop.hbase.util.ManualEnvironmentEdge;
+import org.mockito.Mockito;
 
 import com.google.common.base.Joiner;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -155,7 +157,7 @@ public class TestStore extends TestCase {
     assertEquals(lowestTimeStampFromStore,lowestTimeStampFromFS);
     
     // after compact; check the lowest time stamp
-    store.compact();
+    store.compact(store.requestCompaction());
     lowestTimeStampFromStore = Store.getLowestTimestamp(store.getStorefiles());
     lowestTimeStampFromFS = getLowestTimeStampFromFS(fs,store.getStorefiles());
     assertEquals(lowestTimeStampFromStore,lowestTimeStampFromFS); 
@@ -601,7 +603,7 @@ public class TestStore extends TestCase {
   private static void flushStore(Store store, long id) throws IOException {
     StoreFlusher storeFlusher = store.getStoreFlusher(id);
     storeFlusher.prepare();
-    storeFlusher.flushCache();
+    storeFlusher.flushCache(Mockito.mock(MonitoredTask.class));
     storeFlusher.commit();
   }
 
@@ -687,7 +689,9 @@ public class TestStore extends TestCase {
    */
   public void testSplitWithEmptyColFam() throws IOException {
     init(this.getName());
-    assertNull(store.checkSplit(false));
-    assertNull(store.checkSplit(true));
+    assertNull(store.checkSplit());
+    store.getHRegion().forceSplit(null);
+    assertNull(store.checkSplit());
+    store.getHRegion().clearSplit_TESTS_ONLY();
   }
 }

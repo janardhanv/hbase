@@ -1,5 +1,5 @@
 /*
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -61,8 +61,8 @@ import static org.junit.Assert.*;
  * Tests invocation of the {@link org.apache.hadoop.hbase.coprocessor.MasterObserver}
  * interface hooks at all appropriate times during normal HMaster operations.
  */
-public class TestWALCoprocessors {
-  private static final Log LOG = LogFactory.getLog(TestWALCoprocessors.class);
+public class TestWALObserver {
+  private static final Log LOG = LogFactory.getLog(TestWALObserver.class);
   private final static HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
 
   private static byte[] TEST_TABLE = Bytes.toBytes("observedTable");
@@ -97,7 +97,6 @@ public class TestWALCoprocessors {
         SampleRegionWALObserver.class.getName());
     conf.setBoolean("dfs.support.append", true);
     conf.setInt("dfs.client.block.recovery.retries", 2);
-    conf.setInt("hbase.regionserver.flushlogentries", 1);
 
     TEST_UTIL.startMiniCluster(1);
     TEST_UTIL.setNameNodeNameSystemLeasePeriod(100, 10000);
@@ -118,7 +117,7 @@ public class TestWALCoprocessors {
     //this.cluster = TEST_UTIL.getDFSCluster();
     this.fs = TEST_UTIL.getDFSCluster().getFileSystem();
     this.hbaseRootDir = new Path(conf.get(HConstants.HBASE_DIR));
-    this.dir = new Path(this.hbaseRootDir, TestWALCoprocessors.class.getName());
+    this.dir = new Path(this.hbaseRootDir, TestWALObserver.class.getName());
     this.oldLogDir = new Path(this.hbaseRootDir, HConstants.HREGION_OLDLOGDIR_NAME);
     this.logDir = new Path(this.hbaseRootDir, HConstants.HREGION_LOGDIR_NAME);
 
@@ -138,7 +137,7 @@ public class TestWALCoprocessors {
    * WALEdit.
    */
   @Test
-  public void testWWALCoprocessorWriteToWAL() throws Exception {
+  public void testWALObserverWriteToWAL() throws Exception {
     HRegionInfo hri = createBasic3FamilyHRegionInfo(Bytes.toString(TEST_TABLE));
     Path basedir = new Path(this.hbaseRootDir, Bytes.toString(TEST_TABLE));
     deleteDir(basedir);
@@ -222,7 +221,7 @@ public class TestWALCoprocessors {
    * Test WAL replay behavior with WALObserver.
    */
   @Test
-  public void testWALCoprocessorReplay() throws Exception {
+  public void testWALObserverReplay() throws Exception {
     // WAL replay is handled at HRegion::replayRecoveredEdits(), which is
     // ultimately called by HRegion::initialize()
     byte[] tableName = Bytes.toBytes("testWALCoprocessorReplay");
@@ -279,7 +278,7 @@ public class TestWALCoprocessors {
    * CP will impact existing HLog tests or not.
    */
   @Test
-  public void testWALCoprocessorLoaded() throws Exception {
+  public void testWALObserverLoaded() throws Exception {
     HLog log = new HLog(fs, dir, oldLogDir, conf);
     assertNotNull(getCoprocessor(log));
   }

@@ -23,13 +23,9 @@ package org.apache.hadoop.hbase.regionserver.wal;
 
 import java.io.IOException;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.coprocessor.*;
 import org.apache.hadoop.hbase.coprocessor.Coprocessor.Priority;
-import org.apache.hadoop.hbase.regionserver.RegionServerServices;
 import org.apache.hadoop.conf.Configuration;
 
 /**
@@ -39,8 +35,6 @@ import org.apache.hadoop.conf.Configuration;
 public class WALCoprocessorHost
     extends CoprocessorHost<WALCoprocessorHost.WALEnvironment> {
   
-  private static final Log LOG = LogFactory.getLog(WALCoprocessorHost.class);
-
   /**
    * Encapsulation of the environment of each coprocessor
    */
@@ -58,10 +52,13 @@ public class WALCoprocessorHost
      * Constructor
      * @param impl the coprocessor instance
      * @param priority chaining priority
+     * @param seq load sequence
+     * @param hlog HLog
      */
     public WALEnvironment(Class<?> implClass, final Coprocessor impl,
-        Coprocessor.Priority priority, final Configuration conf, final HLog hlog) {
-      super(impl, priority, conf);
+        final Coprocessor.Priority priority, final int seq,
+        final Configuration conf, final HLog hlog) {
+      super(impl, priority, seq, conf);
       this.wal = hlog;
     }
   }
@@ -70,8 +67,7 @@ public class WALCoprocessorHost
 
   /**
    * Constructor
-   * @param region the region
-   * @param rsServices interface to available region server functionality
+   * @param log the write ahead log
    * @param conf the configuration
    */
   public WALCoprocessorHost(final HLog log, final Configuration conf) {
@@ -83,9 +79,9 @@ public class WALCoprocessorHost
 
   @Override
   public WALEnvironment createEnvironment(Class<?> implClass,
-      Coprocessor instance, Priority priority) {
-    // TODO Auto-generated method stub
-    return new WALEnvironment(implClass, instance, priority, this.conf, this.wal);
+      Coprocessor instance, Priority priority, int seq) {
+    return new WALEnvironment(implClass, instance, priority, seq, this.conf,
+        this.wal);
   }
 
   /**
@@ -97,24 +93,21 @@ public class WALCoprocessorHost
    */
   public boolean preWALWrite(HRegionInfo info, HLogKey logKey, WALEdit logEdit)
       throws IOException {
-    try {
-      boolean bypass = false;
-      coprocessorLock.readLock().lock();
-      for (WALEnvironment env: coprocessors) {
-        if (env.getInstance() instanceof 
-            org.apache.hadoop.hbase.coprocessor.WALObserver) {
-          ((org.apache.hadoop.hbase.coprocessor.WALObserver)env.getInstance()).
-              preWALWrite(env, info, logKey, logEdit);
-          bypass |= env.shouldBypass();
-          if (env.shouldComplete()) {
-            break;
-          }
+    boolean bypass = false;
+    ObserverContext<WALCoprocessorEnvironment> ctx = null;
+    for (WALEnvironment env: coprocessors) {
+      if (env.getInstance() instanceof
+          org.apache.hadoop.hbase.coprocessor.WALObserver) {
+        ctx = ObserverContext.createAndPrepare(env, ctx);
+        ((org.apache.hadoop.hbase.coprocessor.WALObserver)env.getInstance()).
+            preWALWrite(ctx, info, logKey, logEdit);
+        bypass |= ctx.shouldBypass();
+        if (ctx.shouldComplete()) {
+          break;
         }
       }
-      return bypass;
-    } finally {
-      coprocessorLock.readLock().unlock();
     }
+    return bypass;
   }
 
   /**
@@ -125,20 +118,17 @@ public class WALCoprocessorHost
    */
   public void postWALWrite(HRegionInfo info, HLogKey logKey, WALEdit logEdit)
       throws IOException {
-    try {
-      coprocessorLock.readLock().lock();
-      for (WALEnvironment env: coprocessors) {
-        if (env.getInstance() instanceof 
-            org.apache.hadoop.hbase.coprocessor.WALObserver) {
-          ((org.apache.hadoop.hbase.coprocessor.WALObserver)env.getInstance()).
-              postWALWrite(env, info, logKey, logEdit);
-          if (env.shouldComplete()) {
-            break;
-          }
+    ObserverContext<WALCoprocessorEnvironment> ctx = null;
+    for (WALEnvironment env: coprocessors) {
+      if (env.getInstance() instanceof
+          org.apache.hadoop.hbase.coprocessor.WALObserver) {
+        ctx = ObserverContext.createAndPrepare(env, ctx);
+        ((org.apache.hadoop.hbase.coprocessor.WALObserver)env.getInstance()).
+            postWALWrite(ctx, info, logKey, logEdit);
+        if (ctx.shouldComplete()) {
+          break;
         }
       }
-    } finally {
-      coprocessorLock.readLock().unlock();
     }
   }
 }

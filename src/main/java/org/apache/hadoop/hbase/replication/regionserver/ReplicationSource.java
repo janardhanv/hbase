@@ -44,6 +44,7 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.Stoppable;
 import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HConnectionManager;
@@ -54,6 +55,7 @@ import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.replication.ReplicationZookeeper;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Threads;
+import org.apache.hadoop.ipc.RemoteException;
 import org.apache.zookeeper.KeeperException;
 
 /**
@@ -201,7 +203,7 @@ public class ReplicationSource extends Thread
    */
   private void chooseSinks() throws KeeperException {
     this.currentPeers.clear();
-    List<HServerAddress> addresses =
+    List<ServerName> addresses =
         this.zkHelper.getSlavesAddresses(peerClusterId);
     Set<HServerAddress> setOfAddr = new HashSet<HServerAddress>();
     int nbPeers = (int) (Math.ceil(addresses.size() * ratio));
@@ -211,7 +213,8 @@ public class ReplicationSource extends Thread
       HServerAddress address;
       // Make sure we get one address that we don't already have
       do {
-        address = addresses.get(this.random.nextInt(addresses.size()));
+        ServerName sn = addresses.get(this.random.nextInt(addresses.size()));
+        address = new HServerAddress(sn.getHostname(), sn.getPort());
       } while (setOfAddr.contains(address));
       LOG.info("Choosing peer " + address);
       setOfAddr.add(address);
@@ -339,6 +342,13 @@ public class ReplicationSource extends Thread
       sleepMultiplier = 1;
       shipEdits();
 
+    }
+    if (this.conn != null) {
+      try {
+        this.conn.close();
+      } catch (IOException e) {
+        LOG.debug("Attempt to close connection failed", e);
+      }
     }
     LOG.debug("Source exiting " + peerClusterId);
   }
@@ -568,16 +578,20 @@ public class ReplicationSource extends Thread
         break;
 
       } catch (IOException ioe) {
-        LOG.warn("Unable to replicate because ", ioe);
+        // Didn't ship anything, but must still age the last time we did
+        this.metrics.refreshAgeOfLastShippedOp();
+        if (ioe instanceof RemoteException) {
+          ioe = ((RemoteException) ioe).unwrapRemoteException();
+          LOG.warn("Can't replicate because of an error on the remote cluster: ", ioe);
+        } else {
+          LOG.warn("Can't replicate because of a local or network error: ", ioe);
+        }
         try {
           boolean down;
           do {
             down = isSlaveDown();
             if (down) {
-              LOG.debug("The region server we tried to ping didn't answer, " +
-                  "sleeping " + sleepForRetries + " times " + sleepMultiplier);
-              Thread.sleep(this.sleepForRetries * sleepMultiplier);
-              if (sleepMultiplier < maxRetriesMultiplier) {
+              if (sleepForRetries("Since we are unable to replicate", sleepMultiplier)) {
                 sleepMultiplier++;
               } else {
                 chooseSinks();
@@ -673,6 +687,9 @@ public class ReplicationSource extends Thread
           rrs.getHServerInfo();
           latch.countDown();
         } catch (IOException ex) {
+          if (ex instanceof RemoteException) {
+            ex = ((RemoteException) ex).unwrapRemoteException();
+          }
           LOG.info("Slave cluster looks down: " + ex.getMessage());
         }
       }

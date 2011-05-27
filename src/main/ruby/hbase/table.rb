@@ -120,6 +120,11 @@ module Hbase
 
       unless args.empty?
         columns = args[COLUMN] || args[COLUMNS]
+        if args[VERSIONS]
+          vers = args[VERSIONS]
+        else
+          vers = 1
+        end
         if columns
           # Normalize types, convert string to an array of strings
           columns = [ columns ] if columns.is_a?(String)
@@ -140,16 +145,19 @@ module Hbase
           end
 
           # Additional params
-          get.setMaxVersions(args[VERSIONS] || 1)
+          get.setMaxVersions(vers)
           get.setTimeStamp(args[TIMESTAMP]) if args[TIMESTAMP]
+          get.setTimeRange(args[TIMERANGE][0], args[TIMERANGE][1]) if args[TIMERANGE]
         else
           # May have passed TIMESTAMP and row only; wants all columns from ts.
-          unless ts = args[TIMESTAMP]
+          unless ts = args[TIMESTAMP] || tr = args[TIMERANGE]
             raise ArgumentError, "Failed parse of #{args.inspect}, #{args.class}"
           end
 
-          # Set the timestamp
-          get.setTimeStamp(ts.to_i)
+          get.setMaxVersions(vers)
+          # Set the timestamp/timerange
+          get.setTimeStamp(ts.to_i) if args[TIMESTAMP]
+          get.setTimeRange(args[TIMERANGE][0], args[TIMERANGE][1]) if args[TIMERANGE]
         end
       end
 
@@ -213,6 +221,7 @@ module Hbase
         columns = args["COLUMNS"] || args["COLUMN"] || get_all_columns
         cache = args["CACHE_BLOCKS"] || true
         versions = args["VERSIONS"] || 1
+        timerange = args[TIMERANGE]
 
         # Normalize column names
         columns = [columns] if columns.class == String
@@ -231,6 +240,7 @@ module Hbase
         scan.setTimeStamp(timestamp) if timestamp
         scan.setCacheBlocks(cache)
         scan.setMaxVersions(versions) if versions > 1
+        scan.setTimeRange(timerange[0], timerange[1]) if timerange
       else
         scan = org.apache.hadoop.hbase.client.Scan.new
       end

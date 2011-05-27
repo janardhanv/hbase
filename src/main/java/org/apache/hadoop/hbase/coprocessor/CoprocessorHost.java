@@ -31,6 +31,7 @@ import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.client.coprocessor.Batch;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.SortedCopyOnWriteSet;
 import org.apache.hadoop.hbase.util.VersionInfo;
 
 import java.io.File;
@@ -38,7 +39,6 @@ import java.io.IOException;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.*;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * Provides the common setup framework and runtime services for coprocessor
@@ -56,12 +56,12 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
 
   private static final Log LOG = LogFactory.getLog(CoprocessorHost.class);
   /** Ordered set of loaded coprocessors with lock */
-  protected final ReentrantReadWriteLock coprocessorLock = new ReentrantReadWriteLock();
-  protected Set<E> coprocessors =
-    new TreeSet<E>(new EnvironmentPriorityComparator());
+  protected SortedSet<E> coprocessors =
+      new SortedCopyOnWriteSet<E>(new EnvironmentPriorityComparator());
   protected Configuration conf;
   // unique file prefix to use for local copies of jars when classloading
   protected String pathPrefix;
+  protected volatile int loadSequence;
 
   public CoprocessorHost(Configuration conf) {
     this.conf = conf;
@@ -81,6 +81,7 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       return;
     StringTokenizer st = new StringTokenizer(defaultCPClasses, ",");
     int priority = Coprocessor.Priority.SYSTEM.intValue();
+    List<E> configured = new ArrayList<E>();
     while (st.hasMoreTokens()) {
       String className = st.nextToken();
       if (findCoprocessor(className) != null) {
@@ -90,7 +91,7 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       Thread.currentThread().setContextClassLoader(cl);
       try {
         implClass = cl.loadClass(className);
-        load(implClass, Coprocessor.Priority.SYSTEM);
+        configured.add(loadInstance(implClass, Coprocessor.Priority.SYSTEM));
         LOG.info("System coprocessor " + className + " was loaded " +
             "successfully with priority (" + priority++ + ").");
       } catch (ClassNotFoundException e) {
@@ -101,6 +102,9 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
             e.getMessage());
       }
     }
+
+    // add entire set to the collection for COW efficiency
+    coprocessors.addAll(configured);
   }
 
   /**
@@ -111,7 +115,7 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
    * @throws java.io.IOException Exception
    */
   @SuppressWarnings("deprecation")
-  public void load(Path path, String className, Coprocessor.Priority priority)
+  public E load(Path path, String className, Coprocessor.Priority priority)
       throws IOException {
     Class<?> implClass = null;
 
@@ -165,7 +169,7 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       }
     }
 
-    load(implClass, priority);
+    return loadInstance(implClass, priority);
   }
 
   /**
@@ -174,6 +178,12 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
    * @throws java.io.IOException Exception
    */
   public void load(Class<?> implClass, Coprocessor.Priority priority)
+      throws IOException {
+    E env = loadInstance(implClass, priority);
+    coprocessors.add(env);
+  }
+
+  public E loadInstance(Class<?> implClass, Coprocessor.Priority priority)
       throws IOException {
     // create the instance
     Coprocessor impl;
@@ -187,24 +197,18 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       throw new IOException(e);
     }
     // create the environment
-    E env = createEnvironment(implClass, impl, priority);
+    E env = createEnvironment(implClass, impl, priority, ++loadSequence);
     if (env instanceof Environment) {
       ((Environment)env).startup();
     }
-
-    try {
-      coprocessorLock.writeLock().lock();
-      coprocessors.add(env);
-    } finally {
-      coprocessorLock.writeLock().unlock();
-    }
+    return env;
   }
 
   /**
    * Called when a new Coprocessor class is loaded
    */
   public abstract E createEnvironment(Class<?> implClass, Coprocessor instance,
-      Coprocessor.Priority priority);
+      Coprocessor.Priority priority, int sequence);
 
   public void shutdown(CoprocessorEnvironment e) {
     if (e instanceof Environment) {
@@ -222,18 +226,13 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
    */
   public Coprocessor findCoprocessor(String className) {
     // initialize the coprocessors
-    try {
-      coprocessorLock.readLock().lock();
-      for (E env: coprocessors) {
-        if (env.getInstance().getClass().getName().equals(className) ||
-            env.getInstance().getClass().getSimpleName().equals(className)) {
-          return env.getInstance();
-        }
+    for (E env: coprocessors) {
+      if (env.getInstance().getClass().getName().equals(className) ||
+          env.getInstance().getClass().getSimpleName().equals(className)) {
+        return env.getInstance();
       }
-      return null;
-    } finally {
-      coprocessorLock.readLock().unlock();
     }
+    return null;
   }
 
   /**
@@ -245,6 +244,11 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       if (env1.getPriority().intValue() < env2.getPriority().intValue()) {
         return -1;
       } else if (env1.getPriority().intValue() > env2.getPriority().intValue()) {
+        return 1;
+      }
+      if (env1.getLoadSequence() < env2.getLoadSequence()) {
+        return -1;
+      } else if (env1.getLoadSequence() > env2.getLoadSequence()) {
         return 1;
       }
       return 0;
@@ -439,16 +443,7 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
     /** Accounting for tables opened by the coprocessor */
     protected List<HTableInterface> openTables =
       Collections.synchronizedList(new ArrayList<HTableInterface>());
-    static final ThreadLocal<Boolean> bypass = new ThreadLocal<Boolean>() {
-      @Override protected Boolean initialValue() {
-        return Boolean.FALSE;
-      }
-    };
-    static final ThreadLocal<Boolean> complete = new ThreadLocal<Boolean>() {
-      @Override protected Boolean initialValue() {
-        return Boolean.FALSE;
-      }
-    };
+    private int seq;
 
     protected Configuration envConf;
 
@@ -458,11 +453,12 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
      * @param priority chaining priority
      */
     public Environment(final Coprocessor impl, Coprocessor.Priority priority,
-        final Configuration conf) {
+        int seq, final Configuration conf) {
       this.impl = impl;
       this.priority = priority;
       this.envConf = conf;
       this.state = Coprocessor.State.INSTALLED;
+      this.seq = seq;
     }
 
     /** Initialize the environment */
@@ -508,18 +504,6 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
       }
     }
 
-    public boolean shouldBypass() {
-      boolean current = bypass.get();
-      bypass.set(false);
-      return current;
-    }
-
-    public boolean shouldComplete() {
-      boolean current = complete.get();
-      complete.set(false);
-      return current;
-    }
-
     @Override
     public Coprocessor getInstance() {
       return impl;
@@ -528,6 +512,11 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
     @Override
     public Coprocessor.Priority getPriority() {
       return priority;
+    }
+
+    @Override
+    public int getLoadSequence() {
+      return seq;
     }
 
     /** @return the coprocessor environment version */
@@ -557,14 +546,5 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
     public Configuration getConf() {
       return envConf;
     }
-
-    @Override
-    public void complete() {
-      complete.set(true);
-    }
-
-    @Override
-    public void bypass() {
-      bypass.set(true);
-    }
-  }}
+  }
+}

@@ -6,6 +6,10 @@ Release 0.91.0 - Unreleased
                changes at runtime (Gary Helmling via Andrew Purtell)
    HBASE-3677  Generate a globally unique cluster ID (changed
                ClusterStatus serialization)
+   HBASE-3762  HTableFactory.releaseHTableInterface() should throw IOException
+               instead of wrapping in RuntimeException (Ted Yu via garyh)
+   HBASE-3629  Update our thrift to 0.6 (Moaz Reyad)
+   HBASE-1502  Remove need for heartbeats in HBase
 
   BUG FIXES
    HBASE-3280  YouAreDeadException being swallowed in HRS getMaster
@@ -67,6 +71,48 @@ Release 0.91.0 - Unreleased
                be using TreeSet for HRegion (Ted Yu via J-D)
    HBASE-3739  HMaster.getProtocolVersion() should distinguish
                HMasterInterface and HMasterRegionInterface versions
+   HBASE-3723  Major compact should be done when there is only one storefile
+               and some keyvalue is outdated (Zhou Shuaifeng via Stack)
+   HBASE-3624  Only one coprocessor of each priority can be loaded for a table
+   HBASE-3598  Broken formatting in LRU stats output (Erik Onnen)
+   HBASE-3758  Delete triggers pre/postScannerOpen upcalls of RegionObserver
+               (Mingjie Lai via garyh)
+   HBASE-3790  Fix NPE in ExecResult.write() with null return value
+   HBASE-3781  hbase shell cannot start "NoMethodError: undefined method
+               `close' for nil:NilClass" (Mikael Sitruk)
+   HBASE-3802  Redundant list creation in HRegion
+   HBASE-3788  Two error handlings in AssignmentManager.setOfflineInZooKeeper()
+               (Ted Yu)
+   HBASE-3800  HMaster is not able to start due to AlreadyCreatedException
+   HBASE-3806  distributed log splitting double escapes task names
+               (Prakash Khemani)
+   HBASE-3819  TestSplitLogWorker has too many SLWs running -- makes for
+               contention and occasional failures
+   HBASE-3210  HBASE-1921 for the new master
+   HBASE-3827  hbase-1502, removing heartbeats, broke master joining a running
+               cluster and was returning master hostname for rs to use
+   HBASE-3829  TestMasterFailover failures in jenkins
+   HBASE-3843  splitLogWorker starts too early (Prakash Khemani)
+   HBASE-3838  RegionCoprocesorHost.preWALRestore throws npe in case there is
+               no RegionObserver registered (Himanshu Vashishtha)
+   HBASE-3847  Turn off DEBUG logging of RPCs in WriteableRPCEngine on TRUNK
+   HBASE-3777  Redefine Identity Of HBase Configuration (Karthick Sankarachary)
+   HBASE-3849  Fix master ui; hbase-1502 broke requests/second
+   HBASE-3853  Fix TestInfoServers to pass after HBASE-3835 (todd)
+   HBASE-3862  Race conditions in aggregate calculation (John Heitmann)
+   HBASE-3865  Failing TestWALReplay
+   HBASE-3864  Rename of hfile.min.blocksize.size in HBASE-2899 reverted in
+               HBASE-1861 (Aaron T. Myers)
+   HBASE-3876  TestCoprocessorInterface.testCoprocessorInterface broke on
+               jenkins and local
+   HBASE-3897  Docs (notsoquick guide) suggest invalid XML (Philip Zeyliger)
+   HBASE-3898  TestSplitTransactionOnCluster broke in TRUNK
+   HBASE-3826  Minor compaction needs to check if still over
+               compactionThreshold after compacting (Nicolas Spiegelberg)  
+   HBASE-3912  [Stargate] Columns not handle by Scan
+   HBASE-3903  A successful write to client write-buffer may be lost or not
+               visible (Doug Meil)
+   HBASE-3894  Thread contention over row locks set monitor (Dave Latham)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -135,8 +181,55 @@ Release 0.91.0 - Unreleased
                (Ted Yu via Stack)
    HBASE-3694  high multiput latency due to checking global mem store size
                in a synchronized function (Liyin Tang via Stack)
+   HBASE-3710  Book.xml - fill out descriptions of metrics
+               (Doug Meil via Stack)
+   HBASE-3738  Book.xml - expanding Architecture Client section
+               (Doug Meil via Stack)
+   HBASE-3587  Eliminate use of read-write lock to guard loaded
+               coprocessor collection
+   HBASE-3729  Get cells via shell with a time range predicate
+               (Ted Yu via Stack)
+   HBASE-3764  Book.xml - adding 2 FAQs (SQL and arch question)
+   HBASE-3770  Make FilterList accept var arg Filters in its constructor
+               as a convenience (Erik Onnen via Stack)
+   HBASE-3769  TableMapReduceUtil is inconsistent with other table-related
+               classes that accept byte[] as a table name (Erik Onnen via Stack)
+   HBASE-3768  Add best practice to book for loading row key only
+               (Erik Onnen via Stack)
+   HBASE-3765  metrics.xml - small format change and adding nav to hbase
+               book metrics section (Doug Meil)
+   HBASE-3759  Eliminate use of ThreadLocals for CoprocessorEnvironment
+               bypass() and complete() 
+   HBASE-3701  revisit ArrayList creation (Ted Yu via Stack)
+   HBASE-3753  Book.xml - architecture, adding more Store info (Doug Meil)
+   HBASE-3784  book.xml - adding small subsection in architecture/client on
+               filters (Doug Meil)
+   HBASE-3785  book.xml - moving WAL into architecture section, plus adding
+               more description on what it does (Doug Meil)
+   HBASE-3699  Make RegionServerServices and MasterServices extend Server
+               (Erik Onnen)
+   HBASE-3757  Upgrade to ZK 3.3.3
+   HBASE-3609  Improve the selection of regions to balance; part 2 (Ted Yu)
+   HBASE-2939  Allow Client-Side Connection Pooling (Karthik Sankarachary)
+   HBASE-3798  [REST] Allow representation to elide row key and column key
+   HBASE-3812  Tidy up naming consistency and documentation in coprocessor
+               framework (Mingjie Lai)
+   HBASE-1512  Support aggregate functions (Himanshu Vashishtha)
+   HBASE-3796  Per-Store Enties in Compaction Queue
+   HBASE-3670  Fix error handling in get(List<Get> gets)
+               (Harsh J Chouraria)
+   HBASE-3835  Switch master and region server pages to Jamon-based templates
+   HBASE-3721  Speedup LoadIncrementalHFiles (Ted Yu)
+   HBASE-3855  Performance degradation of memstore because reseek is linear
+               (dhruba borthakur)
+   HBASE-3797  StoreFile Level Compaction Locking
+   HBASE-1476  Multithreaded Compactions
+   HBASE-3877  Determine Proper Defaults for Compaction ThreadPools
+   HBASE-3880  Make mapper function in ImportTSV plug-able (Bill Graham)
+   HBASE-2938  HBASE-2938 Add Thread-Local Behavior To HTable Pool
+               (Karthick Sankarachary)
 
-  TASK
+  TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
    HBASE-3573  Move shutdown messaging OFF hearbeat; prereq for fix of
                hbase-1502
@@ -163,9 +256,101 @@ Release 0.91.0 - Unreleased
    HBASE-3606  Create an package integration project (Eric Yang via Ryan)
    HBASE-3488  Add CellCounter to count multiple versions of rows
                (Subbu M. Iyer via Stack)
+   HBASE-1364  [performance] Distributed splitting of regionserver commit logs
+               (Prakash Khemani)
+   HBASE-3836  Add facility to track currently progressing actions and
+               workflows. (todd)
+   HBASE-3837  Show regions in transition on the master web page (todd)
+   HBASE-3839  Add monitoring of currently running tasks to the master and
+               RS web UIs
+   HBASE-3691  Add compressor support for 'snappy', google's compressor
+               (Nichole Treadway and Nicholas Telford)
+   HBASE-3899  enhance HBase RPC to support free-ing up server handler threads
+               even if response is not ready (Dhruba Borthakur)
 
 
-Release 0.90.2 - Unreleased
+Release 0.90.4 - Unreleased
+
+  BUG FIXES
+   HBASE-3878  Hbase client throws NoSuchElementException (Ted Yu)
+   HBASE-3881  Add disable balancer in graceful_stop.sh script
+   HBASE-3895  Fix order of parameters after HBASE-1511
+   HBASE-3874  ServerShutdownHandler fails on NPE if a plan has a random
+               region assignment
+   HBASE-3902  Add Bytes.toBigDecimal and Bytes.toBytes(BigDecimal)
+               (Vaibhav Puranik)
+   HBASE-3820  Splitlog() executed while the namenode was in safemode may
+               cause data-loss (Jieshan Bean)
+   HBASE-3905  HBaseAdmin.createTableAsync() should check for invalid split
+               keys (Ted Yu)
+   HBASE-3908  TableSplit not implementing "hashCode" problem (Daniel Iancu)
+   HBASE-3915  Binary row keys in hbck and other miscellaneous binary key
+               display issues
+   HBASE-3914  ROOT region appeared in two regionserver's onlineRegions at
+               the same time (Jieshan Bean)
+
+  IMPROVEMENT
+   HBASE-3882  hbase-config.sh needs to be updated so it can auto-detects the
+               sun jre provided by RHEL6 (Roman Shaposhnik)
+   HBASE-3920  HLog hbase.regionserver.flushlogentries no longer supported
+               (Dave Latham)
+   HBASE-3919  More places output binary data to text (Dave Latham)
+
+Release 0.90.3 - May 19th, 2011
+
+  BUG FIXES
+   HBASE-3746  Clean up CompressionTest to not directly reference
+               DistributedFileSystem (todd)
+   HBASE-3734  HBaseAdmin creates new configurations in getCatalogTracker
+   HBASE-3756  Can't move META or ROOT from shell
+   HBASE-3740  hbck doesn't reset the number of errors when retrying
+   HBASE-3744  createTable blocks until all regions are out of transition
+               (Ted Yu via Stack)
+   HBASE-3750  HTablePool.putTable() should call releaseHTableInterface()
+               for discarded tables (Ted Yu via garyh)
+   HBASE-3755  Catch zk's ConnectionLossException and augment error
+               message with more help
+   HBASE-3722  A lot of data is lost when name node crashed (gaojinchao)
+   HBASE-3771  All jsp pages don't clean their HBA
+   HBASE-3685  when multiple columns are combined with TimestampFilter, only
+               one column is returned (Jerry Chen)
+   HBASE-3708  createAndFailSilent is not so silent; leaves lots of logging
+               in ensemble logs (Dmitriy Ryaboy)
+   HBASE-3783  hbase-0.90.2.jar exists in hbase root and in 'lib/'
+   HBASE-3539  Improve shell help to reflect all possible options
+               (Harsh J Chouraria)
+   HBASE-3817  HBase Shell has an issue accepting FILTER for the 'scan' command.
+               (Harsh J Chouraria)
+   HBASE-3634  Fix JavaDoc for put(List<Put> puts) in HTableInterface
+               (Harsh J Chouraria)
+   HBASE-3749  Master can't exit when open port failed (gaojinchao)
+   HBASE-3794  TestRpcMetrics fails on machine where region server is running
+               (Alex Newman)
+   HBASE-3741  Make HRegionServer aware of the regions it's opening/closing
+   HBASE-3597  ageOfLastAppliedOp should update after cluster replication
+               failures
+   HBASE-3821  "NOT flushing memstore for region" keep on printing for half
+               an hour (zhoushuaifeng)
+
+  IMPROVEMENTS
+   HBASE-3747  ReplicationSource should differanciate remote and local exceptions
+   HBASE-3652  Speed up tests by lowering some sleeps
+   HBASE-3767  Improve how HTable handles threads used for multi actions
+   HBASE-3795  Remove the "Cache hit for row" message
+   HBASE-3580  Remove RS from DeadServer when new instance checks in
+   HBASE-2470  Add Scan.setTimeRange() support in Shell (Harsh J Chouraria)
+   HBASE-3805  Log RegionState that are processed too late in the master
+   HBASE-3695  Some improvements to Hbck to test the entire region chain in
+                Meta and provide better error reporting (Marc Limotte)
+   HBASE-3813  Change RPC callQueue size from 'handlerCount *
+               MAX_QUEUE_SIZE_PER_HANDLER;'
+   HBASE-3860  HLog shouldn't create a new HBC when rolling
+
+  TASKS
+   HBASE-3748  Add rolling of thrift/rest daemons to graceful_stop.sh script
+   HBASE-3846  Set RIT timeout higher
+
+Release 0.90.2 - 20110408
   
   BUG FIXES
    HBASE-3545  Possible liveness issue with MasterServerAddress in

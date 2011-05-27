@@ -23,13 +23,21 @@ package org.apache.hadoop.hbase.client;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.TreeMap;
+import java.util.TreeSet;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HServerAddress;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableNotFoundException;
+import org.apache.hadoop.hbase.client.HConnectionManager.HConnectable;
+import org.apache.hadoop.hbase.util.Addressing;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
 
@@ -113,12 +121,25 @@ public class MetaScanner {
    * @throws IOException e
    */
   public static void metaScan(Configuration configuration,
+      final MetaScannerVisitor visitor, final byte[] tableName,
+      final byte[] row, final int rowLimit, final byte[] metaTableName)
+      throws IOException {
+    HConnectionManager.execute(new HConnectable<Void>(configuration) {
+      @Override
+      public Void connect(HConnection connection) throws IOException {
+        metaScan(conf, connection, visitor, tableName, row, rowLimit,
+            metaTableName);
+        return null;
+      }
+    });
+  }
+
+  private static void metaScan(Configuration configuration, HConnection connection,
       MetaScannerVisitor visitor, byte [] tableName, byte[] row,
       int rowLimit, final byte [] metaTableName)
   throws IOException {
     int rowUpperLimit = rowLimit > 0 ? rowLimit: Integer.MAX_VALUE;
 
-    HConnection connection = HConnectionManager.getConnection(configuration);
     // if row is not null, we want to use the startKey of the row's region as
     // the startRow for the meta scan.
     byte[] startRow;
@@ -134,13 +155,13 @@ public class MetaScanner {
           HConstants.CATALOG_FAMILY);
       if (startRowResult == null) {
         throw new TableNotFoundException("Cannot find row in .META. for table: "
-            + Bytes.toString(tableName) + ", row=" + Bytes.toString(searchRow));
+            + Bytes.toString(tableName) + ", row=" + Bytes.toStringBinary(searchRow));
       }
       byte[] value = startRowResult.getValue(HConstants.CATALOG_FAMILY,
           HConstants.REGIONINFO_QUALIFIER);
       if (value == null || value.length == 0) {
         throw new IOException("HRegionInfo was null or empty in Meta for " +
-          Bytes.toString(tableName) + ", row=" + Bytes.toString(searchRow));
+          Bytes.toString(tableName) + ", row=" + Bytes.toStringBinary(searchRow));
       }
       HRegionInfo regionInfo = Writables.getHRegionInfo(value);
 
@@ -158,13 +179,14 @@ public class MetaScanner {
 
     // Scan over each meta region
     ScannerCallable callable;
-    int rows = Math.min(rowLimit,
-        configuration.getInt("hbase.meta.scanner.caching", 100));
+    int rows = Math.min(rowLimit, configuration.getInt(
+        HConstants.HBASE_META_SCANNER_CACHING,
+        HConstants.DEFAULT_HBASE_META_SCANNER_CACHING));
     do {
       final Scan scan = new Scan(startRow).addFamily(HConstants.CATALOG_FAMILY);
       if (LOG.isDebugEnabled()) {
         LOG.debug("Scanning " + Bytes.toString(metaTableName) +
-          " starting at row=" + Bytes.toString(startRow) + " for max=" +
+          " starting at row=" + Bytes.toStringBinary(startRow) + " for max=" +
           rowUpperLimit + " rows");
       }
       callable = new ScannerCallable(connection, metaTableName, scan);
@@ -225,8 +247,7 @@ public class MetaScanner {
   public static List<HRegionInfo> listAllRegions(Configuration conf, final boolean offlined)
   throws IOException {
     final List<HRegionInfo> regions = new ArrayList<HRegionInfo>();
-    MetaScannerVisitor visitor =
-      new MetaScannerVisitor() {
+    MetaScannerVisitor visitor = new MetaScannerVisitor() {
         @Override
         public boolean processRow(Result result) throws IOException {
           if (result == null || result.isEmpty()) {
@@ -246,6 +267,51 @@ public class MetaScanner {
         }
     };
     metaScan(conf, visitor);
+    return regions;
+  }
+
+  /**
+   * Lists all of the table regions currently in META.
+   * @param conf
+   * @param offlined True if we are to include offlined regions, false and we'll
+   * leave out offlined regions from returned list.
+   * @return Map of all user-space regions to servers
+   * @throws IOException
+   */
+  public static NavigableMap<HRegionInfo, ServerName> allTableRegions(Configuration conf, final byte [] tablename, final boolean offlined)
+  throws IOException {
+    final NavigableMap<HRegionInfo, ServerName> regions =
+      new TreeMap<HRegionInfo, ServerName>();
+    MetaScannerVisitor visitor = new MetaScannerVisitor() {
+      @Override
+      public boolean processRow(Result rowResult) throws IOException {
+        HRegionInfo info = Writables.getHRegionInfo(
+            rowResult.getValue(HConstants.CATALOG_FAMILY,
+                HConstants.REGIONINFO_QUALIFIER));
+        if (!(Bytes.equals(info.getTableDesc().getName(), tablename))) {
+          return false;
+        }
+        byte [] value = rowResult.getValue(HConstants.CATALOG_FAMILY,
+          HConstants.SERVER_QUALIFIER);
+        String hostAndPort = null;
+        if (value != null && value.length > 0) {
+          hostAndPort = Bytes.toString(value);
+        }
+        value = rowResult.getValue(HConstants.CATALOG_FAMILY,
+          HConstants.STARTCODE_QUALIFIER);
+        long startcode = -1L;
+        if (value != null && value.length > 0) startcode = Bytes.toLong(value);
+        if (!(info.isOffline() || info.isSplit())) {
+          ServerName sn = null;
+          if (hostAndPort != null && hostAndPort.length() > 0) {
+            sn = new ServerName(hostAndPort, startcode);
+          }
+          regions.put(new UnmodifyableHRegionInfo(info), sn);
+        }
+        return true;
+      }
+    };
+    metaScan(conf, visitor, tablename);
     return regions;
   }
 

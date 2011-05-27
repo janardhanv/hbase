@@ -343,7 +343,7 @@ public class SecureRpcEngine implements RpcEngine {
         long maxAge =
             conf.getLong("hbase.auth.token.max-lifetime", 7*24*60*60*1000);
         return new AuthenticationTokenSecretManager(conf, server.getZooKeeper(),
-            server.getServerName(), keyUpdateInterval, maxAge);
+            server.getServerName().toString(), keyUpdateInterval, maxAge);
       }
       return null;
     }

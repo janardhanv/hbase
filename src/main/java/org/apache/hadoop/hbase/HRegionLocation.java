@@ -19,33 +19,47 @@
  */
 package org.apache.hadoop.hbase;
 
+import org.apache.hadoop.hbase.util.Addressing;
+
 /**
- * Contains the HRegionInfo for the region and the HServerAddress for the
- * HRegionServer serving the region
+ * Data structure to hold HRegionInfo and the address for the hosting
+ * HRegionServer.  Immutable.  Comparable, but we compare the 'location' only:
+ * i.e. the hostname and port, and *not* the regioninfo.  This means two
+ * instances are the same if they refer to the same 'location' (the same
+ * hostname and port), though they may be carrying different regions.
  */
 public class HRegionLocation implements Comparable<HRegionLocation> {
-  // TODO: Is this class necessary?  Why not just have a Pair?
-  private HRegionInfo regionInfo;
-  private HServerAddress serverAddress;
+  private final HRegionInfo regionInfo;
+  private final String hostname;
+  private final int port;
+  // Cache of the 'toString' result.
+  private String cachedString = null;
+  // Cache of the hostname + port
+  private String cachedHostnamePort;
 
   /**
    * Constructor
-   *
    * @param regionInfo the HRegionInfo for the region
-   * @param serverAddress the HServerAddress for the region server
+   * @param hostname Hostname
+   * @param port port
    */
-  public HRegionLocation(HRegionInfo regionInfo, HServerAddress serverAddress) {
+  public HRegionLocation(HRegionInfo regionInfo, final String hostname,
+      final int port) {
     this.regionInfo = regionInfo;
-    this.serverAddress = serverAddress;
+    this.hostname = hostname;
+    this.port = port;
   }
 
   /**
    * @see java.lang.Object#toString()
    */
   @Override
-  public String toString() {
-    return "address: " + this.serverAddress.toString() + ", regioninfo: " +
-      this.regionInfo.getRegionNameAsString();
+  public synchronized String toString() {
+    if (this.cachedString == null) {
+      this.cachedString = "region=" + this.regionInfo.getRegionNameAsString() +
+      ", hostname=" + this.hostname + ", port=" + this.port;
+    }
+    return this.cachedString;
   }
 
   /**
@@ -70,8 +84,8 @@ public class HRegionLocation implements Comparable<HRegionLocation> {
    */
   @Override
   public int hashCode() {
-    int result = this.regionInfo.hashCode();
-    result ^= this.serverAddress.hashCode();
+    int result = this.hostname.hashCode();
+    result ^= this.port;
     return result;
   }
 
@@ -80,9 +94,30 @@ public class HRegionLocation implements Comparable<HRegionLocation> {
     return regionInfo;
   }
 
-  /** @return HServerAddress */
+  /** @return HServerAddress
+   * @deprecated Use {@link #getHostnamePort}
+   */
   public HServerAddress getServerAddress(){
-    return serverAddress;
+    return new HServerAddress(this.hostname, this.port);
+  }
+
+  public String getHostname() {
+    return this.hostname;
+  }
+
+  public int getPort() {
+    return this.port;
+  }
+
+  /**
+   * @return String made of hostname and port formatted as per {@link Addressing#createHostAndPortStr(String, int)}
+   */
+  public synchronized String getHostnamePort() {
+    if (this.cachedHostnamePort == null) {
+      this.cachedHostnamePort =
+        Addressing.createHostAndPortStr(this.hostname, this.port);
+    }
+    return this.cachedHostnamePort;
   }
 
   //
@@ -90,10 +125,8 @@ public class HRegionLocation implements Comparable<HRegionLocation> {
   //
 
   public int compareTo(HRegionLocation o) {
-    int result = this.regionInfo.compareTo(o.regionInfo);
-    if(result == 0) {
-      result = this.serverAddress.compareTo(o.serverAddress);
-    }
-    return result;
+    int result = this.hostname.compareTo(o.getHostname());
+    if (result != 0) return result;
+    return this.port - o.getPort();
   }
 }
