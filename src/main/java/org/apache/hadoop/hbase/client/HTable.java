@@ -111,6 +111,7 @@ public class HTable implements HTableInterface, Closeable {
   private ExecutorService pool;  // For Multi
   private long maxScannerResultSize;
   private boolean closed;
+  private int operationTimeout;
 
   /**
    * Creates an object to access a HBase table.
@@ -180,6 +181,9 @@ public class HTable implements HTableInterface, Closeable {
     this.connection = HConnectionManager.getConnection(conf);
     this.scannerTimeout =
       (int) conf.getLong(HConstants.HBASE_REGIONSERVER_LEASE_PERIOD_KEY, HConstants.DEFAULT_HBASE_REGIONSERVER_LEASE_PERIOD);
+    this.operationTimeout = HTableDescriptor.isMetaTable(tableName) ? HConstants.DEFAULT_HBASE_CLIENT_OPERATION_TIMEOUT
+        : conf.getInt(HConstants.HBASE_CLIENT_OPERATION_TIMEOUT,
+            HConstants.DEFAULT_HBASE_CLIENT_OPERATION_TIMEOUT);
     this.configuration = conf;
     this.connection.locateRegion(tableName, HConstants.EMPTY_START_ROW);
     this.writeBufferSize = conf.getLong("hbase.client.write.buffer", 2097152);
@@ -209,6 +213,10 @@ public class HTable implements HTableInterface, Closeable {
     this.closed = false;
   }
 
+  /**
+   * {@inheritDoc}
+   */
+  @Override
   public Configuration getConfiguration() {
     return configuration;
   }
@@ -290,6 +298,9 @@ public class HTable implements HTableInterface, Closeable {
     return connection.getRegionLocation(tableName, row, false);
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public byte [] getTableName() {
     return this.tableName;
@@ -329,6 +340,9 @@ public class HTable implements HTableInterface, Closeable {
     this.scannerCaching = scannerCaching;
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public HTableDescriptor getTableDescriptor() throws IOException {
     return new UnmodifyableHTableDescriptor(
@@ -532,11 +546,14 @@ public class HTable implements HTableInterface, Closeable {
     return allRegions;
   }
 
+  /**
+   * {@inheritDoc}
+   */
    @Override
    public Result getRowOrBefore(final byte[] row, final byte[] family)
    throws IOException {
      return connection.getRegionServerWithRetries(
-         new ServerCallable<Result>(connection, tableName, row) {
+         new ServerCallable<Result>(connection, tableName, row, operationTimeout) {
        public Result call() throws IOException {
          return server.getClosestRowBefore(location.getRegionInfo().getRegionName(),
            row, family);
@@ -544,6 +561,9 @@ public class HTable implements HTableInterface, Closeable {
      });
    }
 
+   /**
+    * {@inheritDoc}
+    */
   @Override
   public ResultScanner getScanner(final Scan scan) throws IOException {
     ClientScanner s = new ClientScanner(scan);
@@ -551,6 +571,9 @@ public class HTable implements HTableInterface, Closeable {
     return s;
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public ResultScanner getScanner(byte [] family) throws IOException {
     Scan scan = new Scan();
@@ -558,6 +581,9 @@ public class HTable implements HTableInterface, Closeable {
     return getScanner(scan);
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public ResultScanner getScanner(byte [] family, byte [] qualifier)
   throws IOException {
@@ -566,9 +592,13 @@ public class HTable implements HTableInterface, Closeable {
     return getScanner(scan);
   }
 
+  /**
+   * {@inheritDoc}
+   */
+  @Override
   public Result get(final Get get) throws IOException {
     return connection.getRegionServerWithRetries(
-        new ServerCallable<Result>(connection, tableName, get.getRow()) {
+        new ServerCallable<Result>(connection, tableName, get.getRow(), operationTimeout) {
           public Result call() throws IOException {
             return server.get(location.getRegionInfo().getRegionName(), get);
           }
@@ -576,36 +606,30 @@ public class HTable implements HTableInterface, Closeable {
     );
   }
 
-   public Result[] get(List<Get> gets) throws IOException {
-     try {
-       Object [] r1 = batch((List)gets);
+  /**
+   * {@inheritDoc}
+   */
+  @Override
+  public Result[] get(List<Get> gets) throws IOException {
+    try {
+      Object [] r1 = batch((List)gets);
 
-       // translate.
-       Result [] results = new Result[r1.length];
-       int i=0;
-       for (Object o : r1) {
-         // batch ensures if there is a failure we get an exception instead
-         results[i++] = (Result) o;
-       }
+      // translate.
+      Result [] results = new Result[r1.length];
+      int i=0;
+      for (Object o : r1) {
+        // batch ensures if there is a failure we get an exception instead
+        results[i++] = (Result) o;
+      }
 
-       return results;
-     } catch (InterruptedException e) {
-       throw new IOException(e);
-     }
-   }
+      return results;
+    } catch (InterruptedException e) {
+      throw new IOException(e);
+    }
+  }
 
   /**
-   * Method that does a batch call on Deletes, Gets and Puts.  The ordering of
-   * execution of the actions is not defined. Meaning if you do a Put and a
-   * Get in the same {@link #batch} call, you will not necessarily be
-   * guaranteed that the Get returns what the Put had put.
-   *
-   * @param actions list of Get, Put, Delete objects
-   * @param results Empty Result[], same size as actions. Provides access to
-   * partial results, in case an exception is thrown. If there are any failures,
-   * there will be a null or Throwable will be in the results array, AND an
-   * exception will be thrown.
-   * @throws IOException
+   * {@inheritDoc}
    */
   @Override
   public synchronized void batch(final List<Row> actions, final Object[] results)
@@ -614,12 +638,7 @@ public class HTable implements HTableInterface, Closeable {
   }
 
   /**
-   * Method that does a batch call on Deletes, Gets and Puts.
-   *
-   * @param actions list of Get, Put, Delete objects
-   * @return the results from the actions. A null in the return array means that
-   * the call for that action failed, even after retries
-   * @throws IOException
+   * {@inheritDoc}
    */
   @Override
   public synchronized Object[] batch(final List<Row> actions) throws InterruptedException, IOException {
@@ -629,17 +648,13 @@ public class HTable implements HTableInterface, Closeable {
   }
 
   /**
-   * Deletes the specified cells/row.
-   *
-   * @param delete The object that specifies what to delete.
-   * @throws IOException if a remote or network exception occurs.
-   * @since 0.20.0
+   * {@inheritDoc}
    */
   @Override
   public void delete(final Delete delete)
   throws IOException {
     connection.getRegionServerWithRetries(
-        new ServerCallable<Boolean>(connection, tableName, delete.getRow()) {
+        new ServerCallable<Boolean>(connection, tableName, delete.getRow(), operationTimeout) {
           public Boolean call() throws IOException {
             server.delete(location.getRegionInfo().getRegionName(), delete);
             return null; // FindBugs NP_BOOLEAN_RETURN_NULL
@@ -649,14 +664,7 @@ public class HTable implements HTableInterface, Closeable {
   }
 
   /**
-   * Deletes the specified cells/rows in bulk.
-   * @param deletes List of things to delete. As a side effect, it will be modified:
-   * successful {@link Delete}s are removed. The ordering of the list will not change.
-   * @throws IOException if a remote or network exception occurs. In that case
-   * the {@code deletes} argument will contain the {@link Delete} instances
-   * that have not be successfully applied.
-   * @since 0.20.1
-   * @see #batch(java.util.List, Object[])
+   * {@inheritDoc}
    */
   @Override
   public void delete(final List<Delete> deletes)
@@ -679,11 +687,17 @@ public class HTable implements HTableInterface, Closeable {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public void put(final Put put) throws IOException {
     doPut(Arrays.asList(put));
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public void put(final List<Put> puts) throws IOException {
     doPut(puts);
@@ -700,6 +714,9 @@ public class HTable implements HTableInterface, Closeable {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public Result increment(final Increment increment) throws IOException {
     if (!increment.hasFamilies()) {
@@ -707,7 +724,7 @@ public class HTable implements HTableInterface, Closeable {
           "Invalid arguments to increment, no columns specified");
     }
     return connection.getRegionServerWithRetries(
-        new ServerCallable<Result>(connection, tableName, increment.getRow()) {
+        new ServerCallable<Result>(connection, tableName, increment.getRow(), operationTimeout) {
           public Result call() throws IOException {
             return server.increment(
                 location.getRegionInfo().getRegionName(), increment);
@@ -716,6 +733,9 @@ public class HTable implements HTableInterface, Closeable {
     );
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public long incrementColumnValue(final byte [] row, final byte [] family,
       final byte [] qualifier, final long amount)
@@ -723,6 +743,9 @@ public class HTable implements HTableInterface, Closeable {
     return incrementColumnValue(row, family, qualifier, amount, true);
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public long incrementColumnValue(final byte [] row, final byte [] family,
       final byte [] qualifier, final long amount, final boolean writeToWAL)
@@ -738,7 +761,7 @@ public class HTable implements HTableInterface, Closeable {
           "Invalid arguments to incrementColumnValue", npe);
     }
     return connection.getRegionServerWithRetries(
-        new ServerCallable<Long>(connection, tableName, row) {
+        new ServerCallable<Long>(connection, tableName, row, operationTimeout) {
           public Long call() throws IOException {
             return server.incrementColumnValue(
                 location.getRegionInfo().getRegionName(), row, family,
@@ -749,17 +772,7 @@ public class HTable implements HTableInterface, Closeable {
   }
 
   /**
-   * Atomically checks if a row/family/qualifier value match the expectedValue.
-   * If it does, it adds the put.  If value == null, checks for non-existence
-   * of the value.
-   *
-   * @param row to check
-   * @param family column family
-   * @param qualifier column qualifier
-   * @param value the expected value
-   * @param put put to execute if value matches.
-   * @throws IOException
-   * @return true if the new put was execute, false otherwise
+   * {@inheritDoc}
    */
   @Override
   public boolean checkAndPut(final byte [] row,
@@ -767,7 +780,7 @@ public class HTable implements HTableInterface, Closeable {
       final Put put)
   throws IOException {
     return connection.getRegionServerWithRetries(
-        new ServerCallable<Boolean>(connection, tableName, row) {
+        new ServerCallable<Boolean>(connection, tableName, row, operationTimeout) {
           public Boolean call() throws IOException {
             return server.checkAndPut(location.getRegionInfo().getRegionName(),
                 row, family, qualifier, value, put) ? Boolean.TRUE : Boolean.FALSE;
@@ -776,18 +789,9 @@ public class HTable implements HTableInterface, Closeable {
     );
   }
 
+
   /**
-   * Atomically checks if a row/family/qualifier value match the expectedValue.
-   * If it does, it adds the delete.  If value == null, checks for non-existence
-   * of the value.
-   *
-   * @param row to check
-   * @param family column family
-   * @param qualifier column qualifier
-   * @param value the expected value
-   * @param delete delete to execute if value matches.
-   * @throws IOException
-   * @return true if the new delete was executed, false otherwise
+   * {@inheritDoc}
    */
   @Override
   public boolean checkAndDelete(final byte [] row,
@@ -795,7 +799,7 @@ public class HTable implements HTableInterface, Closeable {
       final Delete delete)
   throws IOException {
     return connection.getRegionServerWithRetries(
-        new ServerCallable<Boolean>(connection, tableName, row) {
+        new ServerCallable<Boolean>(connection, tableName, row, operationTimeout) {
           public Boolean call() throws IOException {
             return server.checkAndDelete(
                 location.getRegionInfo().getRegionName(),
@@ -807,20 +811,12 @@ public class HTable implements HTableInterface, Closeable {
   }
 
   /**
-   * Test for the existence of columns in the table, as specified in the Get.<p>
-   *
-   * This will return true if the Get matches one or more keys, false if not.<p>
-   *
-   * This is a server-side call so it prevents any data from being transfered
-   * to the client.
-   * @param get param to check for
-   * @return true if the specified Get matches one or more keys, false if not
-   * @throws IOException
+   * {@inheritDoc}
    */
   @Override
   public boolean exists(final Get get) throws IOException {
     return connection.getRegionServerWithRetries(
-        new ServerCallable<Boolean>(connection, tableName, get.getRow()) {
+        new ServerCallable<Boolean>(connection, tableName, get.getRow(), operationTimeout) {
           public Boolean call() throws IOException {
             return server.
                 exists(location.getRegionInfo().getRegionName(), get);
@@ -830,12 +826,7 @@ public class HTable implements HTableInterface, Closeable {
   }
 
   /**
-   * Executes all the buffered {@link Put} operations.
-   * <p>
-   * This method gets called once automatically for every {@link Put} or batch
-   * of {@link Put}s (when {@link #batch(List)} is used) when
-   * {@link #isAutoFlush()} is {@code true}.
-   * @throws IOException if a remote or network exception occurs.
+   * {@inheritDoc}
    */
   @Override
   public void flushCommits() throws IOException {
@@ -850,6 +841,9 @@ public class HTable implements HTableInterface, Closeable {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public void close() throws IOException {
     if (this.closed) {
@@ -879,11 +873,14 @@ public class HTable implements HTableInterface, Closeable {
     }
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public RowLock lockRow(final byte [] row)
   throws IOException {
     return connection.getRegionServerWithRetries(
-      new ServerCallable<RowLock>(connection, tableName, row) {
+      new ServerCallable<RowLock>(connection, tableName, row, operationTimeout) {
         public RowLock call() throws IOException {
           long lockId =
               server.lockRow(location.getRegionInfo().getRegionName(), row);
@@ -893,11 +890,14 @@ public class HTable implements HTableInterface, Closeable {
     );
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public void unlockRow(final RowLock rl)
   throws IOException {
     connection.getRegionServerWithRetries(
-      new ServerCallable<Boolean>(connection, tableName, rl.getRow()) {
+      new ServerCallable<Boolean>(connection, tableName, rl.getRow(), operationTimeout) {
         public Boolean call() throws IOException {
           server.unlockRow(location.getRegionInfo().getRegionName(),
               rl.getLockId());
@@ -907,6 +907,9 @@ public class HTable implements HTableInterface, Closeable {
     );
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public boolean isAutoFlush() {
     return autoFlush;
@@ -1397,6 +1400,9 @@ public class HTable implements HTableInterface, Closeable {
     this.connection.clearRegionCache();
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public <T extends CoprocessorProtocol> T coprocessorProxy(
       Class<T> protocol, byte[] row) {
@@ -1409,6 +1415,9 @@ public class HTable implements HTableInterface, Closeable {
             row));
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public <T extends CoprocessorProtocol, R> Map<byte[],R> coprocessorExec(
       Class<T> protocol, byte[] startKey, byte[] endKey,
@@ -1426,6 +1435,9 @@ public class HTable implements HTableInterface, Closeable {
     return results;
   }
 
+  /**
+   * {@inheritDoc}
+   */
   @Override
   public <T extends CoprocessorProtocol, R> void coprocessorExec(
       Class<T> protocol, byte[] startKey, byte[] endKey,
@@ -1467,6 +1479,14 @@ public class HTable implements HTableInterface, Closeable {
     }
 
     return rangeKeys;
+  }
+
+  public void setOperationTimeout(int operationTimeout) {
+    this.operationTimeout = operationTimeout;
+  }
+
+  public int getOperationTimeout() {
+    return operationTimeout;
   }
 
 }
