@@ -92,7 +92,8 @@ public class ZKUtil {
     int timeout = conf.getInt("zookeeper.session.timeout", 180 * 1000);
     LOG.debug(descriptor + " opening connection to ZooKeeper with ensemble (" +
         ensemble + ")");
-    return new ZooKeeper(ensemble, timeout, watcher);
+    String zkHostname = ensemble.substring(0,ensemble.indexOf(":"));
+    return new ZooKeeper(ensemble, timeout, watcher, "zookeeper/"+zkHostname);
   }
 
   //
