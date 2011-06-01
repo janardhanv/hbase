@@ -925,13 +925,13 @@ public class TestAccessController {
 
     // only grant write permission
     // TODO: comment this portion after HBASE-3583
-//    protocol.grant(Bytes.toBytes(user.getShortName()),
-//        new TablePermission(tableName, family1, qualifier,
-//            Permission.Action.WRITE));
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+        new TablePermission(tableName, family1, qualifier,
+            Permission.Action.WRITE));
 
-//    verifyDenied(user, getQualifierAction);
-//    verifyAllowed(user, putQualifierAction);
-//    verifyAllowed(user, deleteQualifierAction);
+    verifyDenied(user, getQualifierAction);
+    verifyAllowed(user, putQualifierAction);
+    verifyAllowed(user, deleteQualifierAction);
 
     // grant both read and write permission.
     protocol.grant(Bytes.toBytes(user.getShortName()),
