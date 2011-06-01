@@ -653,9 +653,6 @@ public class AccessController extends BaseRegionObserver
   public void prePut(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
-    if (isMetaRegion) {
-      return;
-    }
     requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
         familyMap);
   }
@@ -672,9 +669,6 @@ public class AccessController extends BaseRegionObserver
   public void preDelete(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
       throws IOException {
-    if (isMetaRegion) {
-      return;
-    }
     requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
         familyMap);
   }
