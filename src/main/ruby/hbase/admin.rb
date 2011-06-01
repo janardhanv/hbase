@@ -223,15 +223,18 @@ module Hbase
     def grant(user, permissions, table_name, family=nil, qualifier=nil)
       # Table should exist
       raise(ArgumentError, "Can't find a table: #{table_name}") unless exists?(table_name)
-      
-      htd = @admin.getTableDescriptor(table_name.to_java_bytes)
-      raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
 
-      #TODO: need to validateuser name
+      htd = @admin.getTableDescriptor(table_name.to_java_bytes)
+
+      if (family != nil)
+        raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
+      end
+
+      #TODO: need to validate user name
 
       # invoke cp endpiont to perform access control
-      fambytes = family.to_java_bytes if defined? family
-      qualbytes = qualifier.to_java_bytes if defined? qualifier
+      fambytes = family.to_java_bytes if (family != nil)
+      qualbytes = qualifier.to_java_bytes if (qualifier != nil)
       tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, permissions.to_java_bytes)
       first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
@@ -245,10 +248,13 @@ module Hbase
       raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
 
       htd = @admin.getTableDescriptor(table_name.to_java_bytes)
-      raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
 
-      fambytes = family.to_java_bytes if defined? family
-      qualbytes = qualifier.to_java_bytes if defined? qualifier
+      if (family != nil)
+        raise(ArgumentError, "Can't find a family: #{family}") unless htd.hasFamily(family.to_java_bytes)
+      end
+
+      fambytes = family.to_java_bytes if (family != nil)
+      qualbytes = qualifier.to_java_bytes if (qualifier != nil)
       tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, "".to_java_bytes)
       first = get_first_region(table_name)
       meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
@@ -269,15 +275,17 @@ module Hbase
       count  = 0
       perms.each do |value|
         user_name = String.from_java_bytes(value.getUser)
-        family = org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getFamily)
+        table = (value.getTable != nil) ? org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getTable) : ''
+        family = (value.getFamily != nil) ? org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getFamily) : ''
+        qualifier = (value.getQualifier != nil) ? org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getQualifier) : ''
 
         action = org.apache.hadoop.hbase.security.rbac.Permission.new value.getActions
 
         if block_given?
-          yield(user_name, "#{family}:#{action.to_s}")
+          yield(user_name, "#{table},#{family},#{qualifier}: #{action.to_s}")
         else
           res[user_name] ||= {}
-          res[user_name][family] = action
+          res[user_name][family + ":" +qualifier] = action
         end
         count += 1
       end

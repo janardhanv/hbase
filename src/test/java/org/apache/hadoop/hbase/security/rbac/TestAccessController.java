@@ -20,13 +20,9 @@
 
 package org.apache.hadoop.hbase.security.rbac;
 
-import static org.junit.Assert.assertTrue;
-import static org.junit.Assert.fail;
-
+import java.io.IOException;
 import java.security.PrivilegedExceptionAction;
-import java.util.List;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
@@ -35,6 +31,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HServerInfo;
@@ -43,10 +40,7 @@ import org.apache.hadoop.hbase.MiniHBaseCluster;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.catalog.MetaReader;
-import org.apache.hadoop.hbase.client.HBaseAdmin;
-import org.apache.hadoop.hbase.client.HConnection;
-import org.apache.hadoop.hbase.client.HConnectionManager;
-import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.coprocessor.Coprocessor;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
 import org.apache.hadoop.hbase.coprocessor.ObserverContext;
@@ -54,10 +48,13 @@ import org.apache.hadoop.hbase.master.MasterCoprocessorHost;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.JVMClusterUtil;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import static org.junit.Assert.*;
 
 /**
  * Performs authorization checks for common operations, according to different
@@ -85,6 +82,7 @@ public class TestAccessController {
   private static AccessController ACCESS_CONTROLLER;
   private static ZooKeeperWatcher ZKW;
   private static CatalogTracker CT;
+  private static MiniHBaseCluster CLUSTER = null;
   private final static Abortable ABORTABLE = new Abortable() {
     private final AtomicBoolean abort = new AtomicBoolean(false);
 
@@ -102,7 +100,10 @@ public class TestAccessController {
     conf.set("hadoop.security.authorization", "true");
     conf.set("hadoop.security.authentication", "simple");
     conf.set("hbase.superuser", "admin");
+    enableAccessController(conf);
+
     TEST_UTIL.startMiniCluster();
+    CLUSTER = TEST_UTIL.getMiniHBaseCluster();
     ZKW = new ZooKeeperWatcher(conf, "TestMetaReaderEditor", ABORTABLE);
     CT = new CatalogTracker(ZKW, conf, ABORTABLE);
     CT.start();
@@ -113,7 +114,6 @@ public class TestAccessController {
         AccessController.class.getName());
     CP_ENV = cpHost.createEnvironment(AccessController.class, ACCESS_CONTROLLER,
         Coprocessor.Priority.HIGHEST, 1);
-
 
     // create a set of test users
     SUPERUSER = createUser("admin", new String[]{"supergroup"});
@@ -133,13 +133,17 @@ public class TestAccessController {
     // perms only stored against the first region
     HRegionInfo firstRegion = regions.get(0);
 
-    AccessControlLists.addTablePermission(CT, firstRegion,
-        USER_RW.getShortName(),
-        new TablePermission(TEST_TABLE, null, Permission.Action.READ,
+    // initilize access control
+    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    AccessControllerProtocol protocol =
+        meta.coprocessorProxy(AccessControllerProtocol.class,
+            firstRegion.getRegionName());
+    protocol.grant(Bytes.toBytes(USER_RW.getShortName()),
+        new TablePermission(TEST_TABLE, TEST_FAMILY, Permission.Action.READ,
             Permission.Action.WRITE));
-    AccessControlLists.addTablePermission(CT, firstRegion,
-        USER_RO.getShortName(),
-        new TablePermission(TEST_TABLE, null, Permission.Action.READ));
+
+    protocol.grant(Bytes.toBytes(USER_RO.getShortName()),
+        new TablePermission(TEST_TABLE, TEST_FAMILY, Permission.Action.READ));
   }
 
   @AfterClass
@@ -174,6 +178,21 @@ public class TestAccessController {
     try {
       user.runAs(action);
       fail("Expected AccessDeniedException for user '" + user.getShortName() + "'");
+    } catch (RetriesExhaustedWithDetailsException e) {
+      // in case of batch operations, and put, the client assembles a
+      // RetriesExhaustedWithDetailsException instead of throwing an
+      // AccessDeniedException
+      boolean isAccessDeniedException = false;
+      for ( Throwable ex : e.getCauses()) {
+        if (ex instanceof AccessDeniedException) {
+          isAccessDeniedException = true;
+          break;
+        }
+      }
+      if (!isAccessDeniedException ) {
+        fail("Not receiving AccessDeniedException for user '" +
+            user.getShortName() + "'");
+      }
     } catch (AccessDeniedException ade) {
       // expected result
     }
@@ -489,5 +508,523 @@ public class TestAccessController {
 
     // verify that superuser can create tables
     verifyAllowed(SUPERUSER, action);
+  }
+
+  private void verifyWrite(PrivilegedExceptionAction action) throws Exception {
+    // should be denied
+    verifyDenied(USER_NONE, action);
+    verifyDenied(USER_RO, action);
+
+    // should be allowed
+    verifyAllowed(SUPERUSER, action);
+    verifyAllowed(USER_OWNER, action);
+    verifyAllowed(USER_RW, action);
+  }
+
+  private void verifyRead(PrivilegedExceptionAction action) throws Exception {
+    // should be denied
+    verifyDenied(USER_NONE, action);
+
+    // should be allowed
+    verifyAllowed(SUPERUSER, action);
+    verifyAllowed(USER_OWNER, action);
+    verifyAllowed(USER_RW, action);
+    verifyAllowed(USER_RO, action);
+  }
+
+  @Test
+  public void testRead() throws Exception {
+    // get action
+    PrivilegedExceptionAction getAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Get g = new Get(Bytes.toBytes("random_row"));
+        g.addFamily(TEST_FAMILY);
+        HTable t = new HTable(TEST_TABLE);
+        t.get(g);
+        return null;
+      }
+    };
+    verifyRead(getAction);
+
+    // action for scanning
+    PrivilegedExceptionAction scanAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Scan s = new Scan();
+        s.addFamily(TEST_FAMILY);
+
+        HTable table = new HTable(TEST_TABLE);
+        ResultScanner scanner = table.getScanner(s);
+        try {
+          for (Result r = scanner.next(); r != null; r = scanner.next()) {
+            // do nothing
+          }
+        } catch (IOException e) {
+        } finally {
+          scanner.close();
+        }
+        return null;
+      }
+    };
+    verifyRead(scanAction);
+  }
+
+  @Test
+  // test put, delete, increment
+  public void testWrite() throws Exception {
+    // put action
+    PrivilegedExceptionAction putAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Put p = new Put(Bytes.toBytes("random_row"));
+        p.add(TEST_FAMILY, Bytes.toBytes("Qualifier"), Bytes.toBytes(1));
+        HTable t = new HTable(TEST_TABLE);
+        t.put(p);
+        return null;
+      }
+    };
+    verifyWrite(putAction);
+
+    // delete action
+    PrivilegedExceptionAction deleteAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Delete d = new Delete(Bytes.toBytes("random_row"));
+        d.deleteFamily(TEST_FAMILY);
+        HTable t = new HTable(TEST_TABLE);
+        t.delete(d);
+        return null;
+      }
+    };
+    verifyWrite(deleteAction);
+
+    // increment action
+    PrivilegedExceptionAction incrementAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Increment inc = new Increment(Bytes.toBytes("random_row"));
+        inc.addColumn(TEST_FAMILY, Bytes.toBytes("Qualifier"), 1);
+        HTable t = new HTable(TEST_TABLE);
+        t.increment(inc);
+        return null;
+      }
+    };
+    verifyWrite(incrementAction);
+  }
+
+  @Test
+  public void testGrantRevoke() throws Exception {
+    final byte[] tableName = Bytes.toBytes("TempTable");
+    final byte[] family1 = Bytes.toBytes("f1");
+    final byte[] family2 = Bytes.toBytes("f2");
+    final byte[] qualifier = Bytes.toBytes("q");
+
+    // create table
+    HBaseAdmin admin = TEST_UTIL.getHBaseAdmin();
+    if (admin.tableExists(tableName)) {
+      admin.disableTable(tableName);
+      admin.deleteTable(tableName);
+    }
+    HTableDescriptor htd = new HTableDescriptor(tableName);
+    htd.addFamily(new HColumnDescriptor(family1));
+    htd.addFamily(new HColumnDescriptor(family2));
+    htd.setOwnerString(USER_OWNER.getShortName());
+    admin.createTable(htd);
+
+    // create temp users
+    User user = createUser("user", new String[0]);
+
+    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, tableName);
+    assertTrue(regions.size() > 0);
+
+    // perms only stored against the first region
+    HRegionInfo firstRegion = regions.get(0);
+    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    AccessControllerProtocol protocol =
+        meta.coprocessorProxy(AccessControllerProtocol.class,
+            firstRegion.getRegionName());
+
+    // prepare actions:
+    PrivilegedExceptionAction putActionAll = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Put p = new Put(Bytes.toBytes("a"));
+        p.add(family1, qualifier, Bytes.toBytes("v1"));
+        p.add(family2, qualifier, Bytes.toBytes("v2"));
+        HTable t = new HTable(tableName);
+        t.put(p);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction putAction1 = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Put p = new Put(Bytes.toBytes("a"));
+        p.add(family1, qualifier, Bytes.toBytes("v1"));
+        HTable t = new HTable(tableName);
+        t.put(p);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction putAction2 = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Put p = new Put(Bytes.toBytes("a"));
+        p.add(family2, qualifier, Bytes.toBytes("v2"));
+        HTable t = new HTable(tableName);
+        t.put(p);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction getActionAll = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Get g = new Get(Bytes.toBytes("random_row"));
+        g.addFamily(family1);
+        g.addFamily(family2);
+        HTable t = new HTable(tableName);
+        t.get(g);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction getAction1 = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Get g = new Get(Bytes.toBytes("random_row"));
+        g.addFamily(family1);
+        HTable t = new HTable(tableName);
+        t.get(g);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction getAction2 = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Get g = new Get(Bytes.toBytes("random_row"));
+        g.addFamily(family2);
+        HTable t = new HTable(tableName);
+        t.get(g);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction deleteActionAll = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Delete d = new Delete(Bytes.toBytes("random_row"));
+        d.deleteFamily(family1);
+        d.deleteFamily(family2);
+        HTable t = new HTable(tableName);
+        t.delete(d);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction deleteAction1 = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Delete d = new Delete(Bytes.toBytes("random_row"));
+        d.deleteFamily(family1);
+        HTable t = new HTable(tableName);
+        t.delete(d);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction deleteAction2 = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Delete d = new Delete(Bytes.toBytes("random_row"));
+        d.deleteFamily(family2);
+        HTable t = new HTable(tableName);
+        t.delete(d);
+        return null;
+      }
+    };
+
+    // initial check:
+    verifyDenied(user, getActionAll);
+    verifyDenied(user, getAction1);
+    verifyDenied(user, getAction2);
+
+    verifyDenied(user, putActionAll);
+    verifyDenied(user, putAction1);
+    verifyDenied(user, putAction2);
+
+    verifyDenied(user, deleteActionAll);
+    verifyDenied(user, deleteAction1);
+    verifyDenied(user, deleteAction2);
+
+    // grant table read permission
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+      new TablePermission(tableName, null, Permission.Action.READ));
+
+    // check
+    verifyAllowed(user, getActionAll);
+    verifyAllowed(user, getAction1);
+    verifyAllowed(user, getAction2);
+
+    verifyDenied(user, putActionAll);
+    verifyDenied(user, putAction1);
+    verifyDenied(user, putAction2);
+
+    verifyDenied(user, deleteActionAll);
+    verifyDenied(user, deleteAction1);
+    verifyDenied(user, deleteAction2);
+
+    // grant table write permission
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+      new TablePermission(tableName, null, Permission.Action.WRITE));
+    verifyDenied(user, getActionAll);
+    verifyDenied(user, getAction1);
+    verifyDenied(user, getAction2);
+
+    verifyAllowed(user, putActionAll);
+    verifyAllowed(user, putAction1);
+    verifyAllowed(user, putAction2);
+
+    verifyAllowed(user, deleteActionAll);
+    verifyAllowed(user, deleteAction1);
+    verifyAllowed(user, deleteAction2);
+
+    // revoke table permission
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+      new TablePermission(tableName, null, Permission.Action.READ,
+        Permission.Action.WRITE));
+
+    protocol.revoke(Bytes.toBytes(user.getShortName()),
+        new TablePermission(tableName, null));
+    verifyDenied(user, getActionAll);
+    verifyDenied(user, getAction1);
+    verifyDenied(user, getAction2);
+
+    verifyDenied(user, putActionAll);
+    verifyDenied(user, putAction1);
+    verifyDenied(user, putAction2);
+
+    verifyDenied(user, deleteActionAll);
+    verifyDenied(user, deleteAction1);
+    verifyDenied(user, deleteAction2);
+
+    // grant column family read permission
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+      new TablePermission(tableName, family1, Permission.Action.READ));
+
+    verifyAllowed(user, getActionAll);
+    verifyAllowed(user, getAction1);
+    verifyDenied(user, getAction2);
+
+    verifyDenied(user, putActionAll);
+    verifyDenied(user, putAction1);
+    verifyDenied(user, putAction2);
+
+    verifyDenied(user, deleteActionAll);
+    verifyDenied(user, deleteAction1);
+    verifyDenied(user, deleteAction2);
+
+    // grant column family write permission
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+      new TablePermission(tableName, family2, Permission.Action.WRITE));
+
+    verifyAllowed(user, getActionAll);
+    verifyAllowed(user, getAction1);
+    verifyDenied(user, getAction2);
+
+    verifyDenied(user, putActionAll);
+    verifyDenied(user, putAction1);
+    verifyAllowed(user, putAction2);
+
+    verifyDenied(user, deleteActionAll);
+    verifyDenied(user, deleteAction1);
+    verifyAllowed(user, deleteAction2);
+
+    // revoke column family permission
+    protocol.revoke(Bytes.toBytes(user.getShortName()),
+      new TablePermission(tableName, family2));
+
+    verifyAllowed(user, getActionAll);
+    verifyAllowed(user, getAction1);
+    verifyDenied(user, getAction2);
+
+    verifyDenied(user, putActionAll);
+    verifyDenied(user, putAction1);
+    verifyDenied(user, putAction2);
+
+    verifyDenied(user, deleteActionAll);
+    verifyDenied(user, deleteAction1);
+    verifyDenied(user, deleteAction2);
+
+    // delete table
+    admin.disableTable(tableName);
+    admin.deleteTable(tableName);
+  }
+
+  private boolean hasFoundUserPermission(UserPermission userPermission,
+                                         List<UserPermission> perms) {
+    return perms.contains(userPermission);
+  }
+
+  @Test
+  public void testGrantRevokeAtQualifierLevel() throws Exception {
+    final byte[] tableName = Bytes.toBytes("testGrantRevokeAtQualifierLevel");
+    final byte[] family1 = Bytes.toBytes("f1");
+    final byte[] family2 = Bytes.toBytes("f2");
+    final byte[] qualifier = Bytes.toBytes("q");
+
+    // create table
+    HBaseAdmin admin = TEST_UTIL.getHBaseAdmin();
+
+    if (admin.tableExists(tableName)) {
+      admin.disableTable(tableName);
+      admin.deleteTable(tableName);
+    }
+    HTableDescriptor htd = new HTableDescriptor(tableName);
+    htd.addFamily(new HColumnDescriptor(family1));
+    htd.addFamily(new HColumnDescriptor(family2));
+    htd.setOwnerString(USER_OWNER.getShortName());
+    admin.createTable(htd);
+
+    // create temp users
+    User user = createUser("user", new String[0]);
+
+    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, tableName);
+    assertTrue(regions.size() > 0);
+
+    // perms only stored against the first region
+    HRegionInfo firstRegion = regions.get(0);
+    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    AccessControllerProtocol protocol =
+        meta.coprocessorProxy(AccessControllerProtocol.class,
+            firstRegion.getRegionName());
+
+    PrivilegedExceptionAction getQualifierAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Get g = new Get(Bytes.toBytes("random_row"));
+        g.addColumn(family1, qualifier);
+        HTable t = new HTable(tableName);
+        t.get(g);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction putQualifierAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Put p = new Put(Bytes.toBytes("random_row"));
+        p.add(family1, qualifier, Bytes.toBytes("v1"));
+        HTable t = new HTable(tableName);
+        t.put(p);
+        return null;
+      }
+    };
+    PrivilegedExceptionAction deleteQualifierAction = new PrivilegedExceptionAction() {
+      public Object run() throws Exception {
+        Delete d = new Delete(Bytes.toBytes("random_row"));
+        d.deleteColumn(family1, qualifier);
+        //d.deleteFamily(family1);
+        HTable t = new HTable(tableName);
+        t.delete(d);
+        return null;
+      }
+    };
+
+    protocol.revoke(Bytes.toBytes(user.getShortName()),
+        new TablePermission(tableName, family1));
+    verifyDenied(user, getQualifierAction);
+    verifyDenied(user, putQualifierAction);
+    verifyDenied(user, deleteQualifierAction);
+
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+        new TablePermission(tableName, family1, qualifier,
+            Permission.Action.READ));
+    verifyAllowed(user, getQualifierAction);
+    verifyDenied(user, putQualifierAction);
+    verifyDenied(user, deleteQualifierAction);
+
+    // only grant write permission
+    // TODO: comment this portion after HBASE-3583
+//    protocol.grant(Bytes.toBytes(user.getShortName()),
+//        new TablePermission(tableName, family1, qualifier,
+//            Permission.Action.WRITE));
+
+//    verifyDenied(user, getQualifierAction);
+//    verifyAllowed(user, putQualifierAction);
+//    verifyAllowed(user, deleteQualifierAction);
+
+    // grant both read and write permission.
+    protocol.grant(Bytes.toBytes(user.getShortName()),
+        new TablePermission(tableName, family1, qualifier,
+            Permission.Action.READ, Permission.Action.WRITE));
+
+    verifyAllowed(user, getQualifierAction);
+    verifyAllowed(user, putQualifierAction);
+    verifyAllowed(user, deleteQualifierAction);
+
+    // revoke family level permission won't impact column level.
+    protocol.revoke(Bytes.toBytes(user.getShortName()),
+        new TablePermission(tableName, family1, qualifier));
+    verifyDenied(user, getQualifierAction);
+    verifyDenied(user, putQualifierAction);
+    verifyDenied(user, deleteQualifierAction);
+
+    // delete table
+    admin.disableTable(tableName);
+    admin.deleteTable(tableName);
+  }
+
+  @Test
+  public void testPermissionList() throws Exception {
+    final byte[] tableName = Bytes.toBytes("testPermissionList");
+    final byte[] family1 = Bytes.toBytes("f1");
+    final byte[] family2 = Bytes.toBytes("f2");
+    final byte[] qualifier = Bytes.toBytes("q");
+    final byte[] user = Bytes.toBytes("user");
+
+    // create table
+    HBaseAdmin admin = TEST_UTIL.getHBaseAdmin();
+    if (admin.tableExists(tableName)) {
+      admin.disableTable(tableName);
+      admin.deleteTable(tableName);
+    }
+    HTableDescriptor htd = new HTableDescriptor(tableName);
+    htd.addFamily(new HColumnDescriptor(family1));
+    htd.addFamily(new HColumnDescriptor(family2));
+    htd.setOwnerString(USER_OWNER.getShortName());
+    admin.createTable(htd);
+
+    // create temp users
+    User userName = createUser(Bytes.toString(user), new String[0]);
+
+    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, tableName);
+    assertTrue(regions.size() > 0);
+
+    // perms only stored against the first region
+    HRegionInfo firstRegion = regions.get(0);
+    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    AccessControllerProtocol protocol =
+        meta.coprocessorProxy(AccessControllerProtocol.class,
+            firstRegion.getRegionName());
+
+    List<UserPermission> perms = protocol.getUserPermissions(tableName);
+
+    UserPermission up = new UserPermission(user,
+        tableName, family1, qualifier, Permission.Action.READ);
+    assertFalse("User should not be granted permission: " + up.toString(),
+        hasFoundUserPermission(up, perms));
+
+    // grant read permission
+    UserPermission upToSet = new UserPermission(user,
+        tableName, family1, qualifier, Permission.Action.READ);
+    protocol.grant(user, upToSet);
+    perms = protocol.getUserPermissions(tableName);
+
+    UserPermission upToVerify = new UserPermission(user,
+        tableName, family1, qualifier, Permission.Action.READ);
+    assertTrue("User should be granted permission: " + upToVerify.toString(),
+        hasFoundUserPermission(upToVerify, perms));
+
+    upToVerify.setActions(Permission.Action.WRITE);
+    assertFalse("User should not be granted permission: " + upToVerify.toString(),
+        hasFoundUserPermission(upToVerify, perms));
+
+    // grant read+write
+    upToSet.setActions(Permission.Action.WRITE, Permission.Action.READ);
+    protocol.grant(user, upToSet);
+    perms = protocol.getUserPermissions(tableName);
+
+    upToVerify.setActions(Permission.Action.WRITE, Permission.Action.READ);
+    assertTrue("User should be granted permission: " + upToVerify.toString(),
+            hasFoundUserPermission(upToVerify, perms));
+
+    protocol.revoke(user, upToSet);
+    perms = protocol.getUserPermissions(tableName);
+    assertFalse("User should not be granted permission: " + upToVerify.toString(),
+      hasFoundUserPermission(upToVerify, perms));
+
+    // delete table
+    admin.disableTable(tableName);
+    admin.deleteTable(tableName);
   }
 }

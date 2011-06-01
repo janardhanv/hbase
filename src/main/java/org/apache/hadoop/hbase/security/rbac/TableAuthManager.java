@@ -207,16 +207,20 @@ public class TableAuthManager {
 
   public boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
       Permission.Action action) {
+    return authorize(perms, table, family, null, action);
+  }
+
+  public boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
+      byte[] qualifier, Permission.Action action) {
     if (perms != null) {
       for (TablePermission p : perms) {
-        if (p.implies(table, family, null, action)) {
+        if (p.implies(table, family, qualifier, action)) {
           return true;
         }
       }
     } else if (LOG.isDebugEnabled()) {
       LOG.debug("No permissions found for table="+Bytes.toStringBinary(table));
     }
-
     return false;
   }
 
@@ -277,12 +281,19 @@ public class TableAuthManager {
    */
   public boolean authorizeUser(String username, byte[] table, byte[] family,
       Permission.Action action) {
+    return authorizeUser(username, table, family, null, action);
+  }
+
+  public boolean authorizeUser(String username, byte[] table, byte[] family,
+      byte[] qualifier, Permission.Action action) {
     // global authorization supercedes table level
     if (authorizeUser(username, action)) {
       return true;
     }
-    return authorize(getUserPermissions(username, table), table, family, action);
+    return authorize(getUserPermissions(username, table), table, family,
+        qualifier, action);
   }
+
 
   /**
    * Checks authorization for a given action for a group, based on the stored
@@ -311,8 +322,8 @@ public class TableAuthManager {
   }
 
   public boolean authorize(UserGroupInformation user, byte[] table, byte[] family,
-      Permission.Action action) {
-    if (authorizeUser(user.getShortUserName(), table, family, action)) {
+      byte[] qualifier, Permission.Action action) {
+    if (authorizeUser(user.getShortUserName(), table, family, qualifier, action)) {
       return true;
     }
 
@@ -327,19 +338,30 @@ public class TableAuthManager {
     return false;
   }
 
+  public boolean authorize(UserGroupInformation user, byte[] table, byte[] family,
+      Permission.Action action) {
+    return authorize(user, table, family, null, action);
+  }
+
   /**
    * Returns true if the given user has a {@link TablePermission} matching up
    * to the column family portion of a permission.  Note that this permission
    * may be scoped to a given column qualifier and does not guarantee that
    * authorize() on the same column family would return true.
    */
-  public boolean matchFamilyPermission(UserGroupInformation user,
+  public boolean matchPermission(UserGroupInformation user,
       byte[] table, byte[] family, TablePermission.Action action) {
+    return matchPermission(user, table, family, null, action);
+  }
+
+  public boolean matchPermission(UserGroupInformation user,
+      byte[] table, byte[] family, byte[] qualifier,
+      TablePermission.Action action) {
     List<TablePermission> userPerms = getUserPermissions(
         user.getShortUserName(), table);
     if (userPerms != null) {
       for (TablePermission p : userPerms) {
-        if (p.matchesFamily(table, family, action)) {
+        if (p.matchesFamilyQualifier(table, family, qualifier, action)) {
           return true;
         }
       }
@@ -351,7 +373,7 @@ public class TableAuthManager {
         List<TablePermission> groupPerms = getGroupPermissions(group, table);
         if (groupPerms != null) {
           for (TablePermission p : groupPerms) {
-            if (p.matchesFamily(table, family, action)) {
+            if (p.matchesFamilyQualifier(table, family, qualifier, action)) {
               return true;
             }
           }

@@ -39,9 +39,6 @@ public interface AccessControllerProtocol extends CoprocessorProtocol {
   public boolean revoke(byte[] user, TablePermission permission)
       throws IOException;
 
-//  public Map<String, List<TablePermission>> getTablePermissions(byte[] table)
-//      throws IOException;
-
   public List<UserPermission> getUserPermissions(byte[] tableName)
       throws IOException;
 }

@@ -31,9 +31,9 @@ For example:
 EOF
       end
 
-      def command(user, table_name, family)
+      def command(user, table_name, family=nil, qualifier=nil)
         format_simple_command do
-          admin.revoke(user, table_name, family)
+          admin.revoke(user, table_name, family, qualifier)
         end
       end
     end

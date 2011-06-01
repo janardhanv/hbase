@@ -172,6 +172,28 @@ public class TablePermission extends Permission {
     return super.implies(action);
   }
 
+  /**
+   * Returns if the given permission matches the given qualifier.
+   * @param table
+   * @param family
+   * @param qualifier
+   * @param action
+   * @return
+   */
+  public boolean matchesFamilyQualifier(byte[] table, byte[] family, byte[] qualifier,
+                                Action action) {
+    if (!matchesFamily(table, family, action)) {
+      return false;
+    } else {
+      if (this.qualifier != null &&
+          (qualifier == null ||
+           !Bytes.equals(this.qualifier, qualifier))) {
+        return false;
+      }
+    }
+    return super.implies(action);
+  }
+
   public boolean equals(Object obj) {
     if (!(obj instanceof TablePermission)) {
       return false;

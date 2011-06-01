@@ -35,7 +35,7 @@ EOF
         #format_simple_command do
         #admin.user_permission(table)
         now = Time.now
-        formatter.header(["User", "Family:Permission"])
+        formatter.header(["User", "Table,Family,Qualifier:Permission"])
 
         count = admin.user_permission(table) do |user, permission|
           formatter.row([ user, permission])

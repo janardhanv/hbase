@@ -68,9 +68,7 @@ public class Permission extends VersionedWritable {
   }
 
   public Permission(Action... assigned) {
-    if (assigned != null && assigned.length > 0) {
-      actions = Arrays.copyOf(assigned, assigned.length);
-    }
+    setActions(assigned);
   }
 
   public Permission(byte[] actionCodes) {
@@ -93,6 +91,12 @@ public class Permission extends VersionedWritable {
 
   public Action[] getActions() {
     return actions;
+  }
+
+  public void setActions(Action... assigned) {
+    if (assigned != null && assigned.length > 0) {
+      actions = Arrays.copyOf(assigned, assigned.length);
+    }
   }
 
   public boolean implies(Action action) {

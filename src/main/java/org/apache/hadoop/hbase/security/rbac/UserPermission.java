@@ -29,14 +29,14 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 /**
- * Represents an authorization for access for the given actions, optionally
- * restricted to the given column family, over the given user.
+ * Represents an authorization for access for the given table, column family
+ * plus qualifier, over the given user.
+ * It's more for display purpose.
  */
-public class UserPermission extends Permission {
+public class UserPermission extends TablePermission {
   private static Log LOG = LogFactory.getLog(UserPermission.class);
 
   private byte[] user;
-  private byte[] family;
 
   /** Nullary constructor for Writable, do not use */
   public UserPermission() {
@@ -46,13 +46,27 @@ public class UserPermission extends Permission {
   /**
    * Constructor
    * @param user the user
+   * @param table the table
    * @param family the family, can be null if a global permission on the user
    * @param assigned the list of allowed actions
    */
-  public UserPermission(byte[] user, byte[] family, Action... assigned) {
-    super(assigned);
+  public UserPermission(byte[] user, byte[] table, byte[] family,
+                        Action... assigned) {
+    super(table, family, assigned);
     this.user = user;
-    this.family = family;
+  }
+
+  /**
+   * Constructor
+   * @param user the user
+   * @param table the table
+   * @param family the family, can be null if a global permission on the user
+   * @param assigned the list of allowed actions
+   */
+  public UserPermission(byte[] user, byte[] table, byte[] family,
+                        byte[] qualifier, Action... assigned) {
+    super(table, family, qualifier, assigned);
+    this.user = user;
   }
 
   /**
@@ -61,42 +75,14 @@ public class UserPermission extends Permission {
    * @param family the family, can be null if a global permission on the user
    * @param actionCodes the list of allowed action codes
    */
-  public UserPermission(byte[] user, byte[] family, byte[] actionCodes) {
-    super(actionCodes);
+  public UserPermission(byte[] user, byte[] table, byte[] family,
+                        byte[] qualifier, byte[] actionCodes) {
+    super(table, family, qualifier, actionCodes);
     this.user = user;
-    this.family = family;
   }
 
   public byte[] getUser() {
     return user;
-  }
-
-  public byte[] getFamily() {
-    return family;
-  }
-
-  /**
-   * Checks that a given user operation is authorized by this permission
-   * instance.
-   *
-   * @param user
-   * @param family
-   * @param action
-   * @return
-   */
-  public boolean implies(byte[] user, byte[] family, Action action) {
-    if (!Bytes.equals(this.user, user)) {
-      return false;
-    }
-
-    if (this.family != null &&
-        (family == null ||
-         !Bytes.equals(this.family, family))) {
-      return false;
-    }
-
-    // check actions
-    return super.implies(action);
   }
 
   public boolean equals(Object obj) {
@@ -105,34 +91,18 @@ public class UserPermission extends Permission {
     }
     UserPermission other = (UserPermission)obj;
 
-    if (!(Bytes.equals(user, other.getUser()) &&
-        ((family == null && other.getFamily() == null) ||
-         Bytes.equals(family, other.getFamily())
-       ))) {
+    if ((Bytes.equals(user, other.getUser()) &&
+        super.equals(obj))) {
+      return true;
+    } else {
       return false;
     }
-
-    // check actions
-    return super.equals(other);
   }
 
   public String toString() {
-    StringBuilder str = new StringBuilder("[UserPermission: ")
+    StringBuilder str = new StringBuilder("UserPermission: ")
         .append("user=").append(Bytes.toString(user))
-        .append(", family=").append(Bytes.toString(family))
-        .append(", actions=");
-    if (actions != null) {
-      for (int i=0; i<actions.length; i++) {
-        if (i > 0)
-          str.append(",");
-        if (actions[i] != null)
-          str.append(actions[i].toString());
-        else
-          str.append("NULL");
-      }
-    }
-    str.append("]");
-
+        .append(", ").append(super.toString());
     return str.toString();
   }
 
@@ -140,18 +110,11 @@ public class UserPermission extends Permission {
   public void readFields(DataInput in) throws IOException {
     super.readFields(in);
     user = Bytes.readByteArray(in);
-    if (in.readBoolean()) {
-      family = Bytes.readByteArray(in);
-    }
   }
 
   @Override
   public void write(DataOutput out) throws IOException {
     super.write(out);
     Bytes.writeByteArray(out, user);
-    out.writeBoolean(family != null);
-    if (family != null) {
-      Bytes.writeByteArray(out, family);
-    }
   }
 }

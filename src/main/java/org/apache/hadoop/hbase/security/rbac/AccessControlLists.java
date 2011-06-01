@@ -109,6 +109,14 @@ public class AccessControlLists {
     if (perm.getFamily() != null && perm.getFamily().length > 0) {
       key = Bytes.toBytes(userName + ACL_KEY_DELIMITER +
           Bytes.toString(perm.getFamily()));
+      if (perm.getQualifier() != null && perm.getQualifier().length > 0) {
+       key = Bytes.toBytes(userName + ACL_KEY_DELIMITER +
+          Bytes.toString(perm.getFamily()) + ACL_KEY_DELIMITER +
+          Bytes.toString(perm.getQualifier()));
+      } else {
+        key = Bytes.toBytes(userName + ACL_KEY_DELIMITER +
+          Bytes.toString(perm.getFamily()));
+      }
     } else {
       key = Bytes.toBytes(userName);
     }
@@ -281,7 +289,8 @@ public class AccessControlLists {
 
     for (Map.Entry<String, TablePermission> entry : allPerms.entries()) {
       UserPermission up = new UserPermission(Bytes.toBytes(entry.getKey()),
-          entry.getValue().getFamily(), entry.getValue().getActions());
+          entry.getValue().getTable(), entry.getValue().getFamily(),
+          entry.getValue().getQualifier(), entry.getValue().getActions());
       perms.add(up);
     }
     return perms;
