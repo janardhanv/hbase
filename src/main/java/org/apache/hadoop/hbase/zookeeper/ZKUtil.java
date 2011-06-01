@@ -820,8 +820,7 @@ public class ZKUtil {
    */
   public static void asyncCreate(ZooKeeperWatcher zkw,
       String znode, byte [] data, final AsyncCallback.StringCallback cb,
-      final Object ctx)
-  throws KeeperException, KeeperException.NodeExistsException {
+      final Object ctx) {
     try {
         waitForZKConnectionIfAuthenticating(zkw);
     }
