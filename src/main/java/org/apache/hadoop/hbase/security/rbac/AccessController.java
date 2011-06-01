@@ -155,7 +155,7 @@ public class AccessController extends BaseRegionObserver
 
   boolean permissionGranted(TablePermission.Action permRequest,
       RegionCoprocessorEnvironment e,
-      Map<byte [], ? extends  Set<byte[]>> families) {
+      Map<byte [], ? extends Collection<?>> families) {
     HRegionInfo hri = e.getRegion().getRegionInfo();
     HTableDescriptor htd = hri.getTableDesc();
 
@@ -222,27 +222,51 @@ public class AccessController extends BaseRegionObserver
     if (families != null && families.size() > 0) {
       // all families must pass
       result = true;
-      for (Map.Entry<byte [], ? extends Set<byte[]>> family : families.entrySet()) {
+      for (Map.Entry<byte [], ? extends Collection<?>> family : families.entrySet()) {
         if ((family.getValue() != null) && (family.getValue().size() > 0)) {
-          // for each qualifier of the family
-          for (byte[] qualifier : family.getValue()) {
+          if (family.getValue() instanceof Set) {
+            // for each qualifier of the family
+            Set<byte[]> familySet = (Set<byte[]>)family.getValue();
+            for (byte[] qualifier : familySet) {
+              result = result &&
+                  authManager.authorize(user, htd.getName(), family.getKey(),
+                      (byte[])qualifier, permRequest);
+              if (!result) {
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("User '" + user.getShortUserName() +
+                      "' is not allowed to have " + permRequest.toString() +
+                      " access to '" +
+                      Bytes.toString(family.getKey()) + ": " + Bytes.toString(qualifier) +
+                      "'."  );
+                }
+                break;
+              }
+            }
+          } else if (family.getValue() instanceof List) { // List<KeyValue>
+            List<KeyValue> kvList = (List<KeyValue>)family.getValue();
+            for (KeyValue kv : kvList) {
+              result = result &&
+                  authManager.authorize(user, htd.getName(), family.getKey(),
+                      kv.getQualifier(), permRequest);
+              if (!result) {
+                if (LOG.isDebugEnabled()) {
+                  LOG.debug("User '" + user.getShortUserName() +
+                      "' is not allowed to have " + permRequest.toString() +
+                      " access to '" +
+                      Bytes.toString(family.getKey()) + ": " +
+                      Bytes.toString(kv.getQualifier()) + "'."  );
+                }
+                break;
+              }
+            }
+          } else {
             result = result &&
                 authManager.authorize(user, htd.getName(), family.getKey(),
-                    qualifier, permRequest);
-            if (!result) {
-              if (LOG.isDebugEnabled()) {
-                LOG.debug("User '" + user.getShortUserName() +
-                    "' is not allowed to have " + permRequest.toString() +
-                    " access to '" +
-                    Bytes.toString(family.getKey()) + ": " + Bytes.toString(qualifier) +
-                    "'."  );
-              }
-              break;
-            }
+                    permRequest);
           }
         } else {
           result = result &&
-                authManager.authorize(user, htd.getName(), family.getKey(),
+              authManager.authorize(user, htd.getName(), family.getKey(),
                     permRequest);
         }
 
@@ -316,11 +340,12 @@ public class AccessController extends BaseRegionObserver
    * action on the set of table column families.
    * @param perm Action that is required
    * @param env The current coprocessor environment
-   * @param families The mpa of column families-qualifiers.
+   * @param families The map of column families-qualifiers.
    * @throws AccessDeniedException if the authorization check failed
    */
   public void requirePermission(Permission.Action perm,
-        RegionCoprocessorEnvironment env, Map<byte[], Set<byte[]>> families)
+        RegionCoprocessorEnvironment env,
+        Map<byte[], ? extends Collection<?>> families)
       throws IOException {
     if (!permissionGranted(perm, env, families)) {
       StringBuffer sb = new StringBuffer("");
@@ -624,24 +649,6 @@ public class AccessController extends BaseRegionObserver
     return exists;
   }
 
-  private Map<byte[], Set<byte[]>> convertKVListToMap(Map<byte[], List<KeyValue>> familyMap) {
-    Map<byte[], Set<byte[]>> newFamilyMap = new HashMap<byte[], Set<byte[]>>();
-    for (Map.Entry<byte[], List<KeyValue>> familyEntry: familyMap.entrySet()) {
-      Set qualifierSet = new HashSet();
-      List<KeyValue> kvs = familyEntry.getValue();
-      if (kvs != null && kvs.size() > 0) {
-        for (Iterator<KeyValue> i = kvs.iterator(); i.hasNext();) {
-          KeyValue kv = i.next();
-          if (kv.getQualifier() != null) {
-            qualifierSet.add(kv.getQualifier());
-          }
-        }
-      }
-      newFamilyMap.put(familyEntry.getKey(), qualifierSet);
-    }
-    return newFamilyMap;
-  }
-
   @Override
   public void prePut(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
@@ -649,11 +656,8 @@ public class AccessController extends BaseRegionObserver
     if (isMetaRegion) {
       return;
     }
-    // convert familyMap to a Map<byte[], Set<byte[]>> to include qualifiers
-    // in order to call requirePermission().
-    Map<byte[], Set<byte[]>> newFamilyMap = convertKVListToMap(familyMap);
     requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
-        newFamilyMap);
+        familyMap);
   }
 
   @Override
@@ -671,9 +675,8 @@ public class AccessController extends BaseRegionObserver
     if (isMetaRegion) {
       return;
     }
-    Map<byte[], Set<byte[]>> newFamilyMap = convertKVListToMap(familyMap);
     requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
-        newFamilyMap);
+        familyMap);
   }
 
   @Override
