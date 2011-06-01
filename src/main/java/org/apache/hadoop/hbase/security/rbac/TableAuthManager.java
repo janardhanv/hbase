@@ -351,7 +351,31 @@ public class TableAuthManager {
    */
   public boolean matchPermission(UserGroupInformation user,
       byte[] table, byte[] family, TablePermission.Action action) {
-    return matchPermission(user, table, family, null, action);
+    List<TablePermission> userPerms = getUserPermissions(
+        user.getShortUserName(), table);
+    if (userPerms != null) {
+      for (TablePermission p : userPerms) {
+        if (p.matchesFamily(table, family, action)) {
+          return true;
+        }
+      }
+    }
+
+    String[] groups = user.getGroupNames();
+    if (groups != null) {
+      for (String group : groups) {
+        List<TablePermission> groupPerms = getGroupPermissions(group, table);
+        if (groupPerms != null) {
+          for (TablePermission p : groupPerms) {
+            if (p.matchesFamily(table, family, action)) {
+              return true;
+            }
+          }
+        }
+      }
+    }
+
+    return false;
   }
 
   public boolean matchPermission(UserGroupInformation user,

@@ -191,7 +191,7 @@ public class TestOpenRegionHandler {
     public ZooKeeperWatcher getZooKeeper() {
       return null;
     }
-    
+
     public RegionServerAccounting getRegionServerAccounting() {
       return null;
     }
@@ -220,7 +220,6 @@ public class TestOpenRegionHandler {
     public boolean isStopped() {
       return false;
     }
-
   };
 
   /**

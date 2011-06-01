@@ -362,7 +362,7 @@ public class AccessController extends BaseRegionObserver
       // at least one family must be allowed
       for (Map.Entry<byte[], ? extends Set<byte[]>> family :
           familyMap.entrySet()) {
-        if (family.getValue() != null) {
+        if (family.getValue() != null && !family.getValue().isEmpty()) {
           for (byte[] qualifier : family.getValue()) {
             if (authManager.matchPermission(user, tableName,
                 family.getKey(), qualifier, perm)) {
@@ -376,6 +376,8 @@ public class AccessController extends BaseRegionObserver
           }
         }
       }
+    } else if (LOG.isDebugEnabled()) {
+      LOG.debug("Empty family map passed for permission check");
     }
 
     return false;
