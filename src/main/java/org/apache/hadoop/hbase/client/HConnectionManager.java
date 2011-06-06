@@ -68,6 +68,7 @@ import org.apache.hadoop.hbase.ipc.ExecRPCInvoker;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Addressing;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
@@ -82,6 +83,7 @@ import org.apache.hadoop.ipc.RemoteException;
 import org.apache.zookeeper.KeeperException;
 
 import com.google.common.collect.ImmutableMap;
+import sun.util.LocaleServiceProviderPool;
 
 /**
  * A non-instantiable class that manages {@link HConnection}s.
@@ -136,6 +138,8 @@ public class HConnectionManager {
   private static final Map<HConnectionKey, HConnectionImplementation> HBASE_INSTANCES;
 
   public static final int MAX_CACHED_HBASE_INSTANCES;
+
+  private static Log LOG = LogFactory.getLog(HConnectionManager.class);
 
   static {
     // We set instances to one more than the value specified for {@link
@@ -360,6 +364,7 @@ public class HConnectionManager {
         HConstants.HBASE_CLIENT_INSTANCE_ID };
 
     private Map<String, String> properties;
+    private String username;
 
     public HConnectionKey(Configuration conf) {
       ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
@@ -372,12 +377,25 @@ public class HConnectionManager {
         }
       }
       this.properties = builder.build();
+
+      try {
+        User currentUser = User.getCurrent();
+        if (currentUser != null) {
+          username = currentUser.getName();
+        }
+      } catch (IOException ioe) {
+        LOG.warn("Error obtaining curr ent user, skipping username in HConnectionKey",
+            ioe);
+      }
     }
 
     @Override
     public int hashCode() {
       final int prime = 31;
       int result = 1;
+      if (username != null) {
+        result = username.hashCode();
+      }
       for (String property : CONNECTION_PROPERTIES) {
         String value = properties.get(property);
         if (value != null) {
