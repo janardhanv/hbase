@@ -113,13 +113,14 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
     for (ZKUtil.NodeAndData n : nodes) {
       String path = n.getNode();
       String table = ZKUtil.getNodeName(path);
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("Updating permissions cache from node "+table+" with data: "+
-            Bytes.toStringBinary(n.getData()));
-      }
       try {
+        byte[] nodeData = n.getData();
+        if (LOG.isDebugEnabled()) {
+          LOG.debug("Updating permissions cache from node "+table+" with data: "+
+              Bytes.toStringBinary(nodeData));
+        }
         authManager.refreshCacheFromWritable(Bytes.toBytes(table),
-          n.getData());
+          nodeData);
       } catch (IOException ioe) {
         LOG.error("Failed parsing permissions for table '" + table +
             "' from zk", ioe);

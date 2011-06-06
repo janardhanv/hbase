@@ -105,9 +105,13 @@ public class TableAuthManager {
   }
 
   public void refreshCacheFromWritable(byte[] table, byte[] data) throws IOException {
-    DataInput in = new DataInputStream( new ByteArrayInputStream(data) );
-    ListMultimap<String,TablePermission> perms = AccessControlLists.readPermissions(in, conf);
-    cache(table, perms);
+    if (data != null && data.length > 0) {
+      DataInput in = new DataInputStream( new ByteArrayInputStream(data) );
+      ListMultimap<String,TablePermission> perms = AccessControlLists.readPermissions(in, conf);
+      cache(table, perms);
+    } else {
+      LOG.info("Skipping permission cache refresh because writable data is empty");
+    }
   }
 
   /**
