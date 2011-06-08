@@ -61,6 +61,15 @@ public class EnableTableHandler extends EventHandler {
   }
 
   @Override
+  public String toString() {
+    String name = "UnknownServerName";
+    if(server != null && server.getServerName() != null) {
+      name = server.getServerName().toString();
+    }
+    return getClass().getSimpleName() + "-" + name + "-" + getSeqid() + "-" + tableNameStr;
+  }
+  
+  @Override
   public void process() {
     try {
       LOG.info("Attemping to enable the table " + this.tableNameStr);
@@ -95,7 +104,7 @@ public class EnableTableHandler extends EventHandler {
         break;
       }
       LOG.info("Table has " + countOfRegionsInTable + " regions of which " +
-        regions.size() + " are online.");
+        regions.size() + " are offline.");
       BulkEnabler bd = new BulkEnabler(this.server, regions,
         countOfRegionsInTable);
       try {

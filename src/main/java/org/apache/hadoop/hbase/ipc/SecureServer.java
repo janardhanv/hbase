@@ -122,12 +122,12 @@ public abstract class SecureServer extends HBaseServer {
     // Fake 'call' for failed authorization response
     private final int AUTHORIZATION_FAILED_CALLID = -1;
     private final Call authFailedCall = 
-      new Call(AUTHORIZATION_FAILED_CALLID, null, this, responder);
+      new Call(AUTHORIZATION_FAILED_CALLID, null, this);
     private ByteBufferOutputStream authFailedResponse =
         new ByteBufferOutputStream(0);
     // Fake 'call' for SASL context setup
     private static final int SASL_CALLID = -33;
-    private final Call saslCall = new Call(SASL_CALLID, null, this, responder);
+    private final Call saslCall = new Call(SASL_CALLID, null, this);
     private final ByteArrayOutputStream saslResponse = new ByteArrayOutputStream();
 
     private boolean useWrap = false;
@@ -689,7 +689,7 @@ public abstract class SecureServer extends HBaseServer {
                  + StringUtils.humanReadableInt(response.size()));
       }
       call.setResponse(response.getByteBuffer());
-      call.sendResponseIfReady(); // maybe delay sending out response to the client
+      responder.doRespond(call);
     }
   }
 

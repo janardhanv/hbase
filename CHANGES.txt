@@ -113,6 +113,8 @@ Release 0.91.0 - Unreleased
    HBASE-3903  A successful write to client write-buffer may be lost or not
                visible (Doug Meil)
    HBASE-3894  Thread contention over row locks set monitor (Dave Latham)
+   HBASE-3959  hadoop-snappy version in the pom.xml is incorrect
+               (Alejandro Abdelnur)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -233,6 +235,18 @@ Release 0.91.0 - Unreleased
                one another (Harsh J Chouraria)
    HBASE-2937  Facilitate Timeouts In HBase Client (Karthick Sankarachary)
    HBASE-3921  Allow adding arbitrary blobs to Put (dhruba borthakur)
+   HBASE-3931  Allow adding attributes to Get
+   HBASE-3942  The thrift scannerOpen functions should support row caching
+               (Adam Worthington)
+   HBASE-2556  Add convenience method to HBaseAdmin to get a collection of
+               HRegionInfo objects for each table (Ming Ma)
+   HBASE-3592  Guava snuck back in as a dependency via hbase-3777
+   HBASE-3808  Implement Executor.toString for master handlers at least
+               (Brock Noland)
+   HBASE-3873  Mavenize Hadoop Snappy JAR/SOs project dependencies
+               (Alejandro Abdelnur)
+   HBASE-3941  "hbase version" command line should print version info
+               (Jolly Chen)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -270,8 +284,6 @@ Release 0.91.0 - Unreleased
                RS web UIs
    HBASE-3691  Add compressor support for 'snappy', google's compressor
                (Nichole Treadway and Nicholas Telford)
-   HBASE-3899  enhance HBase RPC to support free-ing up server handler threads
-               even if response is not ready (Dhruba Borthakur)
 
 
 Release 0.90.4 - Unreleased
@@ -293,6 +305,8 @@ Release 0.90.4 - Unreleased
                display issues
    HBASE-3914  ROOT region appeared in two regionserver's onlineRegions at
                the same time (Jieshan Bean)
+   HBASE-3934  MemStoreFlusher.getMemStoreLimit() doesn't honor defaultLimit
+               (Ted Yu)
 
   IMPROVEMENT
    HBASE-3882  hbase-config.sh needs to be updated so it can auto-detects the

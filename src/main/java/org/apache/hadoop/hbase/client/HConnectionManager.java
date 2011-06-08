@@ -25,6 +25,7 @@ import java.lang.reflect.Proxy;
 import java.lang.reflect.UndeclaredThrowableException;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -81,9 +82,6 @@ import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.zookeeper.KeeperException;
-
-import com.google.common.collect.ImmutableMap;
-import sun.util.LocaleServiceProviderPool;
 
 /**
  * A non-instantiable class that manages {@link HConnection}s.
@@ -367,16 +365,16 @@ public class HConnectionManager {
     private String username;
 
     public HConnectionKey(Configuration conf) {
-      ImmutableMap.Builder<String, String> builder = ImmutableMap.builder();
+      Map<String, String> m = new HashMap<String, String>();
       if (conf != null) {
         for (String property : CONNECTION_PROPERTIES) {
           String value = conf.get(property);
           if (value != null) {
-            builder.put(property, value);
+            m.put(property, value);
           }
         }
       }
-      this.properties = builder.build();
+      this.properties = Collections.unmodifiableMap(m);
 
       try {
         User currentUser = User.getCurrent();
