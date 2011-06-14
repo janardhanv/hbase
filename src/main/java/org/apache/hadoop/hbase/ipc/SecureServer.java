@@ -105,8 +105,8 @@ public abstract class SecureServer extends HBaseServer {
     // Cache the remote host & port info so that even if the socket is
     // disconnected, we can say where it used to connect to.
     private String hostAddress;
-    private String hostName;
     private int remotePort;
+    private InetAddress addr;
 
     boolean useSasl;
     SaslServer saslServer;
@@ -141,12 +141,11 @@ public abstract class SecureServer extends HBaseServer {
       this.unwrappedData = null;
       this.unwrappedDataLengthBuffer = ByteBuffer.allocate(4);
       this.socket = channel.socket();
-      InetAddress addr = socket.getInetAddress();
+      this.addr = socket.getInetAddress();
       if (addr == null) {
         this.hostAddress = "*Unknown*";
       } else {
         this.hostAddress = addr.getHostAddress();
-        this.hostName = addr.getCanonicalHostName();
       }
       this.remotePort = socket.getPort();
       this.responseQueue = new LinkedList<Call>();
@@ -169,8 +168,8 @@ public abstract class SecureServer extends HBaseServer {
       return hostAddress;
     }
 
-    public String getHostName() {
-      return hostName;
+    public InetAddress getHostInetAddress() {
+      return addr;
     }
 
     public void setLastContact(long lastContact) {
@@ -562,7 +561,7 @@ public abstract class SecureServer extends HBaseServer {
             && (authMethod != AuthMethod.DIGEST)) {
           ProxyUsers.authorize(ticket, this.getHostAddress(), conf);
         }
-        authorize(ticket, header, getHostName());
+        authorize(ticket, header, getHostInetAddress());
         if (LOG.isDebugEnabled()) {
           LOG.debug("Successfully authorized " + header);
         }
@@ -753,12 +752,12 @@ public abstract class SecureServer extends HBaseServer {
    *
    * @param user client user
    * @param connection incoming connection
-   * @param hostname fully-qualified domain name of incoming connection
+   * @param addr InetAddress of incoming connection
    * @throws org.apache.hadoop.security.authorize.AuthorizationException when the client isn't authorized to talk the protocol
    */
   public void authorize(UserGroupInformation user,
                         ConnectionHeader connection,
-                        String hostname
+                        InetAddress addr
                         ) throws AuthorizationException {
     if (authorize) {
       Class<?> protocol = null;
@@ -768,7 +767,7 @@ public abstract class SecureServer extends HBaseServer {
         throw new AuthorizationException("Unknown protocol: " +
                                          connection.getProtocol());
       }
-      authManager.authorize(user, protocol, getConf(), hostname);
+      authManager.authorize(user, protocol, getConf(), addr);
     }
   }
 }
