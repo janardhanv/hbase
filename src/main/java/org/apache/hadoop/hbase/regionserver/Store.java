@@ -39,11 +39,7 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.FileUtil;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hbase.HColumnDescriptor;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.RemoteExceptionHandler;
+import org.apache.hadoop.hbase.*;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.HeapSize;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
@@ -114,6 +110,7 @@ public class Store implements HeapSize {
   private final long desiredMaxFileSize;
   private final int blockingStoreFileCount;
   private volatile long storeSize = 0L;
+  private volatile long totalUncompressedBytes = 0L;
   private final Object flushLock = new Object();
   final ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
   private final String storeNameStr;
@@ -195,9 +192,15 @@ public class Store implements HeapSize {
 
     // Check if this is in-memory store
     this.inMemory = family.isInMemory();
+    long maxFileSize = 0L;
+    HTableDescriptor hTableDescriptor = region.getTableDesc();
+    if (hTableDescriptor != null) {
+      maxFileSize = hTableDescriptor.getMaxFileSize();
+    } else {
+      maxFileSize = HConstants.DEFAULT_MAX_FILE_SIZE;
+    }
 
     // By default we split region if a file > HConstants.DEFAULT_MAX_FILE_SIZE.
-    long maxFileSize = info.getTableDesc().getMaxFileSize();
     if (maxFileSize == HConstants.DEFAULT_MAX_FILE_SIZE) {
       maxFileSize = conf.getLong("hbase.hregion.max.filesize",
         HConstants.DEFAULT_MAX_FILE_SIZE);
@@ -286,6 +289,7 @@ public class Store implements HeapSize {
       }
       long length = curfile.getReader().length();
       this.storeSize += length;
+      this.totalUncompressedBytes += curfile.getReader().getTotalUncompressedBytes();
       if (LOG.isDebugEnabled()) {
         LOG.debug("loaded " + curfile.toStringDetailed());
       }
@@ -523,6 +527,7 @@ public class Store implements HeapSize {
       this.conf, this.family.getBloomFilterType(), this.inMemory);
     StoreFile.Reader r = sf.createReader();
     this.storeSize += r.length();
+    this.totalUncompressedBytes += r.getTotalUncompressedBytes();
     if(LOG.isInfoEnabled()) {
       LOG.info("Added " + sf + ", entries=" + r.getEntries() +
         ", sequenceid=" + logCacheFlushId +
@@ -1206,6 +1211,7 @@ public class Store implements HeapSize {
       }
       // 4. Compute new store size
       this.storeSize = 0L;
+      this.totalUncompressedBytes = 0L;
       for (StoreFile hsf : this.storefiles) {
         StoreFile.Reader r = hsf.getReader();
         if (r == null) {
@@ -1213,6 +1219,7 @@ public class Store implements HeapSize {
           continue;
         }
         this.storeSize += r.length();
+        this.totalUncompressedBytes += r.getTotalUncompressedBytes();
       }
     } finally {
       this.lock.writeLock().unlock();
@@ -1529,6 +1536,13 @@ public class Store implements HeapSize {
   }
 
   /**
+   * @return The size of the store files, in bytes, uncompressed.
+   */
+  long getStoreSizeUncompressed() {
+    return this.totalUncompressedBytes;
+  }
+
+  /**
    * @return The size of the store files, in bytes.
    */
   long getStorefilesSize() {
@@ -1682,7 +1696,7 @@ public class Store implements HeapSize {
 
   public static final long FIXED_OVERHEAD = ClassSize.align(
       ClassSize.OBJECT + (15 * ClassSize.REFERENCE) +
-      (7 * Bytes.SIZEOF_LONG) + (1 * Bytes.SIZEOF_DOUBLE) +
+      (8 * Bytes.SIZEOF_LONG) + (1 * Bytes.SIZEOF_DOUBLE) +
       (4 * Bytes.SIZEOF_INT) + (3 * Bytes.SIZEOF_BOOLEAN));
 
   public static final long DEEP_OVERHEAD = ClassSize.align(FIXED_OVERHEAD +

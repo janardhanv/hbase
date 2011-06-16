@@ -50,6 +50,7 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.master.HMaster;
+import org.apache.hadoop.hbase.migration.HRegionInfo090x;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
@@ -66,6 +67,7 @@ import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.mapred.MiniMRCluster;
 import org.apache.zookeeper.ZooKeeper;
@@ -830,7 +832,7 @@ public class HBaseTestingUtility {
     int count = 0;
     for (int i = 0; i < startKeys.length; i++) {
       int j = (i + 1) % startKeys.length;
-      HRegionInfo hri = new HRegionInfo(table.getTableDescriptor(),
+      HRegionInfo hri = new HRegionInfo(table.getTableName(),
         startKeys[i], startKeys[j]);
       Put put = new Put(hri.getRegionName());
       put.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
@@ -858,6 +860,97 @@ public class HBaseTestingUtility {
     return count;
   }
 
+  public int createMultiRegionsWithLegacyHRI(final Configuration c,
+                                             final HTableDescriptor htd,
+      final byte [] family, int numRegions)
+  throws IOException {
+    if (numRegions < 3) throw new IOException("Must create at least 3 regions");
+    byte [] startKey = Bytes.toBytes("aaaaa");
+    byte [] endKey = Bytes.toBytes("zzzzz");
+    byte [][] splitKeys = Bytes.split(startKey, endKey, numRegions - 3);
+    byte [][] regionStartKeys = new byte[splitKeys.length+1][];
+    for (int i=0;i<splitKeys.length;i++) {
+      regionStartKeys[i+1] = splitKeys[i];
+    }
+    regionStartKeys[0] = HConstants.EMPTY_BYTE_ARRAY;
+    return createMultiRegionsWithLegacyHRI(c, htd, family, regionStartKeys);
+  }
+
+  public int createMultiRegionsWithLegacyHRI(final Configuration c,
+                                             final HTableDescriptor htd,
+      final byte[] columnFamily, byte [][] startKeys)
+  throws IOException {
+    Arrays.sort(startKeys, Bytes.BYTES_COMPARATOR);
+    HTable meta = new HTable(c, HConstants.META_TABLE_NAME);
+    if(!htd.hasFamily(columnFamily)) {
+      HColumnDescriptor hcd = new HColumnDescriptor(columnFamily);
+      htd.addFamily(hcd);
+    }
+    List<HRegionInfo090x> newRegions
+        = new ArrayList<HRegionInfo090x>(startKeys.length);
+    int count = 0;
+    for (int i = 0; i < startKeys.length; i++) {
+      int j = (i + 1) % startKeys.length;
+      HRegionInfo090x hri = new HRegionInfo090x(htd,
+        startKeys[i], startKeys[j]);
+      Put put = new Put(hri.getRegionName());
+      put.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
+        Writables.getBytes(hri));
+      meta.put(put);
+      LOG.info("createMultiRegions: PUT inserted " + hri.toString());
+
+      newRegions.add(hri);
+      count++;
+    }
+    return count;
+
+  }
+
+  public int createMultiRegionsWithNewHRI(final Configuration c,
+                                             final HTableDescriptor htd,
+      final byte [] family, int numRegions)
+  throws IOException {
+    if (numRegions < 3) throw new IOException("Must create at least 3 regions");
+    byte [] startKey = Bytes.toBytes("aaaaa");
+    byte [] endKey = Bytes.toBytes("zzzzz");
+    byte [][] splitKeys = Bytes.split(startKey, endKey, numRegions - 3);
+    byte [][] regionStartKeys = new byte[splitKeys.length+1][];
+    for (int i=0;i<splitKeys.length;i++) {
+      regionStartKeys[i+1] = splitKeys[i];
+    }
+    regionStartKeys[0] = HConstants.EMPTY_BYTE_ARRAY;
+    return createMultiRegionsWithNewHRI(c, htd, family, regionStartKeys);
+  }
+
+  public int createMultiRegionsWithNewHRI(final Configuration c, final HTableDescriptor htd,
+      final byte[] columnFamily, byte [][] startKeys)
+  throws IOException {
+    Arrays.sort(startKeys, Bytes.BYTES_COMPARATOR);
+    HTable meta = new HTable(c, HConstants.META_TABLE_NAME);
+    if(!htd.hasFamily(columnFamily)) {
+      HColumnDescriptor hcd = new HColumnDescriptor(columnFamily);
+      htd.addFamily(hcd);
+    }
+    List<HRegionInfo> newRegions
+        = new ArrayList<HRegionInfo>(startKeys.length);
+    int count = 0;
+    for (int i = 0; i < startKeys.length; i++) {
+      int j = (i + 1) % startKeys.length;
+      HRegionInfo hri = new HRegionInfo(htd.getName(),
+        startKeys[i], startKeys[j]);
+      Put put = new Put(hri.getRegionName());
+      put.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
+        Writables.getBytes(hri));
+      meta.put(put);
+      LOG.info("createMultiRegions: PUT inserted " + hri.toString());
+
+      newRegions.add(hri);
+      count++;
+    }
+    return count;
+
+  }
+
   /**
    * Create rows in META for regions of the specified table with the specified
    * start keys.  The first startKey should be a 0 length byte array if you
@@ -878,7 +971,8 @@ public class HBaseTestingUtility {
     int count = 0;
     for (int i = 0; i < startKeys.length; i++) {
       int j = (i + 1) % startKeys.length;
-      HRegionInfo hri = new HRegionInfo(htd, startKeys[i], startKeys[j]);
+      HRegionInfo hri = new HRegionInfo(htd.getName(), startKeys[i],
+          startKeys[j]);
       Put put = new Put(hri.getRegionName());
       put.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
         Writables.getBytes(hri));
@@ -922,8 +1016,7 @@ public class HBaseTestingUtility {
     for (Result result : s) {
       HRegionInfo info = Writables.getHRegionInfo(
           result.getValue(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER));
-      HTableDescriptor desc = info.getTableDesc();
-      if (Bytes.compareTo(desc.getName(), tableName) == 0) {
+      if (Bytes.compareTo(info.getTableName(), tableName) == 0) {
         LOG.info("getMetaTableRows: row -> " +
             Bytes.toStringBinary(result.getRow()));
         rows.add(result.getRow());
@@ -1233,7 +1326,10 @@ public class HBaseTestingUtility {
     Field field = this.dfsCluster.getClass().getDeclaredField("nameNode");
     field.setAccessible(true);
     NameNode nn = (NameNode)field.get(this.dfsCluster);
-    nn.namesystem.leaseManager.setLeasePeriod(100, 50000);
+    field = nn.getClass().getDeclaredField("namesystem");
+    field.setAccessible(true);
+    FSNamesystem namesystem = (FSNamesystem)field.get(nn);
+    namesystem.leaseManager.setLeasePeriod(100, 50000);
   }
 
   /**

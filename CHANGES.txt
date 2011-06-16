@@ -10,6 +10,7 @@ Release 0.91.0 - Unreleased
                instead of wrapping in RuntimeException (Ted Yu via garyh)
    HBASE-3629  Update our thrift to 0.6 (Moaz Reyad)
    HBASE-1502  Remove need for heartbeats in HBase
+   HBASE-451   Remove HTableDescriptor from HRegionInfo (Subbu M Iyer)
 
   BUG FIXES
    HBASE-3280  YouAreDeadException being swallowed in HRS getMaster
@@ -115,6 +116,18 @@ Release 0.91.0 - Unreleased
    HBASE-3894  Thread contention over row locks set monitor (Dave Latham)
    HBASE-3959  hadoop-snappy version in the pom.xml is incorrect
                (Alejandro Abdelnur)
+   HBASE-3971  Compression.java uses ClassLoader.getSystemClassLoader()
+               to load codec (Alejandro Abdelnur)
+   HBASE-3979  Trivial fixes in code, document (Ming Ma)
+   HBASE-3794  Ability to Discard Bad HTable Puts
+   HBASE-3923  HBASE-1502 Broke Shell's status 'simple' and 'detailed'
+   HBASE-3978  Rowlock lease renew doesn't work when custom coprocessor
+               indicates to bypass default action (Ming Ma)
+   HBASE-3963  Schedule all log-spliiting at startup all at once (mingjian)
+   HBASE-3983  list command in shell seems broken
+   HBASE-3793  HBASE-3468 Broke checkAndPut with null value (Ming Ma)
+   HBASE-3995  HBASE-3946 broke TestMasterFailover
+   HBASE-3889  NPE in Distributed Log Splitting (Anirudh Todi)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -247,13 +260,21 @@ Release 0.91.0 - Unreleased
                (Alejandro Abdelnur)
    HBASE-3941  "hbase version" command line should print version info
                (Jolly Chen)
+   HBASE-3961  Add Delete.setWriteToWAL functionality (Bruno Dumon)
+   HBASE-3928  Some potential performance improvements to Bytes/KeyValue
+   HBASE-3982  Improvements to TestHFileSeek
+   HBASE-3940  HBase daemons should log version info at startup and possibly
+               periodically (Li Pi)
+   HBASE-3789  Cleanup the locking contention in the master
+   HBASE-3927  Display total uncompressed byte size of a region in web UI
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
    HBASE-3573  Move shutdown messaging OFF hearbeat; prereq for fix of
                hbase-1502
    HBASE-3071  Graceful decommissioning of a regionserver
-
+   HBASE-3970  Address HMaster crash/failure half way through meta migration
+               (Subbu M Iyer)
 
   NEW FEATURES
    HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
@@ -284,6 +305,7 @@ Release 0.91.0 - Unreleased
                RS web UIs
    HBASE-3691  Add compressor support for 'snappy', google's compressor
                (Nichole Treadway and Nicholas Telford)
+   HBASE-2233  Support both Hadoop 0.20 and 0.22
 
 
 Release 0.90.4 - Unreleased
@@ -307,6 +329,18 @@ Release 0.90.4 - Unreleased
                the same time (Jieshan Bean)
    HBASE-3934  MemStoreFlusher.getMemStoreLimit() doesn't honor defaultLimit
                (Ted Yu)
+   HBASE-3946  The splitted region can be online again while the standby
+               hmaster becomes the active one (Jieshan Bean)
+   HBASE-3916  Fix the default bind address of ThriftServer to be wildcard
+               instead of localhost. (Li Pi)
+   HBASE-3985  Same Region could be picked out twice in LoadBalance
+               (Jieshan Bean)
+   HBASE-3987  Fix a NullPointerException on a failure to load Bloom filter data
+               (Mikhail Bautin)
+   HBASE-3948  Improve split/compact result page for RegionServer status page
+               (Li Pi)
+   HBASE-3988  Infinite loop for secondary master (Liyin Tang)
+
 
   IMPROVEMENT
    HBASE-3882  hbase-config.sh needs to be updated so it can auto-detects the
@@ -314,6 +348,8 @@ Release 0.90.4 - Unreleased
    HBASE-3920  HLog hbase.regionserver.flushlogentries no longer supported
                (Dave Latham)
    HBASE-3919  More places output binary data to text (Dave Latham)
+   HBASE-3873  HBase IRB shell: Don't pretty-print the output when stdout
+               isn't a TTY (Benoît Sigoure)
 
 Release 0.90.3 - May 19th, 2011
 

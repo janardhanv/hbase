@@ -407,14 +407,6 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
   }
 
   /**
-   * Get the set of already watched unassigned nodes.
-   * @return Set of Nodes.
-   */
-  public Set<String> getNodes() {
-    return unassignedNodes;
-  }
-
-  /**
    * Handles KeeperExceptions in client calls.
    * <p>
    * This may be temporary but for now this gives one place to deal with these.

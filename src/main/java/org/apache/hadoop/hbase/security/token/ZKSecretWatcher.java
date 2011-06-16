@@ -61,7 +61,7 @@ public class ZKSecretWatcher extends ZooKeeperListener {
 
     if (ZKUtil.watchAndCheckExists(watcher, keysParentZNode)) {
       List<ZKUtil.NodeAndData> nodes =
-          ZKUtil.watchAndGetNewChildren(watcher, keysParentZNode);
+          ZKUtil.getChildDataAndWatchForNewChildren(watcher, keysParentZNode);
       refreshNodes(nodes);
     }
   }
@@ -71,7 +71,7 @@ public class ZKSecretWatcher extends ZooKeeperListener {
     if (path.equals(keysParentZNode)) {
       try {
         List<ZKUtil.NodeAndData> nodes =
-            ZKUtil.watchAndGetNewChildren(watcher, keysParentZNode);
+            ZKUtil.getChildDataAndWatchForNewChildren(watcher, keysParentZNode);
         refreshNodes(nodes);
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper", ke);
@@ -114,7 +114,7 @@ public class ZKSecretWatcher extends ZooKeeperListener {
       // keys changed
       try {
         List<ZKUtil.NodeAndData> nodes =
-            ZKUtil.watchAndGetNewChildren(watcher, keysParentZNode);
+            ZKUtil.getChildDataAndWatchForNewChildren(watcher, keysParentZNode);
         refreshNodes(nodes);
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper", ke);

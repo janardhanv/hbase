@@ -20,6 +20,8 @@
 package org.apache.hadoop.hbase.master;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.locks.Lock;
@@ -31,12 +33,16 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.HColumnDescriptor;
-import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.InvalidFamilyOperationException;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.Store;
@@ -46,6 +52,7 @@ import org.apache.hadoop.hbase.regionserver.wal.OrphanHLogAfterSplitException;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.security.UserGroupInformation;
 
 /**
  * This class abstracts a bunch of operations the HMaster needs to interact with
@@ -175,7 +182,7 @@ public class MasterFileSystem {
   /**
    * Inspect the log directory to recover any log file without
    * an active region server.
-   * @param onlineServers Map of online servers keyed by
+   * @param onlineServers Set of online servers keyed by
    * {@link ServerName}
    */
   void splitLogAfterStartup(final Set<ServerName> onlineServers) {
@@ -197,64 +204,78 @@ public class MasterFileSystem {
       LOG.debug("No log files to split, proceeding...");
       return;
     }
+    List<ServerName> serverNames = new ArrayList<ServerName>();
     for (FileStatus status : logFolders) {
       ServerName serverName = new ServerName(status.getPath().getName());
       if (!onlineServers.contains(serverName)) {
         LOG.info("Log folder " + status.getPath() + " doesn't belong " +
           "to a known region server, splitting");
-        splitLog(serverName);
+        serverNames.add(serverName);
       } else {
         LOG.info("Log folder " + status.getPath() +
           " belongs to an existing region server");
       }
-    }
+    }  
+    splitLog(serverNames);
   }
-
-  public void splitLog(final ServerName serverName) {
+  
+  public void splitLog(final ServerName serverName){
+    List<ServerName> serverNames = new ArrayList<ServerName>();
+    serverNames.add(serverName);
+    splitLog(serverNames);
+  }
+  
+  public void splitLog(final List<ServerName> serverNames) {
     long splitTime = 0, splitLogSize = 0;
-    Path logDir = new Path(this.rootdir, HLog.getHLogDirectoryName(serverName.toString()));
+    List<Path> logDirs = new ArrayList<Path>();
+    for(ServerName serverName: serverNames){
+      Path logDir = new Path(this.rootdir, HLog.getHLogDirectoryName(serverName.toString()));
+      logDirs.add(logDir);
+    }
+      
     if (distributedLogSplitting) {
       splitTime = EnvironmentEdgeManager.currentTimeMillis();
       try {
         try {
-          splitLogSize = splitLogManager.splitLogDistributed(logDir);
+          splitLogSize = splitLogManager.splitLogDistributed(logDirs);
         } catch (OrphanHLogAfterSplitException e) {
           LOG.warn("Retrying distributed splitting for " +
-              serverName + "because of:", e);
-          splitLogManager.splitLogDistributed(logDir);
+            serverNames + "because of:", e);
+            splitLogManager.splitLogDistributed(logDirs);
         }
       } catch (IOException e) {
-        LOG.error("Failed distributed splitting " + serverName, e);
+        LOG.error("Failed distributed splitting " + serverNames, e);
       }
       splitTime = EnvironmentEdgeManager.currentTimeMillis() - splitTime;
     } else {
-      // splitLogLock ensures that dead region servers' logs are processed
-      // one at a time
-      this.splitLogLock.lock();
-
-      try {
-        HLogSplitter splitter = HLogSplitter.createLogSplitter(
+      for(Path logDir: logDirs){
+        // splitLogLock ensures that dead region servers' logs are processed
+        // one at a time
+        this.splitLogLock.lock();
+        try {              
+          HLogSplitter splitter = HLogSplitter.createLogSplitter(
             conf, rootdir, logDir, oldLogDir, this.fs);
-        try {
-          // If FS is in safe mode, just wait till out of it.
-          FSUtils.waitOnSafeMode(conf,
-            conf.getInt(HConstants.THREAD_WAKE_FREQUENCY, 1000));  
-          splitter.splitLog();
-        } catch (OrphanHLogAfterSplitException e) {
-          LOG.warn("Retrying splitting because of:", e);
-          // An HLogSplitter instance can only be used once.  Get new instance.
-          splitter = HLogSplitter.createLogSplitter(conf, rootdir, logDir,
+          try {
+            // If FS is in safe mode, just wait till out of it.
+            FSUtils.waitOnSafeMode(conf, conf.getInt(HConstants.THREAD_WAKE_FREQUENCY, 1000));
+            splitter.splitLog();
+          } catch (OrphanHLogAfterSplitException e) {
+            LOG.warn("Retrying splitting because of:", e);
+            //An HLogSplitter instance can only be used once.  Get new instance.
+            splitter = HLogSplitter.createLogSplitter(conf, rootdir, logDir,
               oldLogDir, this.fs);
-          splitter.splitLog();
+            splitter.splitLog();
+          }
+          splitTime = splitter.getTime();
+          splitLogSize = splitter.getSize();
+        } catch (IOException e) {
+          LOG.error("Failed splitting " + logDir.toString(), e);
+        } finally {
+          this.splitLogLock.unlock();
         }
-        splitTime = splitter.getTime();
-        splitLogSize = splitter.getSize();
-      } catch (IOException e) {
-        LOG.error("Failed splitting " + logDir.toString(), e);
-      } finally {
-        this.splitLogLock.unlock();
       }
     }
+
     if (this.metrics != null) {
       this.metrics.addSplit(splitTime, splitLogSize);
     }
@@ -311,22 +332,25 @@ public class MasterFileSystem {
   throws IOException {
     LOG.info("BOOTSTRAP: creating ROOT and first META regions");
     try {
+      setCurrentAsOwnerForRoot();
+      setCurrentAsOwnerForMeta();
+
       // Bootstrapping, make sure blockcache is off.  Else, one will be
       // created here in bootstap and it'll need to be cleaned up.  Better to
       // not make it in first place.  Turn off block caching for bootstrap.
       // Enable after.
+      setInfoFamilyCachingForRoot(false);
+      setInfoFamilyCachingForMeta(false);
       HRegionInfo rootHRI = new HRegionInfo(HRegionInfo.ROOT_REGIONINFO);
-      setInfoFamilyCaching(rootHRI, false);
-      HRegionInfo.setOwnerAsCurrentUser(rootHRI);
+      HRegion root = HRegion.createHRegion(rootHRI, rd, c,
+          HTableDescriptor.ROOT_TABLEDESC);
       HRegionInfo metaHRI = new HRegionInfo(HRegionInfo.FIRST_META_REGIONINFO);
-      setInfoFamilyCaching(metaHRI, false);
-      HRegionInfo.setOwnerAsCurrentUser(metaHRI);
- 
-     // UserGroupInformation.getCurrentUser() vs. System.getProperty("user.name") ..?
-      HRegion root = HRegion.createHRegion(rootHRI, rd, c);
-      HRegion meta = HRegion.createHRegion(metaHRI, rd, c);
-      setInfoFamilyCaching(rootHRI, true);
-      setInfoFamilyCaching(metaHRI, true);
+      HRegion meta = HRegion.createHRegion(metaHRI, rd, c,
+          HTableDescriptor.META_TABLEDESC);
+
+      setInfoFamilyCachingForRoot(true);
+      setInfoFamilyCachingForMeta(true);
+
       // Add first region from the META table to the ROOT region.
       HRegion.addRegionToMETA(root, meta);
       root.close();
@@ -340,18 +364,36 @@ public class MasterFileSystem {
     }
   }
 
-  /**
-   * @param hri Set all family block caching to <code>b</code>
-   * @param b
-   */
-  private static void setInfoFamilyCaching(final HRegionInfo hri, final boolean b) {
-    for (HColumnDescriptor hcd: hri.getTableDesc().families.values()) {
+  private static void setCurrentAsOwnerForRoot() throws IOException {
+    HTableDescriptor.ROOT_TABLEDESC.setOwner(
+        UserGroupInformation.getCurrentUser());
+  }
+
+  private static void setInfoFamilyCachingForRoot(final boolean b) {
+    for (HColumnDescriptor hcd:
+        HTableDescriptor.ROOT_TABLEDESC.families.values()) {
+       if (Bytes.equals(hcd.getName(), HConstants.CATALOG_FAMILY)) {
+         hcd.setBlockCacheEnabled(b);
+         hcd.setInMemory(b);
+     }
+    }
+  }
+
+  private static void setCurrentAsOwnerForMeta() throws IOException {
+    HTableDescriptor.META_TABLEDESC.setOwner(
+        UserGroupInformation.getCurrentUser());
+  }
+
+  private static void setInfoFamilyCachingForMeta(final boolean b) {
+    for (HColumnDescriptor hcd:
+        HTableDescriptor.META_TABLEDESC.families.values()) {
       if (Bytes.equals(hcd.getName(), HConstants.CATALOG_FAMILY)) {
         hcd.setBlockCacheEnabled(b);
         hcd.setInMemory(b);
       }
     }
   }
+
 
   public void deleteRegion(HRegionInfo region) throws IOException {
     fs.delete(HRegion.getRegionDir(rootdir, region), true);
@@ -367,16 +409,126 @@ public class MasterFileSystem {
     //      @see HRegion.checkRegioninfoOnFilesystem()
   }
 
-  public void deleteFamily(HRegionInfo region, byte[] familyName)
-  throws IOException {
-    fs.delete(Store.getStoreHomedir(
-        new Path(rootdir, region.getTableDesc().getNameAsString()),
-        region.getEncodedName(), familyName), true);
-  }
-
   public void stop() {
     if (splitLogManager != null) {
       this.splitLogManager.stop();
     }
   }
+
+  /**
+   * Get table info path for a table.
+   * @param tableName
+   * @return Table info path
+   */
+  private Path getTableInfoPath(byte[] tableName) {
+    Path tablePath = new Path(this.rootdir, Bytes.toString(tableName));
+    Path tableInfoPath = new Path(tablePath, HConstants.TABLEINFO_NAME);
+    return tableInfoPath;
+  }
+
+    /**
+   * Get table info path for a table.
+   * @param tableName
+   * @return Table info path
+   */
+  private Path getTablePath(byte[] tableName) {
+    return new Path(this.rootdir, Bytes.toString(tableName));
+  }
+  /**
+   * Get a HTableDescriptor of a table.
+   * @param tableName
+   * @return HTableDescriptor
+   */
+  public HTableDescriptor getTableDescriptor(byte[] tableName) {
+    try {
+      return FSUtils.getTableDescriptor(fs, this.rootdir, tableName);
+    } catch (IOException ioe) {
+      LOG.info("Exception during readTableDecriptor ", ioe);
+    }
+    return null;
+  }
+
+    /**
+   * Create new HTableDescriptor in HDFS.
+   * @param htableDescriptor
+   */
+  public void createTableDescriptor(HTableDescriptor htableDescriptor) {
+    FSUtils.createTableDescriptor(htableDescriptor, conf);
+  }
+
+  /**
+   * Update a table descriptor.
+   * @param htableDescriptor
+   * @return updated HTableDescriptor
+   * @throws IOException
+   */
+  public HTableDescriptor updateTableDescriptor(HTableDescriptor htableDescriptor)
+      throws IOException {
+    LOG.info("Update Table Descriptor.  Current HTD = " + htableDescriptor);
+    FSUtils.updateHTableDescriptor(fs, conf, htableDescriptor);
+    return htableDescriptor;
+  }
+
+  /**
+   * Delete column of a table
+   * @param tableName
+   * @param familyName
+   * @return Modified HTableDescriptor with requested column deleted.
+   * @throws IOException
+   */
+  public HTableDescriptor deleteColumn(byte[] tableName, byte[] familyName)
+      throws IOException {
+    LOG.info("DeleteColumn. Table = " + Bytes.toString(tableName)
+        + " family = " + Bytes.toString(familyName));
+    HTableDescriptor htd = getTableDescriptor(tableName);
+    htd.removeFamily(familyName);
+    updateTableDescriptor(htd);
+    return htd;
+  }
+
+  /**
+   * Modify Column of a table
+   * @param tableName
+   * @param hcd HColumnDesciptor
+   * @return Modified HTableDescriptor with the column modified.
+   * @throws IOException
+   */
+  public HTableDescriptor modifyColumn(byte[] tableName, HColumnDescriptor hcd)
+      throws IOException {
+    LOG.info("AddModifyColumn. Table = " + Bytes.toString(tableName)
+        + " HCD = " + hcd.toString());
+
+    HTableDescriptor htd = getTableDescriptor(tableName);
+    byte [] familyName = hcd.getName();
+    if(!htd.hasFamily(familyName)) {
+      throw new InvalidFamilyOperationException("Family '" +
+        Bytes.toString(familyName) + "' doesn't exists so cannot be modified");
+    }
+    htd.addFamily(hcd);
+    updateTableDescriptor(htd);
+    return htd;
+  }
+
+  /**
+   * Add column to a table
+   * @param tableName
+   * @param hcd
+   * @return Modified HTableDescriptor with new column added.
+   * @throws IOException
+   */
+  public HTableDescriptor addColumn(byte[] tableName, HColumnDescriptor hcd)
+      throws IOException {
+    LOG.info("AddColumn. Table = " + Bytes.toString(tableName)
+        + " HCD = " + hcd.toString());
+
+    HTableDescriptor htd = getTableDescriptor(tableName);
+    if(htd == null) {
+      throw new InvalidFamilyOperationException("Family '" +
+        hcd.getNameAsString() + "' cannot be modified as HTD is null");
+    }
+    htd.addFamily(hcd);
+    updateTableDescriptor(htd);
+    return htd;
+  }
+
 }

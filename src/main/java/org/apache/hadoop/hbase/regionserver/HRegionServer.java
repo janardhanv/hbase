@@ -126,6 +126,7 @@ import org.apache.hadoop.hbase.util.InfoServer;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Sleeper;
 import org.apache.hadoop.hbase.util.Threads;
+import org.apache.hadoop.hbase.util.VersionInfo;
 import org.apache.hadoop.hbase.zookeeper.ClusterStatusTracker;
 import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperNodeTracker;
@@ -908,6 +909,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     byte[] name = r.getRegionName();
     int stores = 0;
     int storefiles = 0;
+    int storeUncompressedSizeMB = 0;
     int storefileSizeMB = 0;
     int memstoreSizeMB = (int) (r.memstoreSize.get() / 1024 / 1024);
     int storefileIndexSizeMB = 0;
@@ -915,11 +917,14 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       stores += r.stores.size();
       for (Store store : r.stores.values()) {
         storefiles += store.getStorefilesCount();
+        storeUncompressedSizeMB += (int) (store.getStoreSizeUncompressed()
+            / 1024 / 1024);
         storefileSizeMB += (int) (store.getStorefilesSize() / 1024 / 1024);
         storefileIndexSizeMB += (int) (store.getStorefilesIndexSize() / 1024 / 1024);
       }
     }
     return new HServerLoad.RegionLoad(name,stores, storefiles,
+        storeUncompressedSizeMB,
         storefileSizeMB, memstoreSizeMB, storefileIndexSizeMB,
         (int) r.readRequestsCount.get(), (int) r.writeRequestsCount.get());
   }
@@ -1289,7 +1294,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     boolean auto = this.conf.getBoolean("hbase.regionserver.info.port.auto", false);
     while (true) {
       try {
-        this.infoServer = new InfoServer("regionserver", addr, port, false);
+        this.infoServer = new InfoServer("regionserver", addr, port, false, this.conf);
         this.infoServer.addServlet("status", "/rs-status", RSStatusServlet.class); 
         this.infoServer.setAttribute(REGIONSERVER, this);
         this.infoServer.start();
@@ -1349,6 +1354,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   public void postOpenDeployTasks(final HRegion r, final CatalogTracker ct,
       final boolean daughter)
   throws KeeperException, IOException {
+    LOG.info("HRS.PostOpenDeployTasks");
     // Do checks to see if we need to compact (references or too many files)
     for (Store s : r.getStores().values()) {
       if (s.hasReferences() || s.needsCompaction()) {
@@ -1358,24 +1364,36 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
     // Add to online regions if all above was successful.
     addToOnlineRegions(r);
-
+    LOG.info("addToOnlineRegions is done" + r.getRegionInfo());
     // Update ZK, ROOT or META
     if (r.getRegionInfo().isRootRegion()) {
+
+      LOG.info("setRootLocation");
       RootLocationEditor.setRootLocation(getZooKeeper(),
        this.serverNameFromMasterPOV);
     } else if (r.getRegionInfo().isMetaRegion()) {
+      LOG.info("updateMetaLocation");
+
       MetaEditor.updateMetaLocation(ct, r.getRegionInfo(),
         this.serverNameFromMasterPOV);
     } else {
+      LOG.info("updateMetaLocation 111");
+
       if (daughter) {
+        LOG.info("updateMetaLocation 22");
+
         // If daughter of a split, update whole row, not just location.
         MetaEditor.addDaughter(ct, r.getRegionInfo(),
           this.serverNameFromMasterPOV);
       } else {
+        LOG.info("updateMetaLocation 33");
+
         MetaEditor.updateRegionLocation(ct, r.getRegionInfo(),
           this.serverNameFromMasterPOV);
       }
     }
+    LOG.info("END HRS.PostOpenDeployTasks");
+
   }
 
   /**
@@ -1622,13 +1640,14 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     requestCount.incrementAndGet();
     try {
       HRegion region = getRegion(regionName);
+      Integer lock = getLockFromId(get.getLockId());
       if (region.getCoprocessorHost() != null) {
         Boolean result = region.getCoprocessorHost().preExists(get);
         if (result != null) {
           return result.booleanValue();
         }
       }
-      Result r = region.get(get, getLockFromId(get.getLockId()));
+      Result r = region.get(get, lock);
       boolean result = r != null && !r.isEmpty();
       if (region.getCoprocessorHost() != null) {
         result = region.getCoprocessorHost().postExists(get, result);
@@ -1729,6 +1748,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           + "regionName is null");
     }
     HRegion region = getRegion(regionName);
+    Integer lock = getLockFromId(put.getLockId());
     WritableByteArrayComparable comparator = new BinaryComparator(value);
     if (region.getCoprocessorHost() != null) {
       Boolean result = region.getCoprocessorHost()
@@ -1740,7 +1760,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     }
     boolean result = checkAndMutate(regionName, row, family, qualifier,
       CompareOp.EQUAL, new BinaryComparator(value), put,
-      getLockFromId(put.getLockId()));
+      lock);
     if (region.getCoprocessorHost() != null) {
       result = region.getCoprocessorHost().postCheckAndPut(row, family,
         qualifier, CompareOp.EQUAL, comparator, put, result);
@@ -1770,6 +1790,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           + "regionName is null");
     }
     HRegion region = getRegion(regionName);
+    Integer lock = getLockFromId(put.getLockId());    
     if (region.getCoprocessorHost() != null) {
       Boolean result = region.getCoprocessorHost()
         .preCheckAndPut(row, family, qualifier, compareOp, comparator, put);
@@ -1778,7 +1799,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       }
     }
     boolean result = checkAndMutate(regionName, row, family, qualifier,
-      compareOp, comparator, put, getLockFromId(put.getLockId()));
+      compareOp, comparator, put, lock);
     if (region.getCoprocessorHost() != null) {
       result = region.getCoprocessorHost().postCheckAndPut(row, family,
         qualifier, compareOp, comparator, put, result);
@@ -1808,6 +1829,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           + "regionName is null");
     }
     HRegion region = getRegion(regionName);
+    Integer lock = getLockFromId(delete.getLockId());        
     WritableByteArrayComparable comparator = new BinaryComparator(value);
     if (region.getCoprocessorHost() != null) {
       Boolean result = region.getCoprocessorHost().preCheckAndDelete(row,
@@ -1817,7 +1839,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       }
     }
     boolean result = checkAndMutate(regionName, row, family, qualifier,
-      CompareOp.EQUAL, comparator, delete, getLockFromId(delete.getLockId()));
+      CompareOp.EQUAL, comparator, delete, lock);
     if (region.getCoprocessorHost() != null) {
       result = region.getCoprocessorHost().postCheckAndDelete(row, family,
         qualifier, CompareOp.EQUAL, comparator, delete, result);
@@ -1848,6 +1870,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         + "regionName is null");
     }
     HRegion region = getRegion(regionName);
+    Integer lock = getLockFromId(delete.getLockId());        
     if (region.getCoprocessorHost() != null) {
       Boolean result = region.getCoprocessorHost().preCheckAndDelete(row,
         family, qualifier, compareOp, comparator, delete);
@@ -1856,7 +1879,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
      }
     }
     boolean result = checkAndMutate(regionName, row, family, qualifier,
-      compareOp, comparator, delete, getLockFromId(delete.getLockId()));
+      compareOp, comparator, delete, lock);
    if (region.getCoprocessorHost() != null) {
      result = region.getCoprocessorHost().postCheckAndDelete(row, family,
        qualifier, compareOp, comparator, delete, result);
@@ -2074,7 +2097,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       throws IOException {
     checkOpen();
     try {
-      boolean writeToWAL = true;
+      boolean writeToWAL = delete.getWriteToWAL();
       this.requestCount.incrementAndGet();
       HRegion region = getRegion(regionName);
       if (!region.getRegionInfo().isMetaTable()) {
@@ -2094,7 +2117,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     checkOpen();
     HRegion region = null;
     try {
-      boolean writeToWAL = true;
       region = getRegion(regionName);
       if (!region.getRegionInfo().isMetaTable()) {
         this.cacheFlusher.reclaimMemStoreMemory();
@@ -2104,7 +2126,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       for (Delete delete : deletes) {
         this.requestCount.incrementAndGet();
         locks[i] = getLockFromId(delete.getLockId());
-        region.delete(delete, locks[i], writeToWAL);
+        region.delete(delete, locks[i], delete.getWriteToWAL());
         i++;
       }
     } catch (WrongRegionException ex) {
@@ -2625,6 +2647,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     requestCount.incrementAndGet();
     try {
       HRegion region = getRegion(regionName);
+      Integer lock = getLockFromId(increment.getLockId());
       Increment incVal = increment;
       Result resVal;
       if (region.getCoprocessorHost() != null) {
@@ -2633,7 +2656,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           return resVal;
         }
       }
-      resVal = region.increment(incVal, getLockFromId(increment.getLockId()),
+      resVal = region.increment(incVal, lock,
           increment.getWriteToWAL());
       if (region.getCoprocessorHost() != null) {
         region.getCoprocessorHost().postIncrement(incVal, resVal);
@@ -2937,6 +2960,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * @see org.apache.hadoop.hbase.regionserver.HRegionServerCommandLine
    */
   public static void main(String[] args) throws Exception {
+	VersionInfo.logVersion();
     Configuration conf = HBaseConfiguration.create();
     @SuppressWarnings("unchecked")
     Class<? extends HRegionServer> regionServerClass = (Class<? extends HRegionServer>) conf

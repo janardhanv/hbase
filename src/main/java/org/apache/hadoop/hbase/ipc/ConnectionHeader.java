@@ -59,7 +59,6 @@ class ConnectionHeader implements Writable {
     if (protocol.isEmpty()) {
       protocol = null;
     }
-
     boolean ugiUsernamePresent = in.readBoolean();
     if (ugiUsernamePresent) {
       String username = in.readUTF();
@@ -110,10 +109,10 @@ class ConnectionHeader implements Writable {
   }
 
   public UserGroupInformation getUgi() {
-    return ugi;
+    return null;
   }
 
   public String toString() {
-    return protocol + "-" + ugi;
+    return protocol;
   }
 }

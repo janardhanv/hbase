@@ -51,7 +51,7 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
     watcher.registerListener(this);
     if (ZKUtil.watchAndCheckExists(watcher, aclZNode)) {
       List<ZKUtil.NodeAndData> existing =
-          ZKUtil.watchAndGetNewChildren(watcher, aclZNode);
+          ZKUtil.getChildDataAndWatchForNewChildren(watcher, aclZNode);
       if (existing != null) {
         refreshNodes(existing);
       }
@@ -63,7 +63,7 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
     if (path.equals(aclZNode)) {
       try {
         List<ZKUtil.NodeAndData> nodes =
-            ZKUtil.watchAndGetNewChildren(watcher, aclZNode);
+            ZKUtil.getChildDataAndWatchForNewChildren(watcher, aclZNode);
         refreshNodes(nodes);
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper", ke);
@@ -101,7 +101,7 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
       // table permissions changed
       try {
         List<ZKUtil.NodeAndData> nodes =
-            ZKUtil.watchAndGetNewChildren(watcher, aclZNode);
+            ZKUtil.getChildDataAndWatchForNewChildren(watcher, aclZNode);
         refreshNodes(nodes);
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper", ke);

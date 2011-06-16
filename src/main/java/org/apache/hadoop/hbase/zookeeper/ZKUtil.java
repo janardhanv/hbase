@@ -27,7 +27,6 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
-import java.util.concurrent.Semaphore;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.logging.Log;
@@ -359,30 +358,6 @@ public class ZKUtil {
   }
 
   /**
-   * Atomically add watches and read data from all unwatched unassigned nodes.
-   *
-   * <p>This works because master is the only person deleting nodes.
-   */
-  public static List<NodeAndData> watchAndGetNewChildren(ZooKeeperWatcher zkw,
-      String baseNode)
-  throws KeeperException {
-    List<NodeAndData> newNodes = new ArrayList<NodeAndData>();
-    synchronized(zkw.getNodes()) {
-      List<String> nodes =
-        ZKUtil.listChildrenAndWatchForNewChildren(zkw, baseNode);
-      for(String node : nodes) {
-        String nodePath = ZKUtil.joinZNode(baseNode, node);
-        if(!zkw.getNodes().contains(nodePath)) {
-          byte [] data = ZKUtil.getDataAndWatch(zkw, nodePath);
-          newNodes.add(new NodeAndData(nodePath, data));
-          zkw.getNodes().add(nodePath);
-        }
-      }
-    }
-    return newNodes;
-  }
-
-  /**
    * Simple class to hold a node path and node data.
    */
   public static class NodeAndData {
@@ -562,6 +537,35 @@ public class ZKUtil {
       zkw.interruptedException(e);
       return null;
     }
+  }
+
+  /**
+   * Returns the date of child znodes of the specified znode.  Also sets a watch on
+   * the specified znode which will capture a NodeDeleted event on the specified
+   * znode as well as NodeChildrenChanged if any children of the specified znode
+   * are created or deleted.
+   *
+   * Returns null if the specified node does not exist.  Otherwise returns a
+   * list of children of the specified node.  If the node exists but it has no
+   * children, an empty list will be returned.
+   *
+   * @param zkw zk reference
+   * @param znode path of node to list and watch children of
+   * @return list of data of children of the specified node, an empty list if the node
+   *          exists but has no children, and null if the node does not exist
+   * @throws KeeperException if unexpected zookeeper exception
+   */
+  public static List<NodeAndData> getChildDataAndWatchForNewChildren(
+      ZooKeeperWatcher zkw, String baseNode) throws KeeperException {
+    List<String> nodes =
+      ZKUtil.listChildrenAndWatchForNewChildren(zkw, baseNode);
+    List<NodeAndData> newNodes = new ArrayList<NodeAndData>();
+    for (String node: nodes) {
+      String nodePath = ZKUtil.joinZNode(baseNode, node);
+      byte [] data = ZKUtil.getDataAndWatch(zkw, nodePath);
+      newNodes.add(new NodeAndData(nodePath, data));
+    }
+    return newNodes;
   }
 
   /**

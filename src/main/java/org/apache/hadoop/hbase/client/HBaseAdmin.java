@@ -21,10 +21,8 @@ package org.apache.hadoop.hbase.client;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.List;
-import java.util.ArrayList;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -106,6 +104,7 @@ public class HBaseAdmin implements Abortable, Closeable {
     CatalogTracker ct = null;
     try {
       ct = new CatalogTracker(this.conf);
+
       ct.start();
     } catch (InterruptedException e) {
       // Let it out as an IOE for now until we redo all so tolerate IEs
@@ -1266,4 +1265,16 @@ public class HBaseAdmin implements Abortable, Closeable {
       this.connection.close();
     }
   }
+
+ /**
+ * Get tableDescriptors
+ * @param tableNames List of table names
+ * @return HTD[] the tableDescriptor
+ * @throws IOException if a remote or network exception occurs
+ */
+  public HTableDescriptor[] getTableDescriptors(List<String> tableNames)
+  throws IOException {
+    return this.connection.getHTableDescriptors(tableNames);
+  }
+
 }
