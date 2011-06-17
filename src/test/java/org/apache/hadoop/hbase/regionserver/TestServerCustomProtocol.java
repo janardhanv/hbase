@@ -119,9 +119,9 @@ public class TestServerCustomProtocol {
         new byte[][]{ HConstants.EMPTY_BYTE_ARRAY,
             ROW_B, ROW_C});
 
-    // TODO: use a test coprocessor for registration (once merged with CP code)
-    // sleep here is an ugly hack to allow region transitions to finish
-    Thread.sleep(5000);
+    // TODO: sleep here is an ugly hack to allow region transitions to finish
+    Thread.sleep(10000); // 5s is not enough time
+
     for (JVMClusterUtil.RegionServerThread t :
       cluster.getRegionServerThreads()) {
       for (HRegionInfo r : t.getRegionServer().getOnlineRegions()) {
