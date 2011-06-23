@@ -23,8 +23,7 @@ package org.apache.hadoop.hbase.security.token;
 import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.util.Iterator;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.collect.Maps;
@@ -58,10 +57,10 @@ public class AuthenticationTokenSecretManager
   private LeaderElector leaderElector;
   private ClusterId clusterId;
 
-  private ConcurrentMap<Integer,AuthenticationKey> allKeys = Maps.newConcurrentMap();
+  private Map<Integer,AuthenticationKey> allKeys = Maps.newHashMap();
   private AuthenticationKey currentKey;
 
-  private AtomicInteger idSeq = new AtomicInteger();
+  private int idSeq;
   private AtomicLong tokenSeq = new AtomicLong();
   private String name;
 
@@ -151,7 +150,7 @@ public class AuthenticationTokenSecretManager
     return token;
   }
 
-  public void addKey(AuthenticationKey key) throws IOException {
+  public synchronized void addKey(AuthenticationKey key) throws IOException {
     // ignore zk changes when master
     if (leaderElector.isMaster()) {
       LOG.debug("Running as master, ignoring new key "+key.getKeyId());
@@ -159,29 +158,20 @@ public class AuthenticationTokenSecretManager
     }
 
     if (LOG.isDebugEnabled()) {
-      LOG.debug("Adding new key "+key.getKeyId());
+      LOG.debug("Adding key "+key.getKeyId());
     }
 
-    allKeys.putIfAbsent(key.getKeyId(), key);
+    allKeys.put(key.getKeyId(), key);
     if (currentKey == null || key.getKeyId() > currentKey.getKeyId()) {
       currentKey = key;
     }
+    // update current sequence
+    if (key.getKeyId() > idSeq) {
+      idSeq = key.getKeyId();
+    }
   }
 
-  public void updateKey(AuthenticationKey key) throws IOException {
-    // ignore zk changes when master
-    if (leaderElector.isMaster()) {
-      LOG.debug("Running as master, ignoring updated key "+key.getKeyId());
-      return;
-    }
-
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Updating key "+key.getKeyId());
-    }
-    allKeys.put(key.getKeyId(), key);
-  }
-
-  void removeKey(Integer keyId) {
+  synchronized void removeKey(Integer keyId) {
     // ignore zk changes when master
     if (leaderElector.isMaster()) {
       LOG.debug("Running as master, ignoring removed key "+keyId);
@@ -203,7 +193,7 @@ public class AuthenticationTokenSecretManager
     return allKeys.get(keyId);
   }
 
-  void removeExpiredKeys() throws IOException {
+  synchronized void removeExpiredKeys() throws IOException {
     if (!leaderElector.isMaster()) {
       LOG.info("Skipping removeExpiredKeys() because not running as master.");
       return;
@@ -223,7 +213,7 @@ public class AuthenticationTokenSecretManager
     }
   }
 
-  void rollCurrentKey() throws IOException {
+  synchronized void rollCurrentKey() throws IOException {
     if (!leaderElector.isMaster()) {
       LOG.info("Skipping rollCurrentKey() because not running as master.");
       return;
@@ -231,10 +221,10 @@ public class AuthenticationTokenSecretManager
 
     long now = EnvironmentEdgeManager.currentTimeMillis();
     AuthenticationKey prev = currentKey;
-    AuthenticationKey newKey = new AuthenticationKey(idSeq.getAndIncrement(),
+    AuthenticationKey newKey = new AuthenticationKey(++idSeq,
         Long.MAX_VALUE, // don't allow to expire until it's replace by a new key
         generateSecret());
-    allKeys.putIfAbsent(newKey.getKeyId(), newKey);
+    allKeys.put(newKey.getKeyId(), newKey);
     currentKey = newKey;
     zkWatcher.addKeyToZK(newKey);
     lastKeyUpdate = now;
@@ -242,7 +232,7 @@ public class AuthenticationTokenSecretManager
     if (prev != null) {
       // make sure previous key is still stored
       prev.setExpiration(now + tokenMaxLifetime);
-      allKeys.putIfAbsent(prev.getKeyId(), prev);
+      allKeys.put(prev.getKeyId(), prev);
       zkWatcher.updateKeyInZK(prev);
     }
   }

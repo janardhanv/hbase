@@ -47,6 +47,7 @@ public class TestZKSecretWatcher {
   private static AuthenticationTokenSecretManager KEY_MASTER;
   private static AuthenticationTokenSecretManager KEY_SLAVE;
   private static AuthenticationTokenSecretManager KEY_SLAVE2;
+  private static AuthenticationTokenSecretManager KEY_SLAVE3;
 
   private static class MockAbortable implements Abortable {
     private boolean abort;
@@ -97,22 +98,27 @@ public class TestZKSecretWatcher {
     // sanity check
     assertTrue(KEY_MASTER.isMaster());
     assertFalse(KEY_SLAVE.isMaster());
+    int maxKeyId = 0;
 
     KEY_MASTER.rollCurrentKey();
     AuthenticationKey key1 = KEY_MASTER.getCurrentKey();
     assertNotNull(key1);
+    LOG.debug("Master current key: "+key1.getKeyId());
 
     // wait for slave to update
     Thread.sleep(1000);
     AuthenticationKey slaveCurrent = KEY_SLAVE.getCurrentKey();
     assertNotNull(slaveCurrent);
     assertEquals(key1, slaveCurrent);
+    LOG.debug("Slave current key: "+slaveCurrent.getKeyId());
 
     // generate two more keys then expire the original
     KEY_MASTER.rollCurrentKey();
     AuthenticationKey key2 = KEY_MASTER.getCurrentKey();
+    LOG.debug("Master new current key: "+key2.getKeyId());
     KEY_MASTER.rollCurrentKey();
     AuthenticationKey key3 = KEY_MASTER.getCurrentKey();
+    LOG.debug("Master new current key: "+key3.getKeyId());
 
     // force expire the original key
     key1.setExpiration(EnvironmentEdgeManager.currentTimeMillis() - 1000);
@@ -131,6 +137,7 @@ public class TestZKSecretWatcher {
     assertEquals(key3, slave3);
     slaveCurrent = KEY_SLAVE.getCurrentKey();
     assertEquals(key3, slaveCurrent);
+    LOG.debug("Slave current key: "+slaveCurrent.getKeyId());
 
     // verify that the expired key has been removed
     assertNull(KEY_SLAVE.getKey(key1.getKeyId()));
@@ -178,6 +185,59 @@ public class TestZKSecretWatcher {
       }
     }
     assertNotNull(newMaster);
+
+    AuthenticationKey current = newMaster.getCurrentKey();
+    // new master will immediately roll the current key, so it's current may be greater
+    assertTrue(current.getKeyId() >= slaveCurrent.getKeyId());
+    LOG.debug("New master, current key: "+current.getKeyId());
+
+    // roll the current key again on new master and verify the key ID increments
+    newMaster.rollCurrentKey();
+    AuthenticationKey newCurrent = newMaster.getCurrentKey();
+    LOG.debug("New master, rolled new current key: "+newCurrent.getKeyId());
+    assertTrue(newCurrent.getKeyId() > current.getKeyId());
+
+    // add another slave
+    ZooKeeperWatcher zk3 = newZK(conf, "server4", new MockAbortable());
+    KEY_SLAVE3 = new AuthenticationTokenSecretManager(
+        conf, zk3, "server4", 60*60*1000, 60*1000);
+    KEY_SLAVE3.start();
+    Thread.sleep(5000);
+
+    // check master failover again
+    newMaster.stop();
+
+    // wait for master to stop
+    Thread.sleep(5000);
+    assertFalse(newMaster.isMaster());
+
+    // check for a new master
+    mgrs = new AuthenticationTokenSecretManager[]{ KEY_SLAVE, KEY_SLAVE2, KEY_SLAVE3 };
+    newMaster = null;
+    tries = 0;
+    while (newMaster == null && tries++ < 5) {
+      for (AuthenticationTokenSecretManager mgr : mgrs) {
+        if (mgr.isMaster()) {
+          newMaster = mgr;
+          break;
+        }
+      }
+      if (newMaster == null) {
+        Thread.sleep(500);
+      }
+    }
+    assertNotNull(newMaster);
+
+    AuthenticationKey current2 = newMaster.getCurrentKey();
+    // new master will immediately roll the current key, so it's current may be greater
+    assertTrue(current2.getKeyId() >= newCurrent.getKeyId());
+    LOG.debug("New master 2, current key: "+current2.getKeyId());
+
+    // roll the current key again on new master and verify the key ID increments
+    newMaster.rollCurrentKey();
+    AuthenticationKey newCurrent2 = newMaster.getCurrentKey();
+    LOG.debug("New master 2, rolled new current key: "+newCurrent2.getKeyId());
+    assertTrue(newCurrent2.getKeyId() > current2.getKeyId());
   }
 
   private static ZooKeeperWatcher newZK(Configuration conf, String name,

@@ -99,7 +99,7 @@ public class ZKSecretWatcher extends ZooKeeperListener {
         byte[] data = ZKUtil.getDataAndWatch(watcher, path);
         AuthenticationKey key = (AuthenticationKey)Writables.getWritable(data,
             new AuthenticationKey());
-        secretManager.updateKey(key);
+        secretManager.addKey(key);
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper", ke);
       } catch (IOException ioe) {
