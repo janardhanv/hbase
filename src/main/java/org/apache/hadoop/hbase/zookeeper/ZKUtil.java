@@ -93,15 +93,7 @@ public class ZKUtil {
     int timeout = conf.getInt("zookeeper.session.timeout", 180 * 1000);
     LOG.debug(descriptor + " opening connection to ZooKeeper with ensemble (" +
         ensemble + ")");
-    if (System.getProperty("java.security.auth.login.config") != null) {
-        // if this system property is defined, then assume that SASL authentication is desired,
-        // so pass along Zookeeper server principal as last argument to Zookeeper client object constructor.
-        String zkHostname = ensemble.substring(0,ensemble.indexOf(":"));
-        return new ZooKeeper(ensemble, timeout, watcher, "zookeeper/" + zkHostname);
-    }
-    else {
-        return new ZooKeeper(ensemble, timeout, watcher);
-    }
+    return new ZooKeeper(ensemble, timeout, watcher);
   }
 
   //
