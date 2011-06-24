@@ -27,11 +27,9 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
-import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.catalog.CatalogTracker;
-import org.apache.hadoop.hbase.catalog.MetaReader;
-import org.apache.hadoop.hbase.client.HConnection;
-import org.apache.hadoop.hbase.client.HConnectionManager;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.junit.AfterClass;
@@ -53,7 +51,6 @@ public class TestTablePermissions {
   private static final Log LOG = LogFactory.getLog(TestTablePermissions.class);
   private static final HBaseTestingUtility UTIL = new HBaseTestingUtility();
   private static ZooKeeperWatcher ZKW;
-  private static CatalogTracker CT;
   private final static Abortable ABORTABLE = new Abortable() {
     private final AtomicBoolean abort = new AtomicBoolean(false);
 
@@ -71,11 +68,13 @@ public class TestTablePermissions {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
+    // setup configuration
+    Configuration conf = UTIL.getConfiguration();
+    SecureTestUtil.enableSecurity(conf);
+
     UTIL.startMiniCluster();
     ZKW = new ZooKeeperWatcher(UTIL.getConfiguration(),
-      "TestMetaReaderEditor", ABORTABLE);
-    CT = new CatalogTracker(ZKW, UTIL.getConfiguration(), ABORTABLE);
-    CT.start();
+      "TestTablePermissions", ABORTABLE);
 
     UTIL.createTable(TEST_TABLE, TEST_FAMILY);
     UTIL.createTable(TEST_TABLE2, TEST_FAMILY);
@@ -88,27 +87,23 @@ public class TestTablePermissions {
 
   @Test
   public void testBasicWrite() throws Exception {
-    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, TEST_TABLE);
-    assertTrue(regions.size() > 0);
-    // perms only stored against the first region
-    HRegionInfo firstRegion = regions.get(0);
-
+    Configuration conf = UTIL.getConfiguration();
     // add some permissions
-    AccessControlLists.addTablePermission(CT, firstRegion,
+    AccessControlLists.addTablePermission(conf, TEST_TABLE,
         "george", new TablePermission(TEST_TABLE, null,
             TablePermission.Action.READ, TablePermission.Action.WRITE));
-    AccessControlLists.addTablePermission(CT, firstRegion,
+    AccessControlLists.addTablePermission(conf, TEST_TABLE,
         "hubert", new TablePermission(TEST_TABLE, null,
             TablePermission.Action.READ));
-    AccessControlLists.addTablePermission(CT, firstRegion,
+    AccessControlLists.addTablePermission(conf, TEST_TABLE,
         "humphrey", new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_QUALIFIER,
             TablePermission.Action.READ));
 
     // retrieve the same
     ListMultimap<String,TablePermission> perms =
-        AccessControlLists.getTablePermissions(CT, TEST_TABLE);
+        AccessControlLists.getTablePermissions(conf, TEST_TABLE);
     List<TablePermission> userPerms = perms.get("george");
-    assertNotNull("Should have read permissions for george", userPerms);
+    assertNotNull("Should have permissions for george", userPerms);
     assertEquals("Should have 1 permission for george", 1, userPerms.size());
     TablePermission permission = userPerms.get(0);
     assertTrue("Permission should be for " + TEST_TABLE,
@@ -123,7 +118,7 @@ public class TestTablePermissions {
     assertTrue(actions.contains(TablePermission.Action.WRITE));
 
     userPerms = perms.get("hubert");
-    assertNotNull("Should have read permissions for hubert", userPerms);
+    assertNotNull("Should have permissions for hubert", userPerms);
     assertEquals("Should have 1 permission for hubert", 1, userPerms.size());
     permission = userPerms.get(0);
     assertTrue("Permission should be for " + TEST_TABLE,
@@ -138,7 +133,7 @@ public class TestTablePermissions {
     assertFalse(actions.contains(TablePermission.Action.WRITE));
 
     userPerms = perms.get("humphrey");
-    assertNotNull("Should have read permissions for humphrey", userPerms);
+    assertNotNull("Should have permissions for humphrey", userPerms);
     assertEquals("Should have 1 permission for humphrey", 1, userPerms.size());
     permission = userPerms.get(0);
     assertTrue("Permission should be for " + TEST_TABLE,
@@ -148,18 +143,21 @@ public class TestTablePermissions {
     assertTrue("Permission should be for qualifier " + TEST_QUALIFIER,
         Bytes.equals(TEST_QUALIFIER, permission.getQualifier()));
 
+    // check actions
+    assertNotNull(permission.getActions());
+    assertEquals(1, permission.getActions().length);
+    actions = Arrays.asList(permission.getActions());
+    assertTrue(actions.contains(TablePermission.Action.READ));
+    assertFalse(actions.contains(TablePermission.Action.WRITE));
+
     // table 2 permissions
-    List<HRegionInfo> table2regions = MetaReader.getTableRegions(CT, TEST_TABLE2);
-    assertTrue(regions.size() > 0);
-    // perms only stored against the first region
-    HRegionInfo first = table2regions.get(0);
-    AccessControlLists.addTablePermission(CT, first, "hubert",
+    AccessControlLists.addTablePermission(conf, TEST_TABLE2, "hubert",
         new TablePermission(TEST_TABLE2, null,
             TablePermission.Action.READ, TablePermission.Action.WRITE));
 
     // check full load
     Map<byte[],ListMultimap<String,TablePermission>> allPerms =
-        AccessControlLists.loadAll(CT);
+        AccessControlLists.loadAll(conf);
     assertEquals("Full permission map should have entries for both test tables",
         2, allPerms.size());
 
@@ -180,6 +178,41 @@ public class TestTablePermissions {
     actions = Arrays.asList(permission.getActions());
     assertTrue(actions.contains(TablePermission.Action.READ));
     assertTrue(actions.contains(TablePermission.Action.WRITE));
+  }
+
+  @Test
+  public void testPersistence() throws Exception {
+    Configuration conf = UTIL.getConfiguration();
+    AccessControlLists.addTablePermission(conf, TEST_TABLE, "albert",
+        new TablePermission(TEST_TABLE, null, TablePermission.Action.READ));
+    AccessControlLists.addTablePermission(conf, TEST_TABLE, "betty",
+        new TablePermission(TEST_TABLE, null, TablePermission.Action.READ,
+            TablePermission.Action.WRITE));
+    AccessControlLists.addTablePermission(conf, TEST_TABLE, "clark",
+        new TablePermission(TEST_TABLE, TEST_FAMILY, TablePermission.Action.READ));
+    AccessControlLists.addTablePermission(conf, TEST_TABLE, "dwight",
+        new TablePermission(TEST_TABLE, TEST_FAMILY, TEST_QUALIFIER,
+            TablePermission.Action.WRITE));
+
+    // verify permissions survive changes in table metadata
+    ListMultimap<String,TablePermission> preperms =
+        AccessControlLists.getTablePermissions(conf, TEST_TABLE);
+
+    HTable table = new HTable(conf, TEST_TABLE);
+    table.put(new Put(Bytes.toBytes("row1"))
+        .add(TEST_FAMILY, TEST_QUALIFIER, Bytes.toBytes("v1")));
+    table.put(new Put(Bytes.toBytes("row2"))
+        .add(TEST_FAMILY, TEST_QUALIFIER, Bytes.toBytes("v2")));
+    HBaseAdmin admin = UTIL.getHBaseAdmin();
+    admin.split(TEST_TABLE);
+
+    // wait for split
+    Thread.sleep(10000);
+
+    ListMultimap<String,TablePermission> postperms =
+        AccessControlLists.getTablePermissions(conf, TEST_TABLE);
+
+    checkMultimapEqual(preperms, postperms);
   }
 
   @Test

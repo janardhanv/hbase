@@ -236,11 +236,6 @@ public final class HConstants {
   /** The regioninfo column qualifier */
   public static final byte [] REGIONINFO_QUALIFIER = Bytes.toBytes("regioninfo");
 
-  /** begin ACL stuff */
-  public static final String ACL_FAMILY_STR = "acl";
-  public static final byte [] ACL_FAMILY = Bytes.toBytes(ACL_FAMILY_STR);
-  /** end ACL stuff */
-
   /** The server column qualifier */
   public static final byte [] SERVER_QUALIFIER = Bytes.toBytes("server");
 

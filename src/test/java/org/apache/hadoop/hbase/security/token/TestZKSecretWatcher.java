@@ -29,6 +29,7 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
+import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
@@ -181,7 +182,8 @@ public class TestZKSecretWatcher {
 
   private static ZooKeeperWatcher newZK(Configuration conf, String name,
       Abortable abort) throws Exception {
-    ZooKeeperWatcher zk = new ZooKeeperWatcher(conf, name, abort);
+    Configuration copy = HBaseConfiguration.create(conf);
+    ZooKeeperWatcher zk = new ZooKeeperWatcher(copy, name, abort);
     return zk;
   }
 }

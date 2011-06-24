@@ -25,24 +25,26 @@ import com.google.common.collect.ListMultimap;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
-import org.apache.hadoop.hbase.catalog.CatalogTracker;
+import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.Delete;
+import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
-import org.apache.hadoop.hbase.filter.CompareFilter;
-import org.apache.hadoop.hbase.filter.RegexStringComparator;
-import org.apache.hadoop.hbase.filter.RowFilter;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
-import org.apache.hadoop.hbase.ipc.HRegionInterface;
+import org.apache.hadoop.hbase.io.hfile.Compression;
+import org.apache.hadoop.hbase.master.MasterServices;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
+import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
-import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.Text;
 
 import java.io.ByteArrayOutputStream;
@@ -53,22 +55,47 @@ import java.io.IOException;
 import java.util.*;
 
 public class AccessControlLists {
+  /** Internal storage table for access control lists */
+  public static final String ACL_TABLE_NAME_STR = "_acl_";
+  public static final byte[] ACL_TABLE_NAME = Bytes.toBytes(ACL_TABLE_NAME_STR);
+
+  /** Table descriptor for ACL internal table */
+  public static final HTableDescriptor ACL_TABLEDESC = new HTableDescriptor(
+      ACL_TABLE_NAME);
+  static {
+    ACL_TABLEDESC.addFamily(
+        new HColumnDescriptor(HConstants.CATALOG_FAMILY,
+            10, // Ten is arbitrary number.  Keep versions to help debugging.
+            Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
+            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
+            HConstants.REPLICATION_SCOPE_LOCAL));
+    // TODO: should ACLs be replicated?
+  }
+
   /** delimiter to separate user and column family in .META. acl: column keys */
   public static final char ACL_KEY_DELIMITER = ',';
   /** prefix character to denote group names */
   public static final String GROUP_PREFIX = "@";
-  /** column qualifier for table owner */
-  public static final byte[] OWNER_QUALIFIER = Bytes.toBytes("owner");
   /** Configuration key for superusers */
   public static final String SUPERUSER_CONF_KEY = "hbase.superuser";
 
   private static Log LOG = LogFactory.getLog(AccessControlLists.class);
 
-  public static void addTablePermission(CatalogTracker tracker,
-      HRegionInfo firstRegion, String username, TablePermission perm)
+  /**
+   * Check for existence of .acl. table and create it if it does not exist
+   * @param conf Configuration instance to use for operations
+   */
+  static void init(MasterServices master) throws IOException {
+    if (!MetaReader.tableExists(master.getCatalogTracker(), ACL_TABLE_NAME_STR)) {
+      master.createTable(ACL_TABLEDESC, null, false);
+    }
+  }
+
+  static void addTablePermission(Configuration conf,
+      byte[] tableName, String username, TablePermission perm)
     throws IOException {
 
-    Put p = new Put(firstRegion.getRegionName());
+    Put p = new Put(tableName);
     byte[] key = Bytes.toBytes(username);
     if (perm.getFamily() != null && perm.getFamily().length > 0) {
       key = Bytes.add(key,
@@ -89,22 +116,27 @@ public class AccessControlLists {
     for (int i=0; i<actions.length; i++) {
       value[i] = actions[i].code();
     }
-    p.add(HConstants.ACL_FAMILY, key, value);
+    p.add(HConstants.CATALOG_FAMILY, key, value);
     if (LOG.isDebugEnabled()) {
       LOG.debug("Writing permission for table "+
-          Bytes.toString(firstRegion.getTableDesc().getName())+" "+
+          Bytes.toString(tableName)+" "+
           Bytes.toString(key)+": "+Bytes.toStringBinary(value)
       );
     }
-    tracker.waitForMetaServerConnectionDefault().put(
-        CatalogTracker.META_REGION, p);
+    HTable acls = null;
+    try {
+      acls = new HTable(conf, ACL_TABLE_NAME);
+      acls.put(p);
+    } finally {
+      if (acls != null) acls.close();
+    }
   }
 
-  public static void removeTablePermission(CatalogTracker tracker,
-      HRegionInfo firstRegion, String userName, TablePermission perm)
+  static void removeTablePermission(Configuration conf,
+      byte[] tableName, String userName, TablePermission perm)
     throws IOException {
 
-    Delete d = new Delete(firstRegion.getRegionName());
+    Delete d = new Delete(tableName);
     byte[] key = null;
     if (perm.getFamily() != null && perm.getFamily().length > 0) {
       key = Bytes.toBytes(userName + ACL_KEY_DELIMITER +
@@ -124,33 +156,39 @@ public class AccessControlLists {
       LOG.debug("Removing permission for user '" + userName+ "': "+
           perm.toString());
     }
-    d.deleteColumns(HConstants.ACL_FAMILY, key);
-    tracker.waitForMetaServerConnectionDefault().delete(
-        CatalogTracker.META_REGION, d);
+    d.deleteColumns(HConstants.CATALOG_FAMILY, key);
+    HTable acls = null;
+    try {
+      acls = new HTable(conf, ACL_TABLE_NAME);
+      acls.delete(d);
+    } finally {
+      if (acls != null) acls.close();
+    }
   }
-  
-  public static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
-      HRegion metaRegion)
+
+  static boolean isAclRegion(HRegion region) {
+    return Bytes.equals(ACL_TABLE_NAME, region.getTableDesc().getName());
+  }
+
+  static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
+      HRegion aclRegion)
     throws IOException {
 
-    if (!metaRegion.getRegionInfo().isMetaRegion()) {
-      throw new IOException("Can only load permissions from .META.");
+    if (!isAclRegion(aclRegion)) {
+      throw new IOException("Can only load permissions from "+ACL_TABLE_NAME_STR);
     }
 
     Map<byte[],ListMultimap<String,TablePermission>> allPerms =
         new TreeMap<byte[],ListMultimap<String,TablePermission>>(Bytes.BYTES_COMPARATOR);
     
-    // do a full scan of .META., filtering on only first table region rows
+    // do a full scan of .acl. table
 
     Scan scan = new Scan();
-    scan.addFamily(HConstants.ACL_FAMILY);
-    scan.addColumn(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER);
-    scan.setFilter(new RowFilter(CompareFilter.CompareOp.EQUAL,
-        new RegexStringComparator("^[\\w\\-\\.]+,,")));
+    scan.addFamily(HConstants.CATALOG_FAMILY);
 
     InternalScanner iScanner = null;
     try {
-      iScanner = metaRegion.getScanner(scan);
+      iScanner = aclRegion.getScanner(scan);
 
       while (true) {
         List<KeyValue> row = new ArrayList<KeyValue>();
@@ -160,8 +198,7 @@ public class AccessControlLists {
         byte[] table = null;
         for (KeyValue kv : row) {
           if (table == null) {
-            String rowkey = Bytes.toStringBinary(kv.getRow());
-            table = Bytes.toBytes( rowkey.substring(0, rowkey.indexOf(',')) );
+            table = kv.getRow();
           }
           Pair<String,TablePermission> permissionsOfUserOnTable =
               parseTablePermissionRecord(table, kv);
@@ -188,41 +225,36 @@ public class AccessControlLists {
   }
 
   /**
-   * Load all permissions from the region server holding .META., primarily
+   * Load all permissions from the region server holding .acl., primarily
    * intended for testing purposes.
    *
    * @param tracker
    * @return
    * @throws IOException
    */
-  public static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
-      CatalogTracker tracker) throws IOException {
+  static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
+      Configuration conf) throws IOException {
     Map<byte[],ListMultimap<String,TablePermission>> allPerms =
         new TreeMap<byte[],ListMultimap<String,TablePermission>>(Bytes.BYTES_COMPARATOR);
 
     // do a full scan of .META., filtering on only first table region rows
 
     Scan scan = new Scan();
-    scan.addFamily(HConstants.ACL_FAMILY);
-    scan.addColumn(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER);
-    scan.setFilter(new RowFilter(CompareFilter.CompareOp.EQUAL,
-        new RegexStringComparator("^[\\w\\-\\.]+,,")));
-    HRegionInterface connection = tracker.waitForMetaServerConnectionDefault();
-    long scannerId =
-        connection.openScanner(
-            HRegionInfo.FIRST_META_REGIONINFO.getRegionName(), scan);
+    scan.addFamily(HConstants.CATALOG_FAMILY);
 
+    HTable acls = null;
+    ResultScanner scanner = null;
     try {
-      Result row = null;
-      while((row = connection.next(scannerId)) != null) {
-        HRegionInfo regionInfo = Writables.getHRegionInfo(
-            row.getValue(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER));
+      acls = new HTable(conf, ACL_TABLE_NAME);
+      scanner = acls.getScanner(scan);
+      for (Result row : scanner) {
         ListMultimap<String,TablePermission> resultPerms =
-            parseTablePermissions(regionInfo.getTableDesc().getName(), row);
-        allPerms.put(regionInfo.getTableDesc().getName(), resultPerms);
+            parseTablePermissions(row.getRow(), row);
+        allPerms.put(row.getRow(), resultPerms);
       }
     } finally {
-      connection.close(scannerId);
+      if (scanner != null) scanner.close();
+      if (acls != null) acls.close();
     }
 
     return allPerms;
@@ -248,42 +280,44 @@ public class AccessControlLists {
    * {@link org.apache.hadoop.hbase.security.rbac.TablePermission.Action} enum.
    * </p>
    */
-  public static ListMultimap<String,TablePermission> getTablePermissions(
-      CatalogTracker tracker, byte[] tableName)
+  static ListMultimap<String,TablePermission> getTablePermissions(
+      Configuration conf, byte[] tableName)
   throws IOException {
-    // TODO: -ROOT- and .META. not handled with .META. acl: storage, what to do here?
+    /* TODO: -ROOT- and .META. cannot easily be handled because they must be
+     * online before .acl. table.  Can anything be done here?
+     */
     if (Bytes.equals(tableName, HConstants.ROOT_TABLE_NAME) ||
-        Bytes.equals(tableName, HConstants.META_TABLE_NAME)) {
+        Bytes.equals(tableName, HConstants.META_TABLE_NAME) ||
+        Bytes.equals(tableName, AccessControlLists.ACL_TABLE_NAME)) {
       return ArrayListMultimap.create(0,0);
     }
 
-    // for normal user tables, we just read from the first .META. row for the table
-    HRegionInterface metaServer = tracker.waitForMetaServerConnectionDefault();
-
-    byte[] firstRow = Bytes.toBytes(Bytes.toString(tableName)+",,");
-    Scan scan = new Scan(firstRow);
-    scan.setCaching(1);
-    scan.addFamily(HConstants.ACL_FAMILY);
-    long scannerId =
-        metaServer.openScanner(
-            HRegionInfo.FIRST_META_REGIONINFO.getRegionName(), scan);
-
-    ListMultimap<String,TablePermission> perms = null;
+    // for normal user tables, we just read the table row from .acl.
+    ListMultimap<String,TablePermission> perms = ArrayListMultimap.create();
+    HTable acls = null;
     try {
-      Result acls = metaServer.next(scannerId);
-      perms = parseTablePermissions(tableName, acls);
+      acls = new HTable(conf, ACL_TABLE_NAME);
+      Get get = new Get(tableName);
+      get.addFamily(HConstants.CATALOG_FAMILY);
+      Result row = acls.get(get);
+      if (!row.isEmpty()) {
+        perms = parseTablePermissions(tableName, row);
+      } else {
+        LOG.info("No permissions found in "+ACL_TABLE_NAME_STR+
+            " for table "+Bytes.toString(tableName));
+      }
     } finally {
-      metaServer.close(scannerId);
+      if (acls != null) acls.close();
     }
 
     return perms;
   }
 
-  public static List<UserPermission> getUserPermissions(
-      CatalogTracker tracker, byte[] tableName)
+  static List<UserPermission> getUserPermissions(
+      Configuration conf, byte[] tableName)
   throws IOException {
     ListMultimap<String,TablePermission> allPerms = getTablePermissions(
-      tracker, tableName);
+      conf, tableName);
 
     List<UserPermission> perms = new ArrayList<UserPermission>();
 
@@ -320,15 +354,11 @@ public class AccessControlLists {
     // return X given a set of permissions encoded in the permissionRecord kv.
     byte[] family = kv.getFamily();
 
-    if (!Bytes.equals(family, HConstants.ACL_FAMILY)) {
+    if (!Bytes.equals(family, HConstants.CATALOG_FAMILY)) {
       return null;
     }
 
     byte[] key = kv.getQualifier();
-    if (Bytes.equals(key, OWNER_QUALIFIER)) {
-      return null;
-    }
-
     byte[] value = kv.getValue();
     if (LOG.isDebugEnabled()) {
       LOG.debug("Read acl: kv ["+

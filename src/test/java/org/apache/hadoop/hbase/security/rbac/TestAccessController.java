@@ -23,23 +23,16 @@ package org.apache.hadoop.hbase.security.rbac;
 import java.io.IOException;
 import java.security.PrivilegedExceptionAction;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.Abortable;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
-import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerAddress;
-import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.MiniHBaseCluster;
 import org.apache.hadoop.hbase.ServerName;
-import org.apache.hadoop.hbase.catalog.CatalogTracker;
-import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.coprocessor.Coprocessor;
 import org.apache.hadoop.hbase.coprocessor.MasterCoprocessorEnvironment;
@@ -48,8 +41,6 @@ import org.apache.hadoop.hbase.master.MasterCoprocessorHost;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.JVMClusterUtil;
-import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -80,33 +71,14 @@ public class TestAccessController {
 
   private static MasterCoprocessorEnvironment CP_ENV;
   private static AccessController ACCESS_CONTROLLER;
-  private static ZooKeeperWatcher ZKW;
-  private static CatalogTracker CT;
-  private static MiniHBaseCluster CLUSTER = null;
-  private final static Abortable ABORTABLE = new Abortable() {
-    private final AtomicBoolean abort = new AtomicBoolean(false);
-
-    @Override
-    public void abort(String why, Throwable e) {
-      LOG.info(why, e);
-      abort.set(true);
-    }
-  };
 
   @BeforeClass
   public static void setupBeforeClass() throws Exception {
     // setup configuration
     Configuration conf = TEST_UTIL.getConfiguration();
-    conf.set("hadoop.security.authorization", "true");
-    conf.set("hadoop.security.authentication", "simple");
-    conf.set("hbase.superuser", "admin");
-    enableAccessController(conf);
+    SecureTestUtil.enableSecurity(conf);
 
     TEST_UTIL.startMiniCluster();
-    CLUSTER = TEST_UTIL.getMiniHBaseCluster();
-    ZKW = new ZooKeeperWatcher(conf, "TestMetaReaderEditor", ABORTABLE);
-    CT = new CatalogTracker(ZKW, conf, ABORTABLE);
-    CT.start();
     MasterCoprocessorHost cpHost = TEST_UTIL.getMiniHBaseCluster()
         .getMaster().getCoprocessorHost();
     cpHost.load(AccessController.class, Coprocessor.Priority.HIGHEST);
@@ -116,11 +88,11 @@ public class TestAccessController {
         Coprocessor.Priority.HIGHEST, 1);
 
     // create a set of test users
-    SUPERUSER = createUser("admin", new String[]{"supergroup"});
-    USER_OWNER = createUser("owner", new String[0]);
-    USER_RW = createUser("rwuser", new String[0]);
-    USER_RO = createUser("rouser", new String[0]);
-    USER_NONE = createUser("nouser", new String[0]);
+    SUPERUSER = User.createUserForTesting(conf, "admin", new String[]{"supergroup"});
+    USER_OWNER = User.createUserForTesting(conf, "owner", new String[0]);
+    USER_RW = User.createUserForTesting(conf, "rwuser", new String[0]);
+    USER_RO = User.createUserForTesting(conf, "rouser", new String[0]);
+    USER_NONE = User.createUserForTesting(conf, "nouser", new String[0]);
 
     HBaseAdmin admin = TEST_UTIL.getHBaseAdmin();
     HTableDescriptor htd = new HTableDescriptor(TEST_TABLE);
@@ -128,16 +100,10 @@ public class TestAccessController {
     htd.setOwnerString(USER_OWNER.getShortName());
     admin.createTable(htd);
 
-    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, TEST_TABLE);
-    assertTrue(regions.size() > 0);
-    // perms only stored against the first region
-    HRegionInfo firstRegion = regions.get(0);
-
     // initilize access control
-    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    HTable meta = new HTable(AccessControlLists.ACL_TABLE_NAME);
     AccessControllerProtocol protocol =
-        meta.coprocessorProxy(AccessControllerProtocol.class,
-            firstRegion.getRegionName());
+        meta.coprocessorProxy(AccessControllerProtocol.class, TEST_TABLE);
     protocol.grant(Bytes.toBytes(USER_RW.getShortName()),
         new TablePermission(TEST_TABLE, TEST_FAMILY, Permission.Action.READ,
             Permission.Action.WRITE));
@@ -149,18 +115,6 @@ public class TestAccessController {
   @AfterClass
   public static void tearDownAfterClass() throws Exception {
     TEST_UTIL.shutdownMiniCluster();
-  }
-
-  public static User createUser(String name, String[] groups) {
-    // generate a test user
-    User user = User.createUserForTesting(TEST_UTIL.getConfiguration(),
-        name, groups);
-    return user;
-  }
-
-  public static void enableAccessController(Configuration conf) {
-    conf.set("hbase.coprocessor.master.classes", AccessController.class.getName());
-    conf.set("hbase.coprocessor.region.classes", AccessController.class.getName());
   }
 
   public void verifyAllowed(User user, PrivilegedExceptionAction action)
@@ -628,17 +582,14 @@ public class TestAccessController {
     admin.createTable(htd);
 
     // create temp users
-    User user = createUser("user", new String[0]);
-
-    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, tableName);
-    assertTrue(regions.size() > 0);
+    User user = User.createUserForTesting(TEST_UTIL.getConfiguration(),
+        "user", new String[0]);
 
     // perms only stored against the first region
-    HRegionInfo firstRegion = regions.get(0);
-    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    HTable acl = new HTable(AccessControlLists.ACL_TABLE_NAME);
     AccessControllerProtocol protocol =
-        meta.coprocessorProxy(AccessControllerProtocol.class,
-            firstRegion.getRegionName());
+        acl.coprocessorProxy(AccessControllerProtocol.class,
+            tableName);
 
     // prepare actions:
     PrivilegedExceptionAction putActionAll = new PrivilegedExceptionAction() {
@@ -869,17 +820,12 @@ public class TestAccessController {
     admin.createTable(htd);
 
     // create temp users
-    User user = createUser("user", new String[0]);
+    User user = User.createUserForTesting(TEST_UTIL.getConfiguration(),
+        "user", new String[0]);
 
-    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, tableName);
-    assertTrue(regions.size() > 0);
-
-    // perms only stored against the first region
-    HRegionInfo firstRegion = regions.get(0);
-    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    HTable acl = new HTable(AccessControlLists.ACL_TABLE_NAME);
     AccessControllerProtocol protocol =
-        meta.coprocessorProxy(AccessControllerProtocol.class,
-            firstRegion.getRegionName());
+        acl.coprocessorProxy(AccessControllerProtocol.class, tableName);
 
     PrivilegedExceptionAction getQualifierAction = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
@@ -974,18 +920,9 @@ public class TestAccessController {
     htd.setOwnerString(USER_OWNER.getShortName());
     admin.createTable(htd);
 
-    // create temp users
-    User userName = createUser(Bytes.toString(user), new String[0]);
-
-    List<HRegionInfo> regions = MetaReader.getTableRegions(CT, tableName);
-    assertTrue(regions.size() > 0);
-
-    // perms only stored against the first region
-    HRegionInfo firstRegion = regions.get(0);
-    HTable meta = new HTable(HConstants.META_TABLE_NAME);
+    HTable acl = new HTable(AccessControlLists.ACL_TABLE_NAME);
     AccessControllerProtocol protocol =
-        meta.coprocessorProxy(AccessControllerProtocol.class,
-            firstRegion.getRegionName());
+        acl.coprocessorProxy(AccessControllerProtocol.class, tableName);
 
     List<UserPermission> perms = protocol.getUserPermissions(tableName);
 

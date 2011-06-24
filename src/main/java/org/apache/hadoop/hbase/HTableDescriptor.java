@@ -709,12 +709,7 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
             10, // Ten is arbitrary number.  Keep versions to help debugging.
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
             HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
-            HConstants.REPLICATION_SCOPE_LOCAL),
-          new HColumnDescriptor(HConstants.ACL_FAMILY,
-            10, // Ten is arbitrary number.  Keep versions to help debugging.
-            Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
-            HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
-            HConstants.REPLICATION_SCOPE_LOCAL)});
+            HConstants.REPLICATION_SCOPE_LOCAL) });
 
 
   public void setOwner(UserGroupInformation owner) {

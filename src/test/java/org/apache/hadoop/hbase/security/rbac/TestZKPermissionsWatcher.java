@@ -61,10 +61,13 @@ public class TestZKPermissionsWatcher {
 
   @BeforeClass
   public static void beforeClass() throws Exception {
+    // setup configuration
+    Configuration conf = UTIL.getConfiguration();
+    SecureTestUtil.enableSecurity(conf);
+
     // start minicluster
     UTIL.startMiniCluster();
-    Configuration conf = UTIL.getConfiguration();
-    AUTH_A = TableAuthManager.get(new ZooKeeperWatcher(conf, 
+    AUTH_A = TableAuthManager.get(new ZooKeeperWatcher(conf,
       "TestZKPermissionsWatcher_1", ABORTABLE), conf);
     AUTH_B = TableAuthManager.get(new ZooKeeperWatcher(conf,
       "TestZKPermissionsWatcher_2", ABORTABLE), conf);

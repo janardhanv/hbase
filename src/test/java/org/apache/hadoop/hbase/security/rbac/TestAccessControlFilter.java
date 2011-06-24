@@ -61,23 +61,16 @@ public class TestAccessControlFilter {
   public static void setupBeforeClass() throws Exception {
     TEST_UTIL = new HBaseTestingUtility();
     Configuration conf = TEST_UTIL.getConfiguration();
-    conf.set("hadoop.security.authorization", "true");
-    conf.set("hadoop.security.authentication", "simple");
-    conf.set("hbase.coprocessor.master.classes", AccessController.class.getName());
-    conf.set("hbase.coprocessor.region.classes", AccessController.class.getName());
+    SecureTestUtil.enableSecurity(conf);
     String baseuser = User.getCurrent().getShortName();
     conf.set("hbase.superuser",
         String.format("admin,%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
     TEST_UTIL.startMiniCluster(2);
 
-    ADMIN = User.createUserForTesting(TEST_UTIL.getConfiguration(),
-        "admin", new String[]{"supergroup"});
-    READER = User.createUserForTesting(TEST_UTIL.getConfiguration(),
-        "reader", new String[0]);
-    LIMITED = User.createUserForTesting(TEST_UTIL.getConfiguration(),
-        "limited", new String[0]);
-    DENIED = User.createUserForTesting(TEST_UTIL.getConfiguration(),
-        "denied", new String[0]);
+    ADMIN = User.createUserForTesting(conf, "admin", new String[]{"supergroup"});
+    READER = User.createUserForTesting(conf, "reader", new String[0]);
+    LIMITED = User.createUserForTesting(conf, "limited", new String[0]);
+    DENIED = User.createUserForTesting(conf, "denied", new String[0]);
   }
 
   @AfterClass
@@ -93,9 +86,10 @@ public class TestAccessControlFilter {
     ADMIN.runAs(new PrivilegedExceptionAction<Object>() {
       @Override
       public Object run() throws Exception {
-        HTable meta = new HTable(TEST_UTIL.getConfiguration(), ".META.");
-        AccessControllerProtocol acls = meta.coprocessorProxy(
-            AccessControllerProtocol.class, Bytes.toBytes("testtable,,"));
+        HTable aclmeta = new HTable(TEST_UTIL.getConfiguration(),
+            AccessControlLists.ACL_TABLE_NAME);
+        AccessControllerProtocol acls = aclmeta.coprocessorProxy(
+            AccessControllerProtocol.class, Bytes.toBytes("testtable"));
         TablePermission perm = new TablePermission(TABLE, null, Permission.Action.READ);
         acls.grant(Bytes.toBytes(READER.getShortName()), perm);
         perm = new TablePermission(TABLE, FAMILY, PUBLIC_COL, Permission.Action.READ);

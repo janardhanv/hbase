@@ -260,7 +260,7 @@ module Hbase
       fambytes = family.to_java_bytes if (family != nil)
       qualbytes = qualifier.to_java_bytes if (qualifier != nil)
       tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, permissions.to_java_bytes)
-      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.rbac.AccessControlLists::ACL_TABLE_NAME)
       protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, 
                                              org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       protocol.grant(user.to_java_bytes, tp)
@@ -280,7 +280,7 @@ module Hbase
       fambytes = family.to_java_bytes if (family != nil)
       qualbytes = qualifier.to_java_bytes if (qualifier != nil)
       tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, "".to_java_bytes)
-      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.rbac.AccessControlLists::ACL_TABLE_NAME)
       protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class,
                                              org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       protocol.revoke(user.to_java_bytes, tp)
@@ -290,7 +290,7 @@ module Hbase
     def user_permission(table_name)
       raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
 
-      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.rbac.AccessControlLists::ACL_TABLE_NAME)
       protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, 
                                              org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       perms = protocol.getUserPermissions(table_name.to_java_bytes)
