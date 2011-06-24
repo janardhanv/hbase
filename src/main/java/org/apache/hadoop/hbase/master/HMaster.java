@@ -1,5 +1,5 @@
 /**
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -39,12 +39,12 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerLoad;
-
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.NotAllMetaRegionsOnlineException;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
+import org.apache.hadoop.hbase.TableDescriptors;
 import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TableNotDisabledException;
 import org.apache.hadoop.hbase.TableNotFoundException;
@@ -54,8 +54,8 @@ import org.apache.hadoop.hbase.catalog.MetaEditor;
 import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.MetaScanner;
-import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
 import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
 import org.apache.hadoop.hbase.executor.ExecutorService;
 import org.apache.hadoop.hbase.executor.ExecutorService.ExecutorType;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
@@ -76,15 +76,17 @@ import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
 import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.monitoring.TaskMonitor;
 import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.FSTableDescriptors;
+import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.InfoServer;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Sleeper;
 import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hbase.util.VersionInfo;
-import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.zookeeper.ClusterId;
 import org.apache.hadoop.hbase.zookeeper.ClusterStatusTracker;
 import org.apache.hadoop.hbase.zookeeper.RegionServerTracker;
@@ -179,6 +181,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
 
   private MasterCoprocessorHost cpHost;
   private final ServerName serverName;
+
+  private TableDescriptors tableDescriptors;
 
   /**
    * Initializes the HMaster. The steps are as follows:
@@ -415,7 +419,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
 
     status.setStatus("Initializing Master file system");
     // TODO: Do this using Dependency Injection, using PicoContainer, Guice or Spring.
-    this.fileSystemManager = new MasterFileSystem(this, metrics);
+    this.fileSystemManager = new MasterFileSystem(this, this, metrics);
+
+    this.tableDescriptors =
+      new FSTableDescriptors(this.fileSystemManager.getFileSystem(),
+      this.fileSystemManager.getRootDir());
 
     // publish cluster ID
     status.setStatus("Publishing Cluster ID in ZooKeeper");
@@ -473,6 +481,15 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     status.markComplete("Initialization successful");
     LOG.info("Master has completed initialization");
     initialized = true;
+
+    if (this.cpHost != null) {
+      // don't let cp initialization errors kill the master
+      try {
+        this.cpHost.postStartMaster();
+      } catch (IOException ioe) {
+        LOG.error("Coprocessor postStartMaster() hook failed", ioe);
+      }
+    }
   }
 
   public boolean isMetaHRIUpdated()
@@ -573,6 +590,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     // unknown protocol
     LOG.warn("Version requested for unimplemented protocol: "+protocol);
     return -1;
+  }
+
+  @Override
+  public TableDescriptors getTableDescriptors() {
+    return this.tableDescriptors;
   }
 
   /** @return InfoServer object. Maybe null.*/
@@ -958,40 +980,53 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   return hRegionInfos;
 }
 
-  private void storeTableDescriptor(HTableDescriptor hTableDescriptor)
-      throws IOException {
-    FSUtils.createTableDescriptor(hTableDescriptor, conf);
-  }
-
   private synchronized void createTable(final HTableDescriptor hTableDescriptor,
                                         final HRegionInfo [] newRegions,
       final boolean sync)
   throws IOException {
     String tableName = newRegions[0].getTableNameAsString();
-    if(MetaReader.tableExists(catalogTracker, tableName)) {
+    if (MetaReader.tableExists(catalogTracker, tableName)) {
       throw new TableExistsException(tableName);
     }
-    storeTableDescriptor(hTableDescriptor);
+    // TODO: Currently we make the table descriptor and as side-effect the
+    // tableDir is created.  Should we change below method to be createTable
+    // where we create table in tmp dir with its table descriptor file and then
+    // do rename to move it into place?
+    FSUtils.createTableDescriptor(hTableDescriptor, conf);
 
-    for (HRegionInfo newRegion : newRegions) {
-      // 1. Set table enabling flag up in zk.
-      try {
-        assignmentManager.getZKTable().setEnabledTable(tableName);
-      } catch (KeeperException e) {
-        throw new IOException("Unable to ensure that the table will be" +
+    // 1. Set table enabling flag up in zk.
+    try {
+      assignmentManager.getZKTable().setEnabledTable(tableName);
+    } catch (KeeperException e) {
+      throw new IOException("Unable to ensure that the table will be" +
           " enabled because of a ZooKeeper issue", e);
-      }
+    }
 
+    List<HRegionInfo> regionInfos = new ArrayList<HRegionInfo>();
+    final int batchSize = this.conf.getInt("hbase.master.createtable.batchsize", 100);
+    HLog hlog = null;
+    for (int regionIdx = 0; regionIdx < newRegions.length; regionIdx++) {
+      HRegionInfo newRegion = newRegions[regionIdx];
       // 2. Create HRegion
       HRegion region = HRegion.createHRegion(newRegion,
-        fileSystemManager.getRootDir(), conf, hTableDescriptor);
+          fileSystemManager.getRootDir(), conf, hTableDescriptor, hlog);
+      if (hlog == null) {
+        hlog = region.getLog();
+      }
 
-      // 3. Insert into META
-      MetaEditor.addRegionToMeta(catalogTracker, region.getRegionInfo());
+      regionInfos.add(region.getRegionInfo());
+      if (regionIdx % batchSize == 0) {
+        // 3. Insert into META
+        MetaEditor.addRegionsToMeta(catalogTracker, regionInfos);
+        regionInfos.clear();
+      }
 
       // 4. Close the new region to flush to disk.  Close log file too.
       region.close();
-      region.getLog().closeAndDelete();
+    }
+    hlog.closeAndDelete();
+    if (regionInfos.size() > 0) {
+      MetaEditor.addRegionsToMeta(catalogTracker, regionInfos);
     }
 
     // 5. Trigger immediate assignment of the regions in round-robin fashion
@@ -1383,37 +1418,40 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   }
 
   /**
-   * Get HTD array for given tables
+   * Get HTD array for given tables 
    * @param tableNames
    * @return HTableDescriptor[]
    */
   public HTableDescriptor[] getHTableDescriptors(List<String> tableNames) {
-    return this.assignmentManager.getHTableDescriptors(tableNames);
+    List<HTableDescriptor> list =
+      new ArrayList<HTableDescriptor>(tableNames.size());
+    for (String s: tableNames) {
+      HTableDescriptor htd = null;
+      try {
+        htd = this.tableDescriptors.get(s);
+      } catch (IOException e) {
+        LOG.warn("Failed getting descriptor for " + s, e);
+      }
+      if (htd == null) continue;
+      list.add(htd);
+    }
+    return list.toArray(new HTableDescriptor [] {});
   }
 
   /**
    * Get all table descriptors
-   * @return HTableDescriptor[]
+   * @return All descriptors or null if none.
    */
-  public HTableDescriptor[] getHTableDescriptors() {
-    return this.assignmentManager.getHTableDescriptors();
-  }
-
-  /**
-   * Get a HTD for a given table name
-   * @param tableName
-   * @return HTableDescriptor
-   */
-/*
-  public HTableDescriptor getHTableDescriptor(byte[] tableName) {
-    if (tableName != null && tableName.length > 0) {
-      return this.assignmentManager.getTableDescriptor(
-          Bytes.toString(tableName));
+  public HTableDescriptor [] getHTableDescriptors() {
+    Map<String, HTableDescriptor> descriptors = null;
+    try {
+      descriptors = this.tableDescriptors.getAll();
+    } catch (IOException e) {
+      LOG.warn("Failed getting all descriptors", e);
     }
-    return null;
+    return descriptors == null?
+      null: descriptors.values().toArray(new HTableDescriptor [] {});
   }
-*/
-
 
   /**
    * Compute the average load across all region servers.

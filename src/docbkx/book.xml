@@ -64,8 +64,8 @@
   <!--XInclude some chapters-->
   <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="preface.xml" />
   <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="getting_started.xml" />
-  <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="upgrading.xml" />
   <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="configuration.xml" />
+  <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="upgrading.xml" />
   <xi:include xmlns:xi="http://www.w3.org/2001/XInclude" href="shell.xml" />
 
 
@@ -148,6 +148,24 @@ throws InterruptedException, IOException {
   </title>
   <para>HBase schemas can be created or updated with <xref linkend="shell" />
       or by using <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/HBaseAdmin.html">HBaseAdmin</link> in the Java API.
+      </para>
+      <para>Tables must be disabled when making ColumnFamily modifications, for example..
+      <programlisting>
+Configuration config = HBaseConfiguration.create();  
+HBaseAdmin admin = new HBaseAdmin(conf);    
+String table = "myTable";
+
+admin.disableTable(table);           
+
+HColumnDescriptor cf1 = ...;
+admin.addColumn(table, cf1  );      // adding new ColumnFamily
+HColumnDescriptor cf2 = ...;
+admin.modifyColumn(table, cf2 );    // modifying existing ColumnFamily
+
+admin.enableTable(table);                
+      </programlisting>
+      </para>See <xref linkend="client_dependencies"/> for more information about configuring client connections.
+      <para>
       </para>
   </section>   
   <section xml:id="number.of.cfs">
@@ -1384,9 +1402,19 @@ false
     <title>
     LZO
     </title>
-    <para>
-        See <xref linkend="lzo" /> above.
-    </para>
+      <para>Unfortunately, HBase cannot ship with LZO because of
+      the licensing issues; HBase is Apache-licensed, LZO is GPL.
+      Therefore LZO install is to be done post-HBase install.
+      See the <link xlink:href="http://wiki.apache.org/hadoop/UsingLzoCompression">Using LZO Compression</link>
+      wiki page for how to make LZO work with HBase.
+      </para>
+      <para>A common problem users run into when using LZO is that while initial
+      setup of the cluster runs smooth, a month goes by and some sysadmin goes to
+      add a machine to the cluster only they'll have forgotten to do the LZO
+      fixup on the new machine.  In versions since HBase 0.90.0, we should
+      fail in a way that makes it plain what the problem is, but maybe not. </para>
+      <para>See <xref linkend="hbase.regionserver.codecs" />
+      for a feature to help protect against failed LZO install.</para>
     </section>
 
     <section xml:id="gzip.compression">
