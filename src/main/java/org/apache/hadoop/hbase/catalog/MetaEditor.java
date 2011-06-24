@@ -37,7 +37,6 @@ import org.apache.hadoop.hbase.master.MasterServices;
 import org.apache.hadoop.hbase.migration.HRegionInfo090x;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
-import org.apache.hadoop.security.UserGroupInformation;
 
 /**
  * Writes region and assignment information to <code>.META.</code>.
@@ -336,13 +335,6 @@ public class MetaEditor {
   private static Put addRegionInfo(final Put p, final HRegionInfo hri)
   throws IOException {
 
-    // Implement: alter <table>, {OWNER => '<username>'}.
-    // check for OWNER in hri.tableDesc: if found, set acl:owner to this username. 
-    HTableDescriptor desc = hri.getTableDesc();
-    String owner_name = desc.getValue("OWNER");
-    if (owner_name != null) {
-      hri.getTableDesc().setOwnerString(owner_name);
-    }
     p.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
         Writables.getBytes(hri));
 
