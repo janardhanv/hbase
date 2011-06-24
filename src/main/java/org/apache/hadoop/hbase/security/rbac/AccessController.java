@@ -567,6 +567,12 @@ public class AccessController extends BaseRegionObserver
     requirePermission(Permission.Action.ADMIN, c.getEnvironment());
   }
 
+  @Override
+  public void postStartMaster(ObserverContext<MasterCoprocessorEnvironment> ctx)
+      throws IOException {
+    // no-op
+  }
+
   /* ---- RegionObserver implementation ---- */
 
   @Override
