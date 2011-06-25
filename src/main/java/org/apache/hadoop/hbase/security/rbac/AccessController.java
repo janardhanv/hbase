@@ -156,7 +156,8 @@ public class AccessController extends BaseRegionObserver
       RegionCoprocessorEnvironment e,
       Map<byte [], ? extends Collection<?>> families) {
     HRegionInfo hri = e.getRegion().getRegionInfo();
-    HTableDescriptor htd = hri.getTableDesc();
+    HTableDescriptor htd = e.getRegion().getTableDesc();
+    byte[] tableName = hri.getTableName();
 
     // 1. All users need read access to .META. and -ROOT- tables; also, this is a very
     // common call to permissionGranted(), so deal with it quickly.
@@ -164,7 +165,7 @@ public class AccessController extends BaseRegionObserver
         (permRequest == TablePermission.Action.READ)) {
       if (LOG.isDebugEnabled()) {
         LOG.debug("All users are allowed to " + permRequest.toString() +
-          " the table '" + htd.getNameAsString() + "'");
+          " the table '" + hri.getTableNameAsString() + "'");
       }
       return true;
     }
@@ -177,7 +178,7 @@ public class AccessController extends BaseRegionObserver
     // access to these tables if desired.
     String owner = htd.getOwnerString();
     if (owner == null) {
-      LOG.debug("Owner of '" + htd.getNameAsString() + " is (incorrectly) null.");
+      LOG.debug("Owner of '" + hri.getTableNameAsString() + " is (incorrectly) null.");
     }
 
     UserGroupInformation user = RequestContext.getRequestUser();
@@ -190,7 +191,7 @@ public class AccessController extends BaseRegionObserver
       // owner of table can do anything to the table.
       if (LOG.isDebugEnabled()) {
         LOG.debug("User '" + user.getShortUserName() + "' is owner: allowed to " +
-          permRequest.toString() + " the table '" + htd.getNameAsString() +
+          permRequest.toString() + " the table '" + hri.getTableNameAsString() +
           "'");
       }
       return true;
@@ -205,16 +206,12 @@ public class AccessController extends BaseRegionObserver
         }
       }
       LOG.debug("User '" + user.getShortUserName() +
-        "' is not owner of the table " + htd.getNameAsString() +
+        "' is not owner of the table " + hri.getTableNameAsString() +
         ((families != null && families.size() > 0) ? ", cf: " +
             sb.toString() : "") +
         ". (owner is : '" + owner + "')");
     }
 
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("Owner-based authorization did not succeed, " +
-        "continuing with user-based authorization check.");
-    }
     boolean result = false;
 
     // 3. get permissions for this user for table with desc tableDesc.
@@ -228,7 +225,7 @@ public class AccessController extends BaseRegionObserver
             Set<byte[]> familySet = (Set<byte[]>)family.getValue();
             for (byte[] qualifier : familySet) {
               result = result &&
-                  authManager.authorize(user, htd.getName(), family.getKey(),
+                  authManager.authorize(user, tableName, family.getKey(),
                       (byte[])qualifier, permRequest);
               if (!result) {
                 if (LOG.isDebugEnabled()) {
@@ -245,7 +242,7 @@ public class AccessController extends BaseRegionObserver
             List<KeyValue> kvList = (List<KeyValue>)family.getValue();
             for (KeyValue kv : kvList) {
               result = result &&
-                  authManager.authorize(user, htd.getName(), family.getKey(),
+                  authManager.authorize(user, tableName, family.getKey(),
                       kv.getQualifier(), permRequest);
               if (!result) {
                 if (LOG.isDebugEnabled()) {
@@ -260,12 +257,12 @@ public class AccessController extends BaseRegionObserver
             }
           } else {
             result = result &&
-                authManager.authorize(user, htd.getName(), family.getKey(),
+                authManager.authorize(user, tableName, family.getKey(),
                     permRequest);
           }
         } else {
           result = result &&
-              authManager.authorize(user, htd.getName(), family.getKey(),
+              authManager.authorize(user, tableName, family.getKey(),
                     permRequest);
         }
 
@@ -283,13 +280,13 @@ public class AccessController extends BaseRegionObserver
       }
     } else {
       // just check for the table-level
-      result = authManager.authorize(user, htd.getName(), (byte[])null, permRequest);
+      result = authManager.authorize(user, tableName, (byte[])null, permRequest);
     }
 
     if (LOG.isDebugEnabled()) {
       LOG.debug("User '" + user.getShortUserName() + "' is " +
         (result ? "" : "not ") + "allowed to " +
-        permRequest.toString() + " the table '" + htd.getNameAsString() +
+        permRequest.toString() + " the table '" + hri.getTableNameAsString() +
         "'");
     }
 
@@ -372,8 +369,7 @@ public class AccessController extends BaseRegionObserver
       Map<byte[], ? extends Set<byte[]>> familyMap)
     throws IOException {
     HRegionInfo hri = env.getRegion().getRegionInfo();
-    HTableDescriptor htd = hri.getTableDesc();
-    byte[] tableName = htd.getName();
+    byte[] tableName = hri.getTableName();
 
     UserGroupInformation user = RequestContext.getRequestUser();
     if (user == null) {
@@ -900,8 +896,7 @@ public class AccessController extends BaseRegionObserver
     if (region != null) {
       HRegionInfo regionInfo = region.getRegionInfo();
       if (regionInfo != null) {
-        HTableDescriptor tableDesc = regionInfo.getTableDesc();
-        tableName = tableDesc.getName();
+        tableName = regionInfo.getTableName();
       }
     }
     return tableName;

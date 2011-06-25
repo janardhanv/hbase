@@ -693,7 +693,7 @@ public class TestAccessController {
     // grant table read permission
     protocol.grant(Bytes.toBytes(user.getShortName()),
       new TablePermission(tableName, null, Permission.Action.READ));
-
+    Thread.sleep(100);
     // check
     verifyAllowed(user, getActionAll);
     verifyAllowed(user, getAction1);
@@ -710,6 +710,7 @@ public class TestAccessController {
     // grant table write permission
     protocol.grant(Bytes.toBytes(user.getShortName()),
       new TablePermission(tableName, null, Permission.Action.WRITE));
+    Thread.sleep(100);
     verifyDenied(user, getActionAll);
     verifyDenied(user, getAction1);
     verifyDenied(user, getAction2);
@@ -729,6 +730,7 @@ public class TestAccessController {
 
     protocol.revoke(Bytes.toBytes(user.getShortName()),
         new TablePermission(tableName, null));
+    Thread.sleep(100);
     verifyDenied(user, getActionAll);
     verifyDenied(user, getAction1);
     verifyDenied(user, getAction2);
@@ -744,6 +746,7 @@ public class TestAccessController {
     // grant column family read permission
     protocol.grant(Bytes.toBytes(user.getShortName()),
       new TablePermission(tableName, family1, Permission.Action.READ));
+    Thread.sleep(100);
 
     verifyAllowed(user, getActionAll);
     verifyAllowed(user, getAction1);
@@ -760,6 +763,7 @@ public class TestAccessController {
     // grant column family write permission
     protocol.grant(Bytes.toBytes(user.getShortName()),
       new TablePermission(tableName, family2, Permission.Action.WRITE));
+    Thread.sleep(100);
 
     verifyAllowed(user, getActionAll);
     verifyAllowed(user, getAction1);
@@ -776,6 +780,7 @@ public class TestAccessController {
     // revoke column family permission
     protocol.revoke(Bytes.toBytes(user.getShortName()),
       new TablePermission(tableName, family2));
+    Thread.sleep(100);
 
     verifyAllowed(user, getActionAll);
     verifyAllowed(user, getAction1);

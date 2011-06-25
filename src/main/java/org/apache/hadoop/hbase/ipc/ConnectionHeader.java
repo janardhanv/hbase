@@ -109,10 +109,10 @@ class ConnectionHeader implements Writable {
   }
 
   public UserGroupInformation getUgi() {
-    return null;
+    return ugi;
   }
 
   public String toString() {
-    return protocol;
+    return protocol + "-" + ugi;
   }
 }
