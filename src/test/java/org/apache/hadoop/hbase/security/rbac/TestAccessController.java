@@ -81,11 +81,11 @@ public class TestAccessController {
     TEST_UTIL.startMiniCluster();
     MasterCoprocessorHost cpHost = TEST_UTIL.getMiniHBaseCluster()
         .getMaster().getCoprocessorHost();
-    cpHost.load(AccessController.class, Coprocessor.Priority.HIGHEST);
+    cpHost.load(AccessController.class, Coprocessor.PRIORITY_HIGHEST, conf);
     ACCESS_CONTROLLER = (AccessController)cpHost.findCoprocessor(
         AccessController.class.getName());
     CP_ENV = cpHost.createEnvironment(AccessController.class, ACCESS_CONTROLLER,
-        Coprocessor.Priority.HIGHEST, 1);
+        Coprocessor.PRIORITY_HIGHEST, 1, conf);
 
     // create a set of test users
     SUPERUSER = User.createUserForTesting(conf, "admin", new String[]{"supergroup"});

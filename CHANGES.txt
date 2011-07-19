@@ -11,6 +11,9 @@ Release 0.91.0 - Unreleased
    HBASE-3629  Update our thrift to 0.6 (Moaz Reyad)
    HBASE-1502  Remove need for heartbeats in HBase
    HBASE-451   Remove HTableDescriptor from HRegionInfo (Subbu M Iyer)
+   HBASE-451   Remove HTableDescriptor from HRegionInfo
+               addendum that fixes TestTableMapReduce
+   HBASE-3534  Action should not store or serialize regionName (Ted Yu)
 
   BUG FIXES
    HBASE-3280  YouAreDeadException being swallowed in HRS getMaster
@@ -129,6 +132,37 @@ Release 0.91.0 - Unreleased
    HBASE-3889  NPE in Distributed Log Splitting (Anirudh Todi)
    HBASE-4000  You can't specify split points when you create a table in
                the shell (Joey Echeverria)
+   HBASE-4029  Inappropriate checking of Logging Mode in HRegionServer
+               (Akash Ashok via Ted Yu)
+   HBASE-4037  Add timeout annotations to preempt surefire killing
+               all tests
+   HBASE-4024  Major compaction may not be triggered, even though region
+               server log says it is triggered (Ted Yu)
+   HBASE-4016  HRegion.incrementColumnValue() doesn't have a consistent
+               behavior when the field that we are incrementing is less
+               than 8 bytes long (Li Pi)
+   HBASE-4012  Further optimize byte comparison methods (Ted Yu)
+   HBASE-4037  Add timeout annotations to preempt surefire killing
+               all tests - TestFullLogReconstruction
+   HBASE-4051  [Coprocessors] Table coprocessor loaded twice when region is
+               initialized
+   HBASE-4059  If a region is split during RS shutdown process, the daughter
+               regions are NOT made online by master
+   HBASE-3904  HBA.createTable(final HTableDescriptor desc, byte [][] splitKeys)
+               should be synchronous
+   HBASE-4053  Most of the regions were added into AssignmentManager#servers twice
+   HBASE-4061  getTableDirs is missing directories to skip
+   HBASE-3867  when cluster is stopped and server which hosted meta region is
+               removed from cluster, master breaks down after restarting cluster.
+   HBASE-4074  When a RS has hostname with uppercase letter, there are two
+               RS entries in master (Weihua via Ted Yu)
+   HBASE-4077  Deadlock if WrongRegionException is thrown from getLock in
+               HRegion.delete (Adam Warrington via Ted Yu)
+   HBASE-3893  HRegion.internalObtainRowLock shouldn't wait forever
+   HBASE-4075  A bug in TestZKBasedOpenCloseRegion (Jieshan Bean via Ted Yu)
+   HBASE-4087  HBaseAdmin should perform validation of connection it holds
+   HBASE-4052  Enabling a table after master switch does not allow table scan,
+               throwing NotServingRegionException (ramkrishna via Ted Yu)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -272,6 +306,18 @@ Release 0.91.0 - Unreleased
    HBASE-3994  SplitTransaction has a window where clients can
                get RegionOfflineException
    HBASE-4010  HMaster.createTable could be heavily optimized
+   HBASE-3506  Ability to disable, drop and enable tables using regex expression
+               (Joey Echeverria via Ted Yu)
+   HBASE-3516  Coprocessors: add test cases for loading coprocessor jars
+               (Mingjie Lai via garyh)
+   HBASE-4036  Implementing a MultipleColumnPrefixFilter (Anirudh Todi)
+   HBASE-4048  [Coprocessors] Support configuration of coprocessor at load time
+   HBASE-3240  Improve documentation of importtsv and bulk loads.
+               (Aaron T. Myers via todd)
+   HBASE-4054  Usability improvement to HTablePool (Daniel Iancu)
+   HBASE-4079  HTableUtil - helper class for loading data (Doug Meil via Ted Yu)
+   HBASE-3871  Speedup LoadIncrementalHFiles by parallelizing HFile splitting
+   HBASE-4081  Issues with HRegion.compactStores methods (Ming Ma)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -280,6 +326,10 @@ Release 0.91.0 - Unreleased
    HBASE-3071  Graceful decommissioning of a regionserver
    HBASE-3970  Address HMaster crash/failure half way through meta migration
                (Subbu M Iyer)
+   HBASE-4013  Make ZooKeeperListener Abstract (Akash Ashok via Ted Yu)
+   HBASE-4025  Server startup fails during startup due to failure in loading
+               all table descriptors. (Subbu Iyer via Ted Yu)
+   HBASE-4017  BlockCache interface should be truly modular (Li Pi)
 
   NEW FEATURES
    HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
@@ -349,7 +399,22 @@ Release 0.90.4 - Unreleased
    HBASE-2077  NullPointerException with an open scanner that expired causing
                an immediate region server shutdown -- part 2.
    HBASE-4005  close_region bugs
-
+   HBASE-4028  Hmaster crashes caused by splitting log.
+               (gaojinchao via Ted Yu)
+   HBASE-4035  Fix local-master-backup.sh - parameter order wrong
+               (Lars George via Ted Yu)
+   HBASE-4020  "testWritesWhileGetting" unit test needs to be fixed.
+               (Vandana Ayyalasomayajula via Ted Yu)
+   HBASE-3984  CT.verifyRegionLocation isn't doing a very good check,
+               can delay cluster recovery
+   HBASE-4045  [replication] NPE in ReplicationSource when ZK is gone
+   HBASE-4034  HRegionServer should be stopped even if no META regions
+               are hosted by the HRegionServer (Akash Ashok)
+   HBASE-4033  The shutdown RegionServer could be added to
+               AssignmentManager.servers again (Jieshan Bean)
+   HBASE-4088  npes in server shutdown
+   HBASE-3872  Hole in split transaction rollback; edits to .META. need
+               to be rolled back even if it seems like they didn't make it
 
   IMPROVEMENT
    HBASE-3882  hbase-config.sh needs to be updated so it can auto-detects the
@@ -359,6 +424,8 @@ Release 0.90.4 - Unreleased
    HBASE-3919  More places output binary data to text (Dave Latham)
    HBASE-3873  HBase IRB shell: Don't pretty-print the output when stdout
                isn't a TTY (Benoît Sigoure)
+   HBASE-3969  Outdated data can not be cleaned in time (Zhou Shuaifeng)
+   HBASE-3968  HLog Pretty Printer (Riley Patterson)
 
 Release 0.90.3 - May 19th, 2011
 

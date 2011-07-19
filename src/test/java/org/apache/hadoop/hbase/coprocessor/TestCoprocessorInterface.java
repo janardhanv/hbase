@@ -30,7 +30,6 @@ import org.apache.hadoop.hbase.HBaseTestCase;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.coprocessor.Coprocessor.Priority;
 import org.apache.hadoop.hbase.regionserver.RegionCoprocessorHost;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.SplitTransaction;
@@ -147,7 +146,11 @@ public class TestCoprocessorInterface extends HBaseTestCase {
       addContent(region, fam3);
       region.flushcache();
     }
-    byte [] splitRow = region.compactStores();
+    
+    region.compactStores();
+
+    byte [] splitRow = region.checkSplit();
+    
     assertNotNull(splitRow);
     HRegion [] regions = split(region, splitRow);
     for (int i = 0; i < regions.length; i++) {
@@ -193,7 +196,7 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     RegionCoprocessorHost host = new RegionCoprocessorHost(r, null, conf);
     r.setCoprocessorHost(host);
 
-    host.load(implClass, Priority.USER);
+    host.load(implClass, Coprocessor.PRIORITY_USER, conf);
     // we need to manually call pre- and postOpen here since the
     // above load() is not the real case for CP loading. A CP is
     // expected to be loaded by default from 1) configuration; or 2)
@@ -220,7 +223,7 @@ public class TestCoprocessorInterface extends HBaseTestCase {
     RegionCoprocessorHost host = new RegionCoprocessorHost(r, null, conf);
     r.setCoprocessorHost(host);
 
-    host.load(implClass, Priority.USER);
+    host.load(implClass, Coprocessor.PRIORITY_USER, conf);
 
     Coprocessor c = host.findCoprocessor(implClass.getName());
     assertNotNull(c);

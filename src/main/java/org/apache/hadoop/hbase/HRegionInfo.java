@@ -614,7 +614,7 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
   public String toString() {
     return "REGION => {" + HConstants.NAME + " => '" +
       this.regionNameStr
-      + " TableName => " +  this.tableName
+      + " TableName => " +  Bytes.toStringBinary(this.tableName)
       + "', STARTKEY => '" +
       Bytes.toStringBinary(this.startKey) + "', ENDKEY => '" +
       Bytes.toStringBinary(this.endKey) +
@@ -707,7 +707,15 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
     }
 
     // Compare end keys.
-    return Bytes.compareTo(this.endKey, o.endKey);
+    result = Bytes.compareTo(this.endKey, o.endKey);
+    if (result != 0) {
+      return result;
+    }
+    if (this.offLine == o.offLine)
+        return 0;
+    if (this.offLine == true) return -1;
+        
+    return 1;
   }
 
   /**

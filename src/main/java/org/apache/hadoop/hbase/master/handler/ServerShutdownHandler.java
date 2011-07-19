@@ -173,7 +173,7 @@ public class ServerShutdownHandler extends EventHandler {
         throw new IOException("Interrupted", e);
       } catch (IOException ioe) {
         LOG.info("Received exception accessing META during server shutdown of " +
-            serverName + ", retrying META read");
+            serverName + ", retrying META read", ioe);
       }
     }
 
@@ -186,7 +186,8 @@ public class ServerShutdownHandler extends EventHandler {
       }
     }
 
-    LOG.info("Reassigning " + hris.size() + " region(s) that " + serverName +
+    LOG.info("Reassigning " + (hris == null? 0: hris.size()) +
+      " region(s) that " + serverName +
       " was carrying (skipping " + regionsInTransition.size() +
       " regions(s) that are already in transition)");
 
@@ -236,11 +237,12 @@ public class ServerShutdownHandler extends EventHandler {
    */
   static void fixupDaughters(final Result result,
       final AssignmentManager assignmentManager,
-      final CatalogTracker catalogTracker) throws IOException {
+      final CatalogTracker catalogTracker)
+  throws IOException {
     fixupDaughter(result, HConstants.SPLITA_QUALIFIER, assignmentManager,
-        catalogTracker);
+      catalogTracker);
     fixupDaughter(result, HConstants.SPLITB_QUALIFIER, assignmentManager,
-        catalogTracker);
+      catalogTracker);
   }
 
   /**
@@ -281,8 +283,8 @@ public class ServerShutdownHandler extends EventHandler {
   }
 
   /**
-   * Look for presence of the daughter OR of a split of the daughter. Daughter
-   * could have been split over on regionserver before a run of the
+   * Look for presence of the daughter OR of a split of the daughter in .META.
+   * Daughter could have been split over on regionserver before a run of the
    * catalogJanitor had chance to clear reference from parent.
    * @param daughter Daughter region to search for.
    * @throws IOException 
@@ -327,6 +329,11 @@ public class ServerShutdownHandler extends EventHandler {
         LOG.warn("No serialized HRegionInfo in " + r);
         return true;
       }
+      byte [] value = r.getValue(HConstants.CATALOG_FAMILY,
+          HConstants.SERVER_QUALIFIER);
+      // See if daughter is assigned to some server
+      if (value == null) return false;
+
       // Now see if we have gone beyond the daughter's startrow.
       if (!Bytes.equals(daughter.getTableName(),
           hri.getTableName())) {

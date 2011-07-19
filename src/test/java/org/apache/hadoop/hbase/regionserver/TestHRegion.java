@@ -1290,7 +1290,8 @@ public class TestHRegion extends HBaseTestCase {
     try {
       LOG.info("" + addContent(region, fam3));
       region.flushcache();
-      byte [] splitRow = region.compactStores();
+      region.compactStores();
+      byte [] splitRow = region.checkSplit();      
       assertNotNull(splitRow);
       LOG.info("SplitRow: " + Bytes.toString(splitRow));
       HRegion [] subregions = splitRegion(region, splitRow);
@@ -2146,6 +2147,30 @@ public class TestHRegion extends HBaseTestCase {
     EnvironmentEdgeManagerTestHelper.reset();
   }
 
+  public void testIncrementColumnValue_WrongInitialSize() throws IOException {
+    initHRegion(tableName, getName(), fam1);
+
+    byte[] row1 = Bytes.add(Bytes.toBytes("1234"), Bytes.toBytes(0L));
+    int row1Field1 = 0;
+    int row1Field2 = 1;
+    Put put1 = new Put(row1);
+    put1.add(fam1, qual1, Bytes.toBytes(row1Field1));
+    put1.add(fam1, qual2, Bytes.toBytes(row1Field2));
+    region.put(put1);
+
+    long result;
+    try {
+        result = region.incrementColumnValue(row1, fam1, qual1, 1, true);
+        fail("Expected to fail here");
+    } catch (Exception exception) {
+        // Expected.
+    }
+    
+
+    assertICV(row1, fam1, qual1, row1Field1);
+    assertICV(row1, fam1, qual2, row1Field2);
+  }
+
   private void assertICV(byte [] row,
                          byte [] familiy,
                          byte[] qualifier,
@@ -2161,7 +2186,20 @@ public class TestHRegion extends HBaseTestCase {
     assertEquals(amount, r);
   }
 
+  private void assertICV(byte [] row,
+                         byte [] familiy,
+                         byte[] qualifier,
+                         int amount) throws IOException {
+    // run a get and see?
+    Get get = new Get(row);
+    get.addColumn(familiy, qualifier);
+    Result result = region.get(get, null);
+    assertEquals(1, result.size());
 
+    KeyValue kv = result.raw()[0];
+    int r = Bytes.toInt(kv.getValue());
+    assertEquals(amount, r);
+  }
 
   public void testScanner_Wildcard_FromMemStoreAndFiles_EnforceVersions()
   throws IOException {
@@ -2258,7 +2296,8 @@ public class TestHRegion extends HBaseTestCase {
     try {
       LOG.info("" + addContent(region, fam3));
       region.flushcache();
-      byte [] splitRow = region.compactStores();
+      region.compactStores();
+      byte [] splitRow = region.checkSplit();      
       assertNotNull(splitRow);
       LOG.info("SplitRow: " + Bytes.toString(splitRow));
       HRegion [] regions = splitRegion(region, splitRow);
@@ -2292,7 +2331,8 @@ public class TestHRegion extends HBaseTestCase {
         byte [][] midkeys = new byte [regions.length][];
         // To make regions splitable force compaction.
         for (int i = 0; i < regions.length; i++) {
-          midkeys[i] = regions[i].compactStores();
+          regions[i].compactStores();
+          midkeys[i] = regions[i].checkSplit();          
         }
 
         TreeMap<String, HRegion> sortedMap = new TreeMap<String, HRegion>();
@@ -2670,7 +2710,7 @@ public class TestHRegion extends HBaseTestCase {
       qualifiers[i] = Bytes.toBytes("qual" + i);
     }
 
-    String method = "testWritesWhileScanning";
+    String method = "testWritesWhileGetting";
     initHRegion(tableName, method, families);
     PutThread putThread = new PutThread(numRows, families, qualifiers);
     putThread.start();

@@ -42,6 +42,7 @@ import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -59,12 +60,12 @@ import org.apache.hadoop.hbase.DroppedSnapshotException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.UnknownScannerException;
+import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
@@ -75,10 +76,10 @@ import org.apache.hadoop.hbase.client.RowLock;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
-import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.IncompatibleFilterException;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.io.HeapSize;
 import org.apache.hadoop.hbase.io.TimeRange;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
@@ -91,18 +92,17 @@ import org.apache.hadoop.hbase.regionserver.compactions.CompactionRequest;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.HLogKey;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
-import org.apache.hadoop.hbase.util.HashedBytes;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CancelableProgressable;
 import org.apache.hadoop.hbase.util.ClassSize;
 import org.apache.hadoop.hbase.util.CompressionTest;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.HashedBytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.util.StringUtils;
-
 import org.cliffc.high_scale_lib.Counter;
 
 import com.google.common.base.Preconditions;
@@ -196,6 +196,8 @@ public class HRegion implements HeapSize { // , Writable{
   final HLog log;
   final FileSystem fs;
   final Configuration conf;
+  final int rowLockWaitDuration;
+  static final int DEFAULT_ROWLOCK_WAIT_DURATION = 30000;
   final HRegionInfo regionInfo;
   final Path regiondir;
   KeyValue.KVComparator comparator;
@@ -275,6 +277,7 @@ public class HRegion implements HeapSize { // , Writable{
     this.tableDir = null;
     this.blockingMemStoreSize = 0L;
     this.conf = null;
+    this.rowLockWaitDuration = DEFAULT_ROWLOCK_WAIT_DURATION;
     this.rsServices = null;
     this.fs = null;
     this.memstoreFlushSize = 0L;
@@ -317,6 +320,8 @@ public class HRegion implements HeapSize { // , Writable{
     this.log = log;
     this.fs = fs;
     this.conf = conf;
+    this.rowLockWaitDuration = conf.getInt("hbase.rowlock.wait.duration",
+                    DEFAULT_ROWLOCK_WAIT_DURATION);
     this.regionInfo = regionInfo;
     this.htableDescriptor = htd;
     this.rsServices = rsServices;
@@ -811,33 +816,27 @@ public class HRegion implements HeapSize { // , Writable{
   }
 
   /**
-   * Called by compaction thread and after region is opened to compact the
-   * HStores if necessary.
-   *
-   * <p>This operation could block for a long time, so don't call it from a
-   * time-sensitive thread.
-   *
-   * Note that no locking is necessary at this level because compaction only
-   * conflicts with a region split, and that cannot happen because the region
-   * server does them sequentially and not in parallel.
+   * This is a helper function that compact all the stores synchronously
+   * It is used by utilities and testing
    *
    * @param majorCompaction True to force a major compaction regardless of thresholds
-   * @return split row if split is needed
    * @throws IOException e
    */
-  byte [] compactStores(final boolean majorCompaction)
+  void compactStores(final boolean majorCompaction)
   throws IOException {
     if (majorCompaction) {
       this.triggerMajorCompaction();
     }
-    return compactStores();
+    compactStores();
   }
 
   /**
-   * Compact all the stores and return the split key of the first store that needs
-   * to be split.
+   * This is a helper function that compact all the stores synchronously
+   * It is used by utilities and testing
+   *
+   * @throws IOException e
    */
-  public byte[] compactStores() throws IOException {
+  public void compactStores() throws IOException {
     for(Store s : getStores().values()) {
       CompactionRequest cr = s.requestCompaction();
       if(cr != null) {
@@ -847,12 +846,7 @@ public class HRegion implements HeapSize { // , Writable{
           s.finishRequest(cr);
         }
       }
-      byte[] splitRow = s.checkSplit();
-      if (splitRow != null) {
-        return splitRow;
-      }
     }
-    return null;
   }
 
   /*
@@ -1351,12 +1345,14 @@ public class HRegion implements HeapSize { // , Writable{
       // If we did not pass an existing row lock, obtain a new one
       lid = getLock(lockid, row, true);
 
-      // All edits for the given row (across all column families) must happen atomically.
-      prepareDelete(delete);
-      delete(delete.getFamilyMap(), writeToWAL);
-
+      try {
+        // All edits for the given row (across all column families) must happen atomically.
+        prepareDelete(delete);
+        delete(delete.getFamilyMap(), writeToWAL);
+      } finally {
+        if(lockid == null) releaseRowLock(lid);
+      }
     } finally {
-      if(lockid == null) releaseRowLock(lid);
       closeRegionOperation();
     }
   }
@@ -2400,7 +2396,10 @@ public class HRegion implements HeapSize { // , Writable{
             return null;
           }
           try {
-            existingLatch.await();
+            if (!existingLatch.await(this.rowLockWaitDuration,
+                            TimeUnit.MILLISECONDS)) {
+                return null;
+            }
           } catch (InterruptedException ie) {
             // Empty
           }
@@ -3525,6 +3524,7 @@ public class HRegion implements HeapSize { // , Writable{
   throws IOException {
     checkRow(row);
     boolean flush = false;
+    boolean wrongLength = false;
     // Lock row
     long result = amount;
     startRegionOperation();
@@ -3545,32 +3545,38 @@ public class HRegion implements HeapSize { // , Writable{
 
         if (!results.isEmpty()) {
           KeyValue kv = results.get(0);
-          byte [] buffer = kv.getBuffer();
-          int valueOffset = kv.getValueOffset();
-          result += Bytes.toLong(buffer, valueOffset, Bytes.SIZEOF_LONG);
+          if(kv.getValueLength() == 8){
+        	  byte [] buffer = kv.getBuffer();
+        	  int valueOffset = kv.getValueOffset();
+        	  result += Bytes.toLong(buffer, valueOffset, Bytes.SIZEOF_LONG);
+          }
+          else{
+        	  wrongLength = true;
+          }
         }
-
-        // build the KeyValue now:
-        KeyValue newKv = new KeyValue(row, family,
+        if(!wrongLength){
+        	// build the KeyValue now:
+        	KeyValue newKv = new KeyValue(row, family,
             qualifier, EnvironmentEdgeManager.currentTimeMillis(),
             Bytes.toBytes(result));
 
-        // now log it:
-        if (writeToWAL) {
-          long now = EnvironmentEdgeManager.currentTimeMillis();
-          WALEdit walEdit = new WALEdit();
-          walEdit.add(newKv);
-          this.log.append(regionInfo, this.htableDescriptor.getName(),
-              walEdit, now, this.htableDescriptor);
+        	// now log it:
+        	if (writeToWAL) {
+        		long now = EnvironmentEdgeManager.currentTimeMillis();
+        		WALEdit walEdit = new WALEdit();
+        		walEdit.add(newKv);
+        		this.log.append(regionInfo, this.htableDescriptor.getName(),
+        				walEdit, now, this.htableDescriptor);
+        	}
+
+        	// Now request the ICV to the store, this will set the timestamp
+        	// appropriately depending on if there is a value in memcache or not.
+        	// returns the change in the size of the memstore from operation
+        	long size = store.updateColumnValue(row, family, qualifier, result);
+
+        	size = this.addAndGetGlobalMemstoreSize(size);
+        	flush = isFlushSize(size);
         }
-
-        // Now request the ICV to the store, this will set the timestamp
-        // appropriately depending on if there is a value in memcache or not.
-        // returns the change in the size of the memstore from operation
-        long size = store.updateColumnValue(row, family, qualifier, result);
-
-        size = this.addAndGetGlobalMemstoreSize(size);
-        flush = isFlushSize(size);
       } finally {
         this.updatesLock.readLock().unlock();
         releaseRowLock(lid);
@@ -3583,7 +3589,9 @@ public class HRegion implements HeapSize { // , Writable{
       // Request a cache flush.  Do it outside update lock.
       requestFlush();
     }
-
+    if(wrongLength){
+    	throw new IOException("Attempted to increment field that isn't 64 bits wide");
+    }
     return result;
   }
 
@@ -3604,7 +3612,7 @@ public class HRegion implements HeapSize { // , Writable{
   public static final long FIXED_OVERHEAD = ClassSize.align(
       ClassSize.OBJECT +
       ClassSize.ARRAY +
-      ClassSize.align(27 * ClassSize.REFERENCE) +
+      27 * ClassSize.REFERENCE + Bytes.SIZEOF_INT +
       (4 * Bytes.SIZEOF_LONG) +
       Bytes.SIZEOF_BOOLEAN);
 
@@ -3820,7 +3828,7 @@ public class HRegion implements HeapSize { // , Writable{
     // nothing
   }
 
-  byte[] checkSplit() {
+  public byte[] checkSplit() {
     if (this.splitPoint != null) {
       return this.splitPoint;
     }

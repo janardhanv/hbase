@@ -710,13 +710,17 @@ public class FSUtils {
     }
 
     public boolean accept(Path p) {
-      boolean isdir = false;
+      boolean isValid = false;
       try {
-        isdir = this.fs.getFileStatus(p).isDir();
+        if (HConstants.HBASE_NON_USER_TABLE_DIRS.contains(p)) {
+          isValid = false;
+        } else {
+            isValid = this.fs.getFileStatus(p).isDir();
+        }
       } catch (IOException e) {
         e.printStackTrace();
       }
-      return isdir;
+      return isValid;
     }
   }
 
@@ -840,7 +844,8 @@ public class FSUtils {
   /**
    * @param fs
    * @param rootdir
-   * @return All the table directories under <code>rootdir</code>
+   * @return All the table directories under <code>rootdir</code>. Ignore non table hbase folders such as
+   * .logs, .oldlogs, .corrupt, .META., and -ROOT- folders.
    * @throws IOException
    */
   public static List<Path> getTableDirs(final FileSystem fs, final Path rootdir)
@@ -851,13 +856,9 @@ public class FSUtils {
     for (FileStatus dir: dirs) {
       Path p = dir.getPath();
       String tableName = p.getName();
-      if (tableName.equals(HConstants.HREGION_LOGDIR_NAME) ||
-          tableName.equals(Bytes.toString(HConstants.ROOT_TABLE_NAME)) ||
-          tableName.equals(Bytes.toString(HConstants.META_TABLE_NAME)) ||
-          tableName.equals(HConstants.HREGION_OLDLOGDIR_NAME) ) {
-        continue;
+      if (!HConstants.HBASE_NON_USER_TABLE_DIRS.contains(tableName)) {
+        tabledirs.add(p);
       }
-      tabledirs.add(p);
     }
     return tabledirs;
   }
@@ -883,7 +884,7 @@ public class FSUtils {
   public static long getTableInfoModtime(final FileSystem fs, final Path rootdir,
       final String tablename)
   throws IOException {
-    Path p = getTablePath(rootdir, tablename);
+    Path p = getTableInfoPath(rootdir, tablename);
     FileStatus [] status = fs.listStatus(p);
     if (status.length < 1) throw new FileNotFoundException("No status for " + p.toString());
     return status[0].getModificationTime();

@@ -22,8 +22,9 @@ package org.apache.hadoop.hbase.catalog;
 import java.io.EOFException;
 import java.io.IOException;
 import java.net.ConnectException;
-import java.net.SocketTimeoutException;
+import java.net.NoRouteToHostException;
 import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import org.apache.commons.logging.Log;
@@ -38,6 +39,7 @@ import org.apache.hadoop.hbase.client.HConnection;
 import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.apache.hadoop.hbase.client.RetriesExhaustedException;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
+import org.apache.hadoop.hbase.ipc.ServerNotRunningYetException;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.zookeeper.MetaNodeTracker;
 import org.apache.hadoop.hbase.zookeeper.RootRegionTracker;
@@ -310,6 +312,7 @@ public class CatalogTracker {
       if (newLocation == null) {
         return null;
       }
+
       HRegionInterface newConnection = getCachedConnection(newLocation);
       if (verifyRegionLocation(newConnection, this.metaLocation, META_REGION)) {
         setMetaLocation(newLocation);
@@ -419,10 +422,10 @@ public class CatalogTracker {
         throw e;
       }
     } catch (SocketTimeoutException e) {
-      // Return 'protocol' == null.
       LOG.debug("Timed out connecting to " + sn);
+    } catch (NoRouteToHostException e) {
+      LOG.debug("Connecting to " + sn, e);
     } catch (SocketException e) {
-      // Return 'protocol' == null.
       LOG.debug("Exception connecting to " + sn);
     } catch (IOException ioe) {
       Throwable cause = ioe.getCause();
@@ -490,7 +493,7 @@ public class CatalogTracker {
       connection = waitForRootServerConnection(timeout);
     } catch (NotAllMetaRegionsOnlineException e) {
       // Pass
-    } catch (org.apache.hadoop.hbase.ipc.ServerNotRunningException e) {
+    } catch (ServerNotRunningYetException e) {
       // Pass -- remote server is not up so can't be carrying root
     } catch (IOException e) {
       // Unexpected exception

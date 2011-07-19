@@ -1069,7 +1069,7 @@ public abstract class HBaseServer implements RpcServer {
           CurCall.set(call);
           try {
             if (!started)
-              throw new ServerNotRunningException("Server is not running yet");
+              throw new ServerNotRunningYetException("Server is not running yet");
 
             if (LOG.isDebugEnabled()) {
               if (call.connection.ticket == null) {
@@ -1083,7 +1083,7 @@ public abstract class HBaseServer implements RpcServer {
 
             RequestContext.set(call.connection.ticket, getRemoteIp(),
                 call.connection.protocol);
-            value = call(call.connection.protocol, call.param, call.timestamp);
+            value = call(call.connection.protocol, call.param, call.timestamp);             // make the call
           } catch (Throwable e) {
             LOG.debug(getName()+", call "+call+": error: " + e, e);
             errorClass = e.getClass().getName();
@@ -1302,7 +1302,7 @@ public abstract class HBaseServer implements RpcServer {
 
   /**
    * Starts the service threads but does not allow requests to be responded yet.
-   * Client will get {@link ServerNotRunningException} instead.
+   * Client will get {@link ServerNotRunningYetException} instead.
    */
   @Override
   public synchronized void startThreads() {
