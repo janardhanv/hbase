@@ -152,6 +152,20 @@ public class AccessController extends BaseRegionObserver
     }
   }
 
+  /**
+   * Check the current user for authorization to perform a specific action
+   * against the given set of row data.
+   *
+   * <p>Note: Ordering of the authorization checks
+   * has been carefully optimized to short-circuit the most common requests
+   * and minimize the amount of processing required.</p>
+   *
+   * @param permRequest the action being requested
+   * @param e the coprocessor environment
+   * @param families the map of column families to qualifiers present in
+   * the request
+   * @return
+   */
   boolean permissionGranted(TablePermission.Action permRequest,
       RegionCoprocessorEnvironment e,
       Map<byte [], ? extends Collection<?>> families) {
@@ -159,8 +173,8 @@ public class AccessController extends BaseRegionObserver
     HTableDescriptor htd = e.getRegion().getTableDesc();
     byte[] tableName = hri.getTableName();
 
-    // 1. All users need read access to .META. and -ROOT- tables; also, this is a very
-    // common call to permissionGranted(), so deal with it quickly.
+    // 1. All users need read access to .META. and -ROOT- tables.
+    // this is a very common operation, so deal with it quickly.
     if ((hri.isRootRegion() || hri.isMetaRegion()) &&
         (permRequest == TablePermission.Action.READ)) {
       if (LOG.isDebugEnabled()) {
@@ -170,129 +184,99 @@ public class AccessController extends BaseRegionObserver
       return true;
     }
 
-    // 2. Get owner of this table: owners can do anything, (including the 
-    // specific permRequest requested).
-    // Note that .META. and -ROOT- set on creation to be owned by the system
-    // user: (see MasterFileSystem.java:bootstrap()), so that only system user
-    // may write to them.  Of course, other users may be later granted write
-    // access to these tables if desired.
+    UserGroupInformation user = RequestContext.getRequestUser();
+    if (user == null) {
+      LOG.info("No user associated with request!  Permission denied!");
+      return false;
+    }
+
+    // 2. The table owner has full privileges
     String owner = htd.getOwnerString();
     if (owner == null) {
       LOG.debug("Owner of '" + hri.getTableNameAsString() + " is (incorrectly) null.");
     }
-
-    UserGroupInformation user = RequestContext.getRequestUser();
-    if (user == null) {
-      LOG.info("No user associated with request.  Permission denied!");
-      return false;
-    }
-
     if (user.getShortUserName().equals(owner)) {
-      // owner of table can do anything to the table.
       if (LOG.isDebugEnabled()) {
         LOG.debug("User '" + user.getShortUserName() + "' is owner: allowed to " +
           permRequest.toString() + " the table '" + hri.getTableNameAsString() +
           "'");
       }
       return true;
-    } else if (LOG.isDebugEnabled()) {
-      StringBuffer sb = new StringBuffer("");
-      if ((families != null && families.size() > 0)) {
-        for (byte[] familyName : families.keySet()) {
-          if (sb.length() != 0) {
-            sb.append(", ");
-          }
-          sb.append(Bytes.toString(familyName));
-        }
-      }
-      LOG.debug("User '" + user.getShortUserName() +
-        "' is not owner of the table " + hri.getTableNameAsString() +
-        ((families != null && families.size() > 0) ? ", cf: " +
-            sb.toString() : "") +
-        ". (owner is : '" + owner + "')");
     }
 
-    boolean result = false;
+    // 3. check for the table-level, if successful we can short-circuit
+    if (authManager.authorize(user, tableName, (byte[])null, permRequest)) {
+      return true;
+    }
 
-    // 3. get permissions for this user for table with desc tableDesc.
+    // 4. check permissions against the requested families
     if (families != null && families.size() > 0) {
       // all families must pass
-      result = true;
       for (Map.Entry<byte [], ? extends Collection<?>> family : families.entrySet()) {
+        // a) check for family level access
+        if (authManager.authorize(user, tableName, family.getKey(),
+            permRequest)) {
+          continue;  // family-level permission overrides per-qualifier
+        }
+
+        // b) qualifier level access can still succeed
         if ((family.getValue() != null) && (family.getValue().size() > 0)) {
           if (family.getValue() instanceof Set) {
             // for each qualifier of the family
             Set<byte[]> familySet = (Set<byte[]>)family.getValue();
             for (byte[] qualifier : familySet) {
-              result = result &&
-                  authManager.authorize(user, tableName, family.getKey(),
-                      (byte[])qualifier, permRequest);
-              if (!result) {
-                if (LOG.isDebugEnabled()) {
-                  LOG.debug("User '" + user.getShortUserName() +
-                      "' is not allowed to have " + permRequest.toString() +
-                      " access to '" +
-                      Bytes.toString(family.getKey()) + ": " + Bytes.toString(qualifier) +
-                      "'."  );
-                }
-                break;
+              if (!authManager.authorize(user, tableName, family.getKey(),
+                                         qualifier, permRequest)) {
+                logDenied(user, tableName, family.getKey(), qualifier,
+                    permRequest);
+                return false;
               }
             }
           } else if (family.getValue() instanceof List) { // List<KeyValue>
             List<KeyValue> kvList = (List<KeyValue>)family.getValue();
             for (KeyValue kv : kvList) {
-              result = result &&
-                  authManager.authorize(user, tableName, family.getKey(),
-                      kv.getQualifier(), permRequest);
-              if (!result) {
-                if (LOG.isDebugEnabled()) {
-                  LOG.debug("User '" + user.getShortUserName() +
-                      "' is not allowed to have " + permRequest.toString() +
-                      " access to '" +
-                      Bytes.toString(family.getKey()) + ": " +
-                      Bytes.toString(kv.getQualifier()) + "'."  );
-                }
-                break;
+              if (!authManager.authorize(user, tableName, family.getKey(),
+                      kv.getQualifier(), permRequest)) {
+                logDenied(user, tableName, family.getKey(), kv.getQualifier(),
+                    permRequest);
+                return false;
               }
             }
-          } else {
-            result = result &&
-                authManager.authorize(user, tableName, family.getKey(),
-                    permRequest);
           }
         } else {
-          result = result &&
-              authManager.authorize(user, tableName, family.getKey(),
-                    permRequest);
-        }
-
-        if (!result) {
-          if (LOG.isDebugEnabled()) {
-            if ((family.getValue() == null) || (family.getValue().size() == 0)) {
-              LOG.debug("User '" + user.getShortUserName() +
-                  "' is not allowed to have " + permRequest.toString() +
-                  " access to '" +
-                  Bytes.toString(family.getKey()) + "'."  );
-            }
-          }
-          break;  //failed
+          // no qualifiers and family-level check already failed
+          logDenied(user, tableName, family.getKey(), null, permRequest);
+          return false;
         }
       }
-    } else {
-      // just check for the table-level
-      result = authManager.authorize(user, tableName, (byte[])null, permRequest);
+
+      // all family checks passed
+      return true;
     }
 
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("User '" + user.getShortUserName() + "' is " +
-        (result ? "" : "not ") + "allowed to " +
-        permRequest.toString() + " the table '" + hri.getTableNameAsString() +
-        "'");
-    }
-
-    return result;
+    // 5. no families to check and table level access failed
+    logDenied(user, tableName, null, null, permRequest);
+    return false;
   }
 
+  private void logDenied(UserGroupInformation user, byte[] table, byte[] family,
+      byte[] qualifier, Permission.Action perm) {
+    if (LOG.isDebugEnabled()) {
+      LOG.debug("User '" + user.getShortUserName() +
+          "' is not allowed to have " + perm.toString() + " access to " +
+          Bytes.toString(table) + "(" +
+          family != null ? Bytes.toString(family) : "" +
+          qualifier != null ? Bytes.toString(qualifier) : "" +
+          Bytes.toString(family) + ")"  );
+    }
+  }
+
+  /**
+   * Authorizes that the current user has global privileges for the given action.
+   * @param perm The action being requested
+   * @throws IOException if obtaining the current user fails or authorization
+   *     is denied
+   */
   public void requirePermission(Permission.Action perm) throws IOException {
     UserGroupInformation user = RequestContext.getRequestUser();
     if (!RequestContext.isInRequestContext()) {
