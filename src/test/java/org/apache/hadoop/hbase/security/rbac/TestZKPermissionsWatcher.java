@@ -114,6 +114,14 @@ public class TestZKPermissionsWatcher {
       TablePermission.Action.READ));
     assertTrue(AUTH_B.authorizeUser("george", TEST_TABLE, null,
       TablePermission.Action.WRITE));
+    assertFalse(AUTH_A.authorizeUser("hubert", TEST_TABLE, null,
+      TablePermission.Action.READ));
+    assertFalse(AUTH_A.authorizeUser("hubert", TEST_TABLE, null,
+      TablePermission.Action.WRITE));
+    assertFalse(AUTH_B.authorizeUser("hubert", TEST_TABLE, null,
+      TablePermission.Action.READ));
+    assertFalse(AUTH_B.authorizeUser("hubert", TEST_TABLE, null,
+      TablePermission.Action.WRITE));
 
     // update ACL: hubert R
     acl = new ArrayList<TablePermission>();
