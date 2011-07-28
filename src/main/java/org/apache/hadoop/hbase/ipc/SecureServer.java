@@ -20,24 +20,22 @@
 
 package org.apache.hadoop.hbase.ipc;
 
-import com.google.common.base.Function;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hbase.Server;
-import org.apache.hadoop.hbase.security.AccessDeniedException;
+import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.io.WritableWithSize;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.AuthMethod;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslDigestCallbackHandler;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslGssCallbackHandler;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslStatus;
-import org.apache.hadoop.hbase.security.token.AuthenticationTokenSecretManager;
 import org.apache.hadoop.hbase.util.ByteBufferOutputStream;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.BytesWritable;
 import org.apache.hadoop.io.IntWritable;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
-import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.security.AccessControlException;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.UserGroupInformation.AuthenticationMethod;
@@ -47,6 +45,7 @@ import org.apache.hadoop.security.authorize.ServiceAuthorizationManager;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.SecretManager.InvalidToken;
 import org.apache.hadoop.security.token.TokenIdentifier;
+import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
 
 import javax.security.sasl.Sasl;
@@ -58,9 +57,6 @@ import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.security.PrivilegedExceptionAction;
 import java.util.*;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.LinkedBlockingQueue;
 
 import static org.apache.hadoop.fs.CommonConfigurationKeys.HADOOP_SECURITY_AUTHORIZATION;
 
@@ -90,6 +86,100 @@ public abstract class SecureServer extends HBaseServer {
 
   protected SecretManager<TokenIdentifier> secretManager;
   protected ServiceAuthorizationManager authManager;
+
+  protected class Call extends HBaseServer.Call {
+    public Call(int id, Writable param, Connection connection,
+        Responder responder) {
+      super(id, param, connection, responder);
+    }
+
+    @Override
+    protected synchronized void setResponse(Object value, String errorClass,
+        String error) {
+      setResponse(value, errorClass, error,
+          error == null ? Status.SUCCESS : Status.ERROR );
+    }
+
+    protected synchronized void setResponse(Object value, String errorClass,
+        String error, Status status) {
+      Writable result = null;
+      if (value instanceof Writable) {
+        result = (Writable) value;
+      } else {
+        /* We might have a null value and errors. Avoid creating a
+         * HbaseObjectWritable, because the constructor fails on null. */
+        if (value != null) {
+          result = new HbaseObjectWritable(value);
+        }
+      }
+
+      int size = BUFFER_INITIAL_SIZE;
+      if (result instanceof WritableWithSize) {
+        // get the size hint.
+        WritableWithSize ohint = (WritableWithSize) result;
+        long hint = ohint.getWritableSize() + Bytes.SIZEOF_INT + Bytes.SIZEOF_INT;
+        if (hint > Integer.MAX_VALUE) {
+          // oops, new problem.
+          IOException ioe =
+            new IOException("Result buffer size too large: " + hint);
+          errorClass = ioe.getClass().getName();
+          error = StringUtils.stringifyException(ioe);
+        } else {
+          size = (int)hint;
+        }
+      }
+
+      ByteBufferOutputStream buf = new ByteBufferOutputStream(size);
+      DataOutputStream out = new DataOutputStream(buf);
+      try {
+        out.writeInt(this.id);                // write call id
+        out.writeInt(status.state);           // write status
+      } catch (IOException e) {
+        errorClass = e.getClass().getName();
+        error = StringUtils.stringifyException(e);
+      }
+
+      try {
+        if (status == Status.SUCCESS) {
+          result.write(out);
+        } else {
+          WritableUtils.writeString(out, errorClass);
+          WritableUtils.writeString(out, error);
+        }
+        if (((SecureConnection)connection).useWrap) {
+          wrapWithSasl(buf);
+        }
+      } catch (IOException e) {
+        LOG.warn("Error sending response to call: ", e);
+      }
+
+      if (buf.size() > warnResponseSize) {
+        LOG.warn("responseTooLarge for: "+this+": Size: "
+            + StringUtils.humanReadableInt(buf.size()));
+      }
+
+      this.response = buf.getByteBuffer();
+    }
+
+    private void wrapWithSasl(ByteBufferOutputStream response)
+        throws IOException {
+      if (((SecureConnection)connection).useSasl) {
+        byte[] token = response.getByteBuffer().array();
+        // synchronization may be needed since there can be multiple Handler
+        // threads using saslServer to wrap responses.
+        synchronized (((SecureConnection)connection).saslServer) {
+          token = ((SecureConnection)connection).saslServer.wrap(token, 0, token.length);
+        }
+        if (LOG.isDebugEnabled())
+          LOG.debug("Adding saslServer wrapped token of size " + token.length
+              + " as call response.");
+        response.getByteBuffer().reset();
+        DataOutputStream saslOut = new DataOutputStream(response);
+        saslOut.writeInt(token.length);
+        saslOut.write(token, 0, token.length);
+      }
+    }
+  }
 
   /** Reads calls from a connection and queues them for handling. */
   public class SecureConnection extends HBaseServer.Connection  {
@@ -122,12 +212,12 @@ public abstract class SecureServer extends HBaseServer {
     // Fake 'call' for failed authorization response
     private final int AUTHORIZATION_FAILED_CALLID = -1;
     private final Call authFailedCall = 
-      new Call(AUTHORIZATION_FAILED_CALLID, null, this);
+      new Call(AUTHORIZATION_FAILED_CALLID, null, this, null);
     private ByteBufferOutputStream authFailedResponse =
         new ByteBufferOutputStream(0);
     // Fake 'call' for SASL context setup
     private static final int SASL_CALLID = -33;
-    private final Call saslCall = new Call(SASL_CALLID, null, this);
+    private final Call saslCall = new Call(SASL_CALLID, null, this, null);
     private final ByteArrayOutputStream saslResponse = new ByteArrayOutputStream();
 
     private boolean useWrap = false;
@@ -329,8 +419,9 @@ public abstract class SecureServer extends HBaseServer {
         WritableUtils.writeString(out, errorClass);
         WritableUtils.writeString(out, error);
       }
-      saslCall.setResponse(ByteBuffer.wrap(saslResponse.toByteArray()));
-      responder.doRespond(saslCall);
+      saslCall.setResponse(rv, errorClass, error);
+      saslCall.responder = responder;
+      saslCall.sendResponseIfReady();
     }
 
     private void disposeSasl() {
@@ -383,9 +474,11 @@ public abstract class SecureServer extends HBaseServer {
           if (isSecurityEnabled && authMethod == AuthMethod.SIMPLE) {
             AccessControlException ae = new AccessControlException(
                 "Authentication is required");
-            doResponse(authFailedResponse, authFailedCall, null,
-                ae.getClass().getName(), ae.getMessage(), "SecureConnection",
-                Status.FATAL);
+            Call failedCall = new Call(AUTHORIZATION_FAILED_CALLID, null, this,
+                null);
+            failedCall.setResponse(null, ae.getClass().getName(),
+                ae.getMessage(), Status.FATAL);
+            responder.doRespond(failedCall);
             throw ae;
           }
           if (!isSecurityEnabled && authMethod != AuthMethod.SIMPLE) {
@@ -550,6 +643,25 @@ public abstract class SecureServer extends HBaseServer {
       }
     }
 
+    protected void processData(byte[] buf) throws  IOException, InterruptedException {
+      DataInputStream dis =
+        new DataInputStream(new ByteArrayInputStream(buf));
+      int id = dis.readInt();                    // try to read an id
+
+      if (LOG.isDebugEnabled())
+        LOG.debug(" got #" + id);
+
+      Writable param = ReflectionUtils.newInstance(paramClass, conf);           // read param
+      param.readFields(dis);
+
+      Call call = new Call(id, param, this, responder);
+
+      if (priorityCallQueue != null && getQosLevel(param) > highPriorityLevel) {
+        priorityCallQueue.put(call);
+      } else {
+        callQueue.put(call);              // queue the call; maybe blocked here
+      }
+    }
 
     private boolean authorizeConnection() throws IOException {
       try {
@@ -569,9 +681,11 @@ public abstract class SecureServer extends HBaseServer {
       } catch (AuthorizationException ae) {
         LOG.debug("Connection authorization failed: "+ae.getMessage(), ae);
         rpcMetrics.authorizationFailures.inc();
-        doResponse(authFailedResponse, authFailedCall, null,
-            ae.getClass().getName(), ae.getMessage(), "SecureConnection",
+        Call failedCall = new Call(AUTHORIZATION_FAILED_CALLID, null, this,
+            null);
+        failedCall.setResponse(null, ae.getClass().getName(), ae.getMessage(),
             Status.FATAL);
+        responder.doRespond(failedCall);
         return false;
       }
       return true;
@@ -589,31 +703,6 @@ public abstract class SecureServer extends HBaseServer {
       }
       try {socket.close();} catch(Exception ignored) {}
     }
-  }
-
-  /**
-   * Gets the QOS level for this call.  If it is higher than the highPriorityLevel and there
-   * are priorityHandlers available it will be processed in it's own thread set.
-   *
-   * @param param
-   * @return priority, higher is better
-   */
-  private Function<Writable,Integer> qosFunction = null;
-  @Override
-  public void setQosFunction(Function<Writable, Integer> newFunc) {
-    qosFunction = newFunc;
-  }
-
-  protected int getQosLevel(Writable param) {
-    if (qosFunction == null) {
-      return 0;
-    }
-
-    Integer res = qosFunction.apply(param);
-    if (res == null) {
-      return 0;
-    }
-    return res;
   }
 
   /** Constructs a server listening on the named port and address.  Parameters passed must
@@ -641,74 +730,6 @@ public abstract class SecureServer extends HBaseServer {
   @Override
   protected Connection getConnection(SocketChannel channel, long time) {
     return new SecureConnection(channel, time);
-  }
-
-  @Override
-  protected void doResponse(ByteBufferOutputStream response, Call call,
-      Writable rv, String errorClass, String error, String handler)
-  throws IOException {
-    doResponse(response, call, rv, errorClass, error, handler,
-        error == null ? Status.SUCCESS : Status.ERROR);
-  }
-
-  /**
-   * Setup response for the IPC Call.
-   *
-   * @param response buffer to serialize the response into
-   * @param call {@link Call} to which we are setting up the response
-   * @param rv return value for the IPC Call, if the call was successful
-   * @param errorClass error class, if the the call failed
-   * @param error error message, if the call failed
-   * @param status {@link org.apache.hadoop.hbase.ipc.Status} of the IPC call
-   * @throws java.io.IOException
-   */
-  protected void doResponse(ByteBufferOutputStream response, Call call,
-      Writable rv, String errorClass, String error, String handler, Status status)
-  throws IOException {
-    synchronized (call.connection.responseQueue) {
-      // setupResponse() needs to be sync'ed together with
-      // responder.doResponse() since setupResponse may use
-      // SASL to encrypt response data and SASL enforces
-      // its own message ordering.
-      DataOutputStream out = new DataOutputStream(response);
-      out.writeInt(call.id);                // write call id
-      out.writeInt(status.state);           // write status
-
-      if (status == Status.SUCCESS) {
-        rv.write(out);
-      } else {
-        WritableUtils.writeString(out, errorClass);
-        WritableUtils.writeString(out, error);
-      }
-      if (((SecureConnection)call.connection).useWrap) {
-        wrapWithSasl(response, call);
-      }
-      if (response.size() > warnResponseSize) {
-        LOG.warn(handler+", responseTooLarge for: "+call+": Size: "
-                 + StringUtils.humanReadableInt(response.size()));
-      }
-      call.setResponse(response.getByteBuffer());
-      responder.doRespond(call);
-    }
-  }
-
-  private void wrapWithSasl(ByteBufferOutputStream response, Call call)
-      throws IOException {
-    if (((SecureConnection)call.connection).useSasl) {
-      byte[] token = response.getByteBuffer().array();
-      // synchronization may be needed since there can be multiple Handler
-      // threads using saslServer to wrap responses.
-      synchronized (((SecureConnection)call.connection).saslServer) {
-        token = ((SecureConnection)call.connection).saslServer.wrap(token, 0, token.length);
-      }
-      if (LOG.isDebugEnabled())
-        LOG.debug("Adding saslServer wrapped token of size " + token.length
-            + " as call response.");
-      response.getByteBuffer().reset();
-      DataOutputStream saslOut = new DataOutputStream(response);
-      saslOut.writeInt(token.length);
-      saslOut.write(token, 0, token.length);
-    }
   }
 
   Configuration getConf() {

@@ -653,6 +653,18 @@ public class SecureClient extends HBaseClient {
           markClosed(new RemoteException(WritableUtils.readString(in),
                                          WritableUtils.readString(in)));
         }
+      } catch (SocketTimeoutException ste) {
+        if (remoteId.rpcTimeout > 0) {
+          // Clean up open calls but don't treat this as a fatal condition,
+          // since we expect certain responses to not make it by the specified
+          // {@link ConnectionId#rpcTimeout}.
+          closeException = ste;
+          cleanupCalls();
+        } else {
+          // Since the server did not respond within the default ping interval
+          // time, treat this as a fatal condition and close this connection
+          markClosed(ste);
+        }
       } catch (IOException e) {
         markClosed(e);
       }

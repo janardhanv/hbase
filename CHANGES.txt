@@ -163,6 +163,18 @@ Release 0.91.0 - Unreleased
    HBASE-4087  HBaseAdmin should perform validation of connection it holds
    HBASE-4052  Enabling a table after master switch does not allow table scan,
                throwing NotServingRegionException (ramkrishna via Ted Yu)
+   HBASE-4112  Creating table may throw NullPointerException (Jinchao via Ted Yu)
+   HBASE-4093  When verifyAndAssignRoot throws exception, the deadServers state
+               cannot be changed (fulin wang via Ted Yu)
+   HBASE-4118  method regionserver.MemStore#updateColumnValue: the check for 
+               qualifier and family is missing (N Keywal via Ted Yu)
+   HBASE-4127  Don't modify table's name away in HBaseAdmin
+   HBASE-4105  Stargate does not support Content-Type: application/json and
+               Content-Encoding: gzip in parallel
+   HBASE-4116  [stargate] StringIndexOutOfBoundsException in row spec parse
+               (Allan Yan)
+   HBASE-3845  data loss because lastSeqWritten can miss memstore edits
+               (Prakash Khemani and ramkrishna.s.vasudevan)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -318,6 +330,13 @@ Release 0.91.0 - Unreleased
    HBASE-4079  HTableUtil - helper class for loading data (Doug Meil via Ted Yu)
    HBASE-3871  Speedup LoadIncrementalHFiles by parallelizing HFile splitting
    HBASE-4081  Issues with HRegion.compactStores methods (Ming Ma)
+   HBASE-3465  Hbase should use a HADOOP_HOME environment variable if available
+               (Alejandro Abdelnur)
+   HBASE-3899  enhance HBase RPC to support free-ing up server handler threads
+               even if response is not ready (Vlad Dogaru)
+   HBASE-4142  Advise against large batches in javadoc for HTable#put(List<Put>)
+   HBASE-4139  [stargate] Update ScannerModel with support for filter package
+               additions
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -415,6 +434,13 @@ Release 0.90.4 - Unreleased
    HBASE-4088  npes in server shutdown
    HBASE-3872  Hole in split transaction rollback; edits to .META. need
                to be rolled back even if it seems like they didn't make it
+   HBASE-4101  Regionserver Deadlock (ramkrishna.s.vasudevan)
+   HBASE-4115  HBase shell assign and unassign unusable if region name
+               includes binary-encoded data (Ryan Brush)
+   HBASE-4126  Make timeoutmonitor timeout after 30 minutes instead of 3
+   HBASE-4129  HBASE-3872 added a warn message 'CatalogJanitor: Daughter regiondir
+               does not exist' that is triggered though its often legit that daughter
+               is not present
 
   IMPROVEMENT
    HBASE-3882  hbase-config.sh needs to be updated so it can auto-detects the
