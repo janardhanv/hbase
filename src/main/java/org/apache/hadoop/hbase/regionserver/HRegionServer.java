@@ -499,8 +499,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * @throws IOException
    * @throws InterruptedException
    */
-  private void preRegistrationInitialization()
-  throws IOException, InterruptedException {
+  private void preRegistrationInitialization(){
     try {
       initializeZooKeeper();
       initializeThreads();
@@ -511,8 +510,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     } catch (Throwable t) {
       // Call stop if error or process will stick around for ever since server
       // puts up non-daemon threads.
-      LOG.error("Stopping HRS because failed initialize", t);
       this.rpcServer.stop();
+      abort("Initialization of RS failed.  Hence aborting RS.", t);
     }
   }
 
@@ -557,6 +556,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   private void blockAndCheckIfStopped(ZooKeeperNodeTracker tracker)
       throws IOException, InterruptedException {
+    if (false == tracker.checkIfBaseNodeAvailable()) {
+      String errorMsg = "Check the value configured in 'zookeeper.znode.parent'. "
+          + "There could be a mismatch with the one configured in the master.";
+      LOG.error(errorMsg);
+      abort(errorMsg);
+    }
     while (tracker.blockUntilAvailable(this.msgInterval) == null) {
       if (this.stopped) {
         throw new IOException("Received the shutdown message while waiting.");
@@ -598,7 +603,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     try {
       // Do pre-registration initializations; zookeeper, lease threads, etc.
       preRegistrationInitialization();
-    } catch (Exception e) {
+    } catch (Throwable e) {
       abort("Fatal exception during initialization", e);
     }
 

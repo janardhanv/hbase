@@ -240,10 +240,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       this.conf.set("mapred.task.id", "hb_m_" + this.serverName.toString());
     }
 
-    this.zooKeeper = new ZooKeeperWatcher(conf, MASTER + ":" + isa.getPort(), this);
-
+    this.zooKeeper = new ZooKeeperWatcher(conf, MASTER + ":" + isa.getPort(), this, true);
     this.rpcServer.startThreads();
-
     this.metrics = new MasterMetrics(getServerName().toString());
   }
 
@@ -1237,7 +1235,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   private boolean tryRecoveringExpiredZKSession() throws InterruptedException,
       IOException, KeeperException {
     this.zooKeeper = new ZooKeeperWatcher(conf, MASTER + ":"
-        + this.serverName.getPort(), this);
+        + this.serverName.getPort(), this, true);
 
     MonitoredTask status = 
       TaskMonitor.get().createStatus("Recovering expired ZK session");
