@@ -114,7 +114,8 @@ public class TestZooKeeperACL {
     ZooKeeperWatcher zkw = new ZooKeeperWatcher(
       new Configuration(TEST_UTIL.getConfiguration()), 
       TestZooKeeper.class.getName(), null);
-    List<ACL> acls = zkw.getZooKeeper().getACL("/hbase", new Stat());
+    List<ACL> acls = zkw.getRecoverableZooKeeper().getZooKeeper()
+        .getACL("/hbase", new Stat());
     assertEquals(acls.size(),1);
     assertEquals(acls.get(0).getId().getScheme(),"sasl");
     assertEquals(acls.get(0).getId().getId(),"hbase");
@@ -132,7 +133,8 @@ public class TestZooKeeperACL {
     ZooKeeperWatcher zkw = new ZooKeeperWatcher(
       new Configuration(TEST_UTIL.getConfiguration()), 
       TestZooKeeper.class.getName(), null);
-    List<ACL> acls = zkw.getZooKeeper().getACL("/hbase/root-region-server", new Stat());
+    List<ACL> acls = zkw.getRecoverableZooKeeper().getZooKeeper()
+        .getACL("/hbase/root-region-server", new Stat());
     assertEquals(acls.size(),2);
 
     boolean foundWorldReadableAcl = false;
@@ -169,7 +171,8 @@ public class TestZooKeeperACL {
     ZooKeeperWatcher zkw = new ZooKeeperWatcher(
       new Configuration(TEST_UTIL.getConfiguration()),
       TestZooKeeper.class.getName(), null);
-    List<ACL> acls = zkw.getZooKeeper().getACL("/hbase/master", new Stat());
+    List<ACL> acls = zkw.getRecoverableZooKeeper().getZooKeeper()
+        .getACL("/hbase/master", new Stat());
     assertEquals(acls.size(),2);
 
     boolean foundWorldReadableAcl = false;
@@ -206,7 +209,8 @@ public class TestZooKeeperACL {
     ZooKeeperWatcher zkw = new ZooKeeperWatcher(
       new Configuration(TEST_UTIL.getConfiguration()),
       TestZooKeeper.class.getName(), null);
-    List<ACL> acls = zkw.getZooKeeper().getACL("/hbase/hbaseid", new Stat());
+    List<ACL> acls = zkw.getRecoverableZooKeeper().getZooKeeper()
+        .getACL("/hbase/hbaseid", new Stat());
     assertEquals(acls.size(),2);
 
     boolean foundWorldReadableAcl = false;
@@ -243,7 +247,8 @@ public class TestZooKeeperACL {
       new Configuration(TEST_UTIL.getConfiguration()),
       TestZooKeeper.class.getName(), null);
     ZKUtil.createWithParents(zkw, "/testACLNode");
-    List<ACL> acls = zkw.getZooKeeper().getACL("/testACLNode", new Stat());
+    List<ACL> acls = zkw.getRecoverableZooKeeper().getZooKeeper()
+        .getACL("/testACLNode", new Stat());
     assertEquals(acls.size(),1);
     assertEquals(acls.get(0).getId().getScheme(),"sasl");
     assertEquals(acls.get(0).getId().getId(),"hbase");

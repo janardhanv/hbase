@@ -42,6 +42,7 @@ import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
+import org.apache.hadoop.hbase.regionserver.RegionOpeningState;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.security.TokenInfo;
 import org.apache.hadoop.hbase.security.KerberosInfo;
@@ -331,10 +332,17 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
 
   /**
    * Opens the specified region.
-   * @param region region to open
+   * 
+   * @param region
+   *          region to open
+   * @return RegionOpeningState 
+   *         OPENED - if region opened succesfully.
+   *         ALREADY_OPENED - if the region was already opened. 
+   *         FAILED_OPENING - if region opening failed.
+   *
    * @throws IOException
    */
-  public void openRegion(final HRegionInfo region) throws IOException;
+  public RegionOpeningState openRegion(final HRegionInfo region) throws IOException;
 
   /**
    * Opens the specified regions.
