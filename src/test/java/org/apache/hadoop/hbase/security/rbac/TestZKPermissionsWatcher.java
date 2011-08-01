@@ -103,7 +103,7 @@ public class TestZKPermissionsWatcher {
     acl.add(new TablePermission(TEST_TABLE, null, TablePermission.Action.READ,
       TablePermission.Action.WRITE));
     AUTH_A.setUserPermissions("george", TEST_TABLE, acl);
-    Thread.sleep(10);
+    Thread.sleep(100);
 
     // check it
     assertTrue(AUTH_A.authorizeUser("george", TEST_TABLE, null,
@@ -127,7 +127,7 @@ public class TestZKPermissionsWatcher {
     acl = new ArrayList<TablePermission>();
     acl.add(new TablePermission(TEST_TABLE, null, TablePermission.Action.READ));
     AUTH_B.setUserPermissions("hubert", TEST_TABLE, acl);
-    Thread.sleep(10);
+    Thread.sleep(100);
 
     // check it
     assertTrue(AUTH_A.authorizeUser("george", TEST_TABLE, null,
