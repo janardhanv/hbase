@@ -111,6 +111,7 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
 
   private void refreshNodes(List<ZKUtil.NodeAndData> nodes) {
     for (ZKUtil.NodeAndData n : nodes) {
+      if (n.isEmpty()) continue;
       String path = n.getNode();
       String table = ZKUtil.getNodeName(path);
       try {
