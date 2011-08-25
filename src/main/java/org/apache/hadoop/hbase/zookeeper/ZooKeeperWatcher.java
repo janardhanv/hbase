@@ -343,6 +343,15 @@ public class ZooKeeperWatcher implements Watcher, Abortable {
         }
         break;
 
+      case AuthFailed:
+         // release semaphore so that a ZKUtil object can know that it can proceed.
+         // (authentication failed in this case, but at least the client can proceed
+         // unauthenticated).
+        if (System.getProperty("java.security.auth.login.config") != null) {
+          saslLock.release();
+        }
+        break;
+
       // Abort the server if Disconnected or Expired
       // TODO: Any reason to handle these two differently?
       case Disconnected:
