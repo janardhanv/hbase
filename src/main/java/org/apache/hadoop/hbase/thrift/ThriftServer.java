@@ -59,6 +59,7 @@ import org.apache.hadoop.hbase.filter.Filter;
 import org.apache.hadoop.hbase.filter.PrefixFilter;
 import org.apache.hadoop.hbase.filter.WhileMatchFilter;
 import org.apache.hadoop.hbase.filter.ParseFilter;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.thrift.generated.AlreadyExists;
 import org.apache.hadoop.hbase.thrift.generated.BatchMutation;
 import org.apache.hadoop.hbase.thrift.generated.ColumnDescriptor;
@@ -71,7 +72,9 @@ import org.apache.hadoop.hbase.thrift.generated.TRegionInfo;
 import org.apache.hadoop.hbase.thrift.generated.TRowResult;
 import org.apache.hadoop.hbase.thrift.generated.TScan;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.hbase.util.Strings;
 import org.apache.hadoop.hbase.util.VersionInfo;
+import org.apache.hadoop.net.DNS;
 import org.apache.thrift.TException;
 import org.apache.thrift.protocol.TBinaryProtocol;
 import org.apache.thrift.protocol.TCompactProtocol;
@@ -1030,6 +1033,16 @@ public class ThriftServer {
       serverArgs.transportFactory(transportFactory);
       LOG.info("starting HBase ThreadPool Thrift server on " + listenAddress + ":" + Integer.toString(listenPort));
       server = new TThreadPoolServer(serverArgs);
+    }
+
+    // login the server principal (if using secure Hadoop)   
+    if (User.isSecurityEnabled()) {
+      Configuration conf = handler.conf;
+      String machineName = Strings.domainNamePointerToHostName(
+        DNS.getDefaultHost(conf.get("hbase.thrift.dns.interface", "default"),
+          conf.get("hbase.thrift.dns.nameserver", "default")));
+      User.login(conf, "hbase.thrift.keytab.file", "hbase.thrift.kerberos.principal",
+        machineName);
     }
 
     server.serve();
