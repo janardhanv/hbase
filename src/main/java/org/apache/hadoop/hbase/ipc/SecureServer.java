@@ -159,16 +159,19 @@ public abstract class SecureServer extends HBaseServer {
     private void wrapWithSasl(ByteBufferOutputStream response)
         throws IOException {
       if (((SecureConnection)connection).useSasl) {
-        byte[] token = response.getByteBuffer().array();
+        // getByteBuffer calls flip()
+        ByteBuffer buf = response.getByteBuffer();
+        byte[] token;
         // synchronization may be needed since there can be multiple Handler
         // threads using saslServer to wrap responses.
         synchronized (((SecureConnection)connection).saslServer) {
-          token = ((SecureConnection)connection).saslServer.wrap(token, 0, token.length);
+          token = ((SecureConnection)connection).saslServer.wrap(buf.array(),
+              buf.arrayOffset(), buf.remaining());
         }
         if (LOG.isDebugEnabled())
           LOG.debug("Adding saslServer wrapped token of size " + token.length
               + " as call response.");
-        response.getByteBuffer().reset();
+        buf.clear();
         DataOutputStream saslOut = new DataOutputStream(response);
         saslOut.writeInt(token.length);
         saslOut.write(token, 0, token.length);
