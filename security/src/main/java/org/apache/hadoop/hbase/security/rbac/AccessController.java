@@ -52,6 +52,7 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.security.UserGroupInformation;
 
@@ -167,7 +168,7 @@ public class AccessController extends BaseRegionObserver
    * the request
    * @return
    */
-  boolean permissionGranted(TablePermission.Action permRequest,
+  boolean permissionGranted(User user, TablePermission.Action permRequest,
       RegionCoprocessorEnvironment e,
       Map<byte [], ? extends Collection<?>> families) {
     HRegionInfo hri = e.getRegion().getRegionInfo();
@@ -185,7 +186,6 @@ public class AccessController extends BaseRegionObserver
       return true;
     }
 
-    UserGroupInformation user = RequestContext.getRequestUser();
     if (user == null) {
       LOG.info("No user associated with request!  Permission denied!");
       return false;
@@ -196,9 +196,10 @@ public class AccessController extends BaseRegionObserver
     if (owner == null) {
       LOG.debug("Owner of '" + hri.getTableNameAsString() + " is (incorrectly) null.");
     }
-    if (user.getShortUserName().equals(owner)) {
+    if (user.getShortName().equals(owner)) {
+      // owner of the table has full access
       if (LOG.isDebugEnabled()) {
-        LOG.debug("User '" + user.getShortUserName() + "' is owner: allowed to " +
+        LOG.debug("User '" + user.getShortName() + "' is owner: allowed to " +
           permRequest.toString() + " the table '" + hri.getTableNameAsString() +
           "'");
       }
@@ -260,16 +261,25 @@ public class AccessController extends BaseRegionObserver
     return false;
   }
 
-  private void logDenied(UserGroupInformation user, byte[] table, byte[] family,
+  private void logDenied(User user, byte[] table, byte[] family,
       byte[] qualifier, Permission.Action perm) {
     if (LOG.isDebugEnabled()) {
-      LOG.debug("User '" + user.getShortUserName() +
+      LOG.debug("User '" + user.getShortName() +
           "' is not allowed to have " + perm.toString() + " access to " +
           Bytes.toString(table) + "(" +
           family != null ? Bytes.toString(family) : "" +
           qualifier != null ? Bytes.toString(qualifier) : "" +
           Bytes.toString(family) + ")"  );
     }
+  }
+
+  private User getControllingUser() throws IOException {
+    User user = RequestContext.getRequestUser();
+    if (!RequestContext.isInRequestContext()) {
+      // for non-rpc handling, fallback to system user
+      user = User.getCurrent();
+    }
+    return user;
   }
 
   /**
@@ -279,19 +289,15 @@ public class AccessController extends BaseRegionObserver
    *     is denied
    */
   public void requirePermission(Permission.Action perm) throws IOException {
-    UserGroupInformation user = RequestContext.getRequestUser();
-    if (!RequestContext.isInRequestContext()) {
-      // for non-rpc handling, fallback to system user
-      user = UserGroupInformation.getCurrentUser();
-    }
+    User user = getControllingUser();
     if (LOG.isDebugEnabled()) {
       LOG.debug("Checking authorization of user '" +
-          (user != null ? user.getShortUserName() : "NULL") + "' for action " +
+          (user != null ? user.getShortName() : "NULL") + "' for action " +
           perm.toString());
     }
     if (!authManager.authorize(user, perm)) {
       throw new AccessDeniedException("Insufficient permissions for user '" +
-          (user != null ? user.getShortUserName() : "null") +"' (global, action=" +
+          (user != null ? user.getShortName() : "null") +"' (global, action=" +
           perm.toString() + ")");
     }
   }
@@ -327,7 +333,8 @@ public class AccessController extends BaseRegionObserver
         RegionCoprocessorEnvironment env,
         Map<byte[], ? extends Collection<?>> families)
       throws IOException {
-    if (!permissionGranted(perm, env, families)) {
+    User user = getControllingUser();
+    if (!permissionGranted(user, perm, env, families)) {
       StringBuffer sb = new StringBuffer("");
       if ((families != null && families.size() > 0)) {
         for (byte[] familyName : families.keySet()) {
@@ -349,14 +356,14 @@ public class AccessController extends BaseRegionObserver
    * Returns <code>true</code> if the current user is allowed the given action
    * over at least one of the column qualifiers in the given column families.
    */
-  public boolean hasFamilyQualifierPermission(TablePermission.Action perm,
+  public boolean hasFamilyQualifierPermission(User user,
+      TablePermission.Action perm,
       RegionCoprocessorEnvironment env,
       Map<byte[], ? extends Set<byte[]>> familyMap)
     throws IOException {
     HRegionInfo hri = env.getRegion().getRegionInfo();
     byte[] tableName = hri.getTableName();
 
-    UserGroupInformation user = RequestContext.getRequestUser();
     if (user == null) {
       LOG.info("No user associated with request. Permission denied!");
       return false;
@@ -605,13 +612,14 @@ public class AccessController extends BaseRegionObserver
      in one of the families.  If it is present, then continue with the AccessControlFilter.
       */
     RegionCoprocessorEnvironment e = c.getEnvironment();
-    if (!permissionGranted(TablePermission.Action.READ, e,
+    User requestUser = getControllingUser();
+    if (!permissionGranted(requestUser, TablePermission.Action.READ, e,
         get.getFamilyMap())) {
-      if (hasFamilyQualifierPermission(TablePermission.Action.READ, e,
-          get.getFamilyMap())) {
+      if (hasFamilyQualifierPermission(requestUser,
+          TablePermission.Action.READ, e, get.getFamilyMap())) {
         byte[] table = getTableName(e);
         AccessControlFilter filter = new AccessControlFilter(authManager,
-            UserGroupInformation.getCurrentUser(), table);
+            requestUser, table);
 
         // wrap any existing filter
         if (get.getFilter() != null) {
@@ -716,9 +724,10 @@ public class AccessController extends BaseRegionObserver
      in one of the families.  If it is present, then continue with the AccessControlFilter.
       */
     RegionCoprocessorEnvironment e = c.getEnvironment();
-    UserGroupInformation user = RequestContext.getRequestUser();
-    if (!permissionGranted(TablePermission.Action.READ, e, scan.getFamilyMap())) {
-      if (hasFamilyQualifierPermission(TablePermission.Action.READ, e,
+    User user = getControllingUser();
+    if (!permissionGranted(user, TablePermission.Action.READ, e,
+        scan.getFamilyMap())) {
+      if (hasFamilyQualifierPermission(user, TablePermission.Action.READ, e,
           scan.getFamilyMap())) {
         byte[] table = getTableName(e);
         AccessControlFilter filter = new AccessControlFilter(authManager,
@@ -735,7 +744,7 @@ public class AccessController extends BaseRegionObserver
       } else {
         // no table/family level perms and no qualifier level perms, reject
         throw new AccessDeniedException("Insufficient permissions for user '"+
-            (user != null ? user.getShortUserName() : "null")+"' "+
+            (user != null ? user.getShortName() : "null")+"' "+
             "for scanner open on table " + Bytes.toString(getTableName(e)));
       }
     }
@@ -745,10 +754,9 @@ public class AccessController extends BaseRegionObserver
   @Override
   public RegionScanner postScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> c,
       final Scan scan, final RegionScanner s) throws IOException {
-    UserGroupInformation user = RequestContext.getRequestUser();
-    if (user != null && user.getShortUserName() != null) {
-      // store reference to scanner owner for later checks
-      scannerOwners.put(s, user.getShortUserName());
+    User user = getControllingUser();
+    if (user != null && user.getShortName() != null) {      // store reference to scanner owner for later checks
+      scannerOwners.put(s, user.getShortName());
     }
     return s;
   }

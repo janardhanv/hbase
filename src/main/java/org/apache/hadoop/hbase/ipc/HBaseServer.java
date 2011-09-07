@@ -61,11 +61,11 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.io.WritableWithSize;
 import org.apache.hadoop.hbase.monitoring.MonitoredRPCHandler;
 import org.apache.hadoop.hbase.monitoring.TaskMonitor;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.ByteBufferOutputStream;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
 
@@ -87,7 +87,7 @@ public abstract class HBaseServer implements RpcServer {
    * The first four bytes of Hadoop RPC connections
    */
   public static final ByteBuffer HEADER = ByteBuffer.wrap("hrpc".getBytes());
-  public static final byte CURRENT_VERSION = 4;
+  public static final byte CURRENT_VERSION = 3;
 
   /**
    * How many calls/handler are allowed in the queue.
@@ -1003,7 +1003,7 @@ public abstract class HBaseServer implements RpcServer {
     private int remotePort;
     ConnectionHeader header = new ConnectionHeader();
     Class<? extends VersionedProtocol> protocol;
-    protected UserGroupInformation ticket = null;
+    protected User ticket = null;
 
     public Connection(SocketChannel channel, long lastContact) {
       this.channel = channel;
@@ -1149,7 +1149,7 @@ public abstract class HBaseServer implements RpcServer {
         throw new IOException("Unknown protocol: " + header.getProtocol());
       }
 
-      ticket = header.getUgi();
+      ticket = header.getUser();
     }
 
     protected void processData(byte[] buf) throws  IOException, InterruptedException {
@@ -1235,7 +1235,7 @@ public abstract class HBaseServer implements RpcServer {
                     + " from " + call.connection);
               }
               else {
-                LOG.debug("Executing call as "+call.connection.ticket.getUserName());
+                LOG.debug("Executing call as "+call.connection.ticket.getName());
               }
             }
 

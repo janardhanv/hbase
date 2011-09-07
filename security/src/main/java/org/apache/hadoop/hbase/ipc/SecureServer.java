@@ -30,6 +30,7 @@ import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.AuthMethod;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslDigestCallbackHandler;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslGssCallbackHandler;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.SaslStatus;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.ByteBufferOutputStream;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.BytesWritable;
@@ -72,6 +73,11 @@ import static org.apache.hadoop.fs.CommonConfigurationKeys.HADOOP_SECURITY_AUTHO
 public abstract class SecureServer extends HBaseServer {
   private final boolean authorize;
   private boolean isSecurityEnabled;
+
+  /**
+   * The first four bytes of secure RPC connections
+   */
+  public static final ByteBuffer HEADER = ByteBuffer.wrap("srpc".getBytes());
 
   // 1 : Introduce ping and server does not throw away RPCs
   // 3 : Introduce the protocol into the RPC connection header
@@ -287,7 +293,7 @@ public abstract class SecureServer extends HBaseServer {
       return isIdle() && currentTime - lastContact > maxIdleTime;
     }
 
-    private UserGroupInformation getAuthorizedUgi(String authorizedId)
+    private User getAuthorizedUgi(String authorizedId)
         throws IOException {
       if (authMethod == AuthMethod.DIGEST) {
         TokenIdentifier tokenId = HBaseSaslRpcServer.getIdentifier(authorizedId,
@@ -298,9 +304,9 @@ public abstract class SecureServer extends HBaseServer {
               "Can't retrieve username from tokenIdentifier.");
         }
         ugi.addTokenIdentifier(tokenId);
-        return ugi;
+        return User.create(ugi);
       } else {
-        return UserGroupInformation.createRemoteUser(authorizedId);
+        return User.create(UserGroupInformation.createRemoteUser(authorizedId));
       }
     }
 
@@ -554,20 +560,20 @@ public abstract class SecureServer extends HBaseServer {
         throw new IOException("Unknown protocol: " + header.getProtocol());
       }
 
-      UserGroupInformation protocolUser = header.getUgi();
+      User protocolUser = header.getUser();
       if (!useSasl) {
         ticket = protocolUser;
         if (ticket != null) {
-          ticket.setAuthenticationMethod(AuthMethod.SIMPLE.authenticationMethod);
+          ticket.getUGI().setAuthenticationMethod(AuthMethod.SIMPLE.authenticationMethod);
         }
       } else {
         // user is authenticated
-        ticket.setAuthenticationMethod(authMethod.authenticationMethod);
+        ticket.getUGI().setAuthenticationMethod(authMethod.authenticationMethod);
         //Now we check if this is a proxy user case. If the protocol user is
         //different from the 'user', it is a proxy user scenario. However,
         //this is not allowed if user authenticated with DIGEST.
         if ((protocolUser != null)
-            && (!protocolUser.getUserName().equals(ticket.getUserName()))) {
+            && (!protocolUser.getName().equals(ticket.getName()))) {
           if (authMethod == AuthMethod.DIGEST) {
             // Not allowed to doAs if token authentication is used
             throw new AccessControlException("Authenticated user (" + ticket
@@ -577,11 +583,12 @@ public abstract class SecureServer extends HBaseServer {
             // Effective user can be different from authenticated user
             // for simple auth or kerberos auth
             // The user is the real user. Now we create a proxy user
-            UserGroupInformation realUser = ticket;
-            ticket = UserGroupInformation.createProxyUser(protocolUser
-                .getUserName(), realUser);
+            UserGroupInformation realUser = ticket.getUGI();
+            ticket = User.create(
+                UserGroupInformation.createProxyUser(protocolUser.getName(),
+                    realUser));
             // Now the user is a proxy user, set Authentication method Proxy.
-            ticket.setAuthenticationMethod(AuthenticationMethod.PROXY);
+            ticket.getUGI().setAuthenticationMethod(AuthenticationMethod.PROXY);
           }
         }
       }
@@ -667,9 +674,9 @@ public abstract class SecureServer extends HBaseServer {
         // real user for the effective user, therefore not required to
         // authorize real user. doAs is allowed only for simple or kerberos
         // authentication
-        if (ticket != null && ticket.getRealUser() != null
+        if (ticket != null && ticket.getUGI().getRealUser() != null
             && (authMethod != AuthMethod.DIGEST)) {
-          ProxyUsers.authorize(ticket, this.getHostAddress(), conf);
+          ProxyUsers.authorize(ticket.getUGI(), this.getHostAddress(), conf);
         }
         authorize(ticket, header, getHostInetAddress());
         if (LOG.isDebugEnabled()) {
@@ -765,7 +772,7 @@ public abstract class SecureServer extends HBaseServer {
    * @param addr InetAddress of incoming connection
    * @throws org.apache.hadoop.security.authorize.AuthorizationException when the client isn't authorized to talk the protocol
    */
-  public void authorize(UserGroupInformation user,
+  public void authorize(User user,
                         ConnectionHeader connection,
                         InetAddress addr
                         ) throws AuthorizationException {
@@ -777,7 +784,8 @@ public abstract class SecureServer extends HBaseServer {
         throw new AuthorizationException("Unknown protocol: " +
                                          connection.getProtocol());
       }
-      authManager.authorize(user, protocol, getConf(), addr);
+      authManager.authorize(user != null ? user.getUGI() : null,
+          protocol, getConf(), addr);
     }
   }
 }

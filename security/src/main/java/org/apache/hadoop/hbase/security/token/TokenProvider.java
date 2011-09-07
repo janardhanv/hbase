@@ -31,6 +31,7 @@ import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.ipc.SecureServer;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.Token;
@@ -70,18 +71,22 @@ public class TokenProvider extends BaseEndpointCoprocessor
           "No secret manager configured for token authentication");
     }
 
-    UserGroupInformation currentUser = RequestContext.getRequestUser();
+    User currentUser = RequestContext.getRequestUser();
+    UserGroupInformation ugi = null;
+    if (currentUser != null) {
+      ugi = currentUser.getUGI();
+    }
     if (currentUser == null) {
       throw new AccessDeniedException("No authenticated user for request!");
-    } else if (currentUser.getAuthenticationMethod() !=
+    } else if (ugi.getAuthenticationMethod() !=
         UserGroupInformation.AuthenticationMethod.KERBEROS) {
-      LOG.warn("Token generation denied for user="+currentUser.getUserName()
-          +", authMethod="+currentUser.getAuthenticationMethod());
+      LOG.warn("Token generation denied for user="+currentUser.getName()
+          +", authMethod="+ugi.getAuthenticationMethod());
       throw new AccessDeniedException(
           "Token generation only allowed for Kerberos authenticated clients");
     }
 
-    return secretManager.generateToken(currentUser.getUserName());
+    return secretManager.generateToken(currentUser.getName());
   }
 
   @Override

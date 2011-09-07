@@ -27,6 +27,7 @@ import org.apache.hadoop.hbase.security.HBaseSaslRpcClient;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer.AuthMethod;
 import org.apache.hadoop.hbase.security.KerberosInfo;
 import org.apache.hadoop.hbase.security.TokenInfo;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenSelector;
 import org.apache.hadoop.io.*;
@@ -85,7 +86,7 @@ public class SecureClient extends HBaseClient {
   private class Connection extends Thread {
     private InetSocketAddress server;             // server ip:port
     private String serverPrincipal;  // server's krb5 principal name
-    private ConnectionHeader header;              // connection header
+    private SecureConnectionHeader header;              // connection header
     private final ConnectionId remoteId;                // connection id
     private AuthMethod authMethod; // authentication method
     private boolean useSasl;
@@ -110,9 +111,9 @@ public class SecureClient extends HBaseClient {
                                        remoteId.getAddress().getHostName());
       }
 
-      UserGroupInformation ticket = remoteId.getTicket();
+      User ticket = remoteId.getTicket();
       Class<?> protocol = remoteId.getProtocol();
-      this.useSasl = UserGroupInformation.isSecurityEnabled();
+      this.useSasl = User.isSecurityEnabled();
       if (useSasl && protocol != null) {
         TokenInfo tokenInfo = protocol.getAnnotation(TokenInfo.class);
         if (tokenInfo != null) {
@@ -120,7 +121,7 @@ public class SecureClient extends HBaseClient {
               tokenHandlers.get(tokenInfo.value());
           if (tokenSelector != null) {
             token = tokenSelector.selectToken(new Text(clusterId),
-                ticket.getTokens());
+                ticket.getUGI().getTokens());
           } else if (LOG.isDebugEnabled()) {
             LOG.debug("No token selector found for type "+tokenInfo.value());
           }
@@ -149,7 +150,7 @@ public class SecureClient extends HBaseClient {
         authMethod = AuthMethod.KERBEROS;
       }
 
-      header = new ConnectionHeader(
+      header = new SecureConnectionHeader(
           protocol == null ? null : protocol.getName(), ticket, authMethod);
 
       if (LOG.isDebugEnabled())
@@ -158,7 +159,7 @@ public class SecureClient extends HBaseClient {
 
       this.setName("IPC Client (" + socketFactory.hashCode() +") connection to " +
         remoteId.getAddress().toString() +
-        ((ticket==null)?" from an unknown user": (" from " + ticket.getUserName())));
+        ((ticket==null)?" from an unknown user": (" from " + ticket.getName())));
       this.setDaemon(true);
     }
 
@@ -311,9 +312,9 @@ public class SecureClient extends HBaseClient {
     private synchronized void handleSaslConnectionFailure(
         final int currRetries,
         final int maxRetries, final Exception ex, final Random rand,
-        final UserGroupInformation ugi)
+        final User user)
     throws IOException, InterruptedException{
-      ugi.doAs(new PrivilegedExceptionAction<Object>() {
+      user.runAs(new PrivilegedExceptionAction<Object>() {
         public Object run() throws IOException, InterruptedException {
           final short MAX_BACKOFF = 5000;
           closeConnection();
@@ -376,16 +377,17 @@ public class SecureClient extends HBaseClient {
           if (useSasl) {
             final InputStream in2 = inStream;
             final OutputStream out2 = outStream;
-            UserGroupInformation ticket = remoteId.getTicket();
+            User ticket = remoteId.getTicket();
             if (authMethod == AuthMethod.KERBEROS) {
-              if (ticket.getRealUser() != null) {
-                ticket = ticket.getRealUser();
+              UserGroupInformation ugi = ticket.getUGI();
+              if (ugi != null && ugi.getRealUser() != null) {
+                ticket = User.create(ugi.getRealUser());
               }
             }
             boolean continueSasl = false;
             try {
               continueSasl =
-                ticket.doAs(new PrivilegedExceptionAction<Boolean>() {
+                ticket.runAs(new PrivilegedExceptionAction<Boolean>() {
                   @Override
                   public Boolean run() throws IOException {
                     return setupSaslConnection(in2, out2);
@@ -406,8 +408,8 @@ public class SecureClient extends HBaseClient {
             } else {
               // fall back to simple auth because server told us so.
               authMethod = AuthMethod.SIMPLE;
-              header = new ConnectionHeader(header.getProtocol(),
-                  header.getUgi(), authMethod);
+              header = new SecureConnectionHeader(header.getProtocol(),
+                  header.getUser(), authMethod);
               useSasl = false;
             }
           }
@@ -484,8 +486,8 @@ public class SecureClient extends HBaseClient {
     private void writeRpcHeader(OutputStream outStream) throws IOException {
       DataOutputStream out = new DataOutputStream(new BufferedOutputStream(outStream));
       // Write out the header, version and authentication method
-      out.write(HBaseServer.HEADER.array());
-      out.write(HBaseServer.CURRENT_VERSION);
+      out.write(SecureServer.HEADER.array());
+      out.write(SecureServer.CURRENT_VERSION);
       authMethod.write(out);
       out.flush();
     }
@@ -756,7 +758,7 @@ public class SecureClient extends HBaseClient {
    * pool.  Connections to a given host/port are reused. */
   private Connection getConnection(InetSocketAddress addr,
                                    Class<? extends VersionedProtocol> protocol,
-                                   UserGroupInformation ticket,
+                                   User ticket,
                                    int rpcTimeout,
                                    Call call)
                                    throws IOException, InterruptedException {
@@ -795,7 +797,7 @@ public class SecureClient extends HBaseClient {
    * threw an exception. */
   public Writable call(Writable param, InetSocketAddress addr,
                        Class<? extends VersionedProtocol> protocol,
-                       UserGroupInformation ticket, int rpcTimeout)
+                       User ticket, int rpcTimeout)
       throws InterruptedException, IOException {
     Call call = new Call(param);
     Connection connection = getConnection(addr, protocol, ticket, rpcTimeout, call);

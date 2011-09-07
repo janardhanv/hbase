@@ -1314,6 +1314,17 @@
                   </sources>
                 </configuration>
               </execution>
+              <execution>
+                <id>add-test-source</id>
+                <goals>
+                  <goal>add-test-source</goal>
+                </goals>
+                <configuration>
+                  <sources>
+                    <source>${project.basedir}/security/src/test/java</source>
+                  </sources>
+                </configuration>
+              </execution>
             </executions>
           </plugin>
         </plugins>

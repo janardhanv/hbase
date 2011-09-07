@@ -62,7 +62,6 @@ import org.apache.hadoop.util.Progressable;
 import org.mockito.Mockito;
 
 import com.google.common.base.Joiner;
-import org.apache.hadoop.security.UserGroupInformation;
 
 /**
  * Test class for the Store

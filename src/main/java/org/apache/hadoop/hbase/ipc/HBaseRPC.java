@@ -26,10 +26,9 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.RetriesExhaustedException;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.io.Writable;
-import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 import org.apache.hadoop.net.NetUtils;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 import javax.net.SocketFactory;
 import java.io.IOException;
@@ -38,7 +37,6 @@ import java.lang.reflect.Proxy;
 import java.net.ConnectException;
 import java.net.InetSocketAddress;
 import java.net.SocketTimeoutException;
-import java.security.PrivilegedExceptionAction;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -270,7 +268,7 @@ public class HBaseRPC {
       long clientVersion, InetSocketAddress addr, Configuration conf,
       SocketFactory factory, int rpcTimeout) throws IOException {
     return getProxy(protocol, clientVersion, addr,
-        UserGroupInformation.getCurrentUser(), conf, factory, rpcTimeout);
+        User.getCurrent(), conf, factory, rpcTimeout);
   }
 
   /**
@@ -289,7 +287,7 @@ public class HBaseRPC {
    */
   public static VersionedProtocol getProxy(
       Class<? extends VersionedProtocol> protocol,
-      long clientVersion, InetSocketAddress addr, UserGroupInformation ticket,
+      long clientVersion, InetSocketAddress addr, User ticket,
       Configuration conf, SocketFactory factory, int rpcTimeout)
   throws IOException {
     VersionedProtocol proxy =
@@ -349,7 +347,7 @@ public class HBaseRPC {
   public static Object[] call(Method method, Object[][] params,
       InetSocketAddress[] addrs,
       Class<? extends VersionedProtocol> protocol,
-      UserGroupInformation ticket,
+      User ticket,
       Configuration conf)
     throws IOException, InterruptedException {
     return getProtocolEngine(protocol, conf)

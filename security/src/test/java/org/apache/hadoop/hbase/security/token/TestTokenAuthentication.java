@@ -38,6 +38,7 @@ import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.ipc.SecureRpcEngine;
 import org.apache.hadoop.hbase.ipc.SecureServer;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -61,7 +62,11 @@ public class TestTokenAuthentication {
     }
 
     public String getAuthMethod() {
-      UserGroupInformation ugi = RequestContext.getRequestUser();
+      UserGroupInformation ugi = null;
+      User user = RequestContext.getRequestUser();
+      if (user != null) {
+        ugi = user.getUGI();
+      }
       if (ugi != null) {
         return ugi.getAuthenticationMethod().toString();
       }

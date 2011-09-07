@@ -172,7 +172,7 @@ module Hbase
       # Fail if no column families defined
       raise(ArgumentError, "Table must have at least one column family") if args.empty?
 
-      # Start defining the table. Note that the owner will be set using UserGroupInformation.getCurrentUser()
+      # Start defining the table. Note that the owner will be set using User.getCurrent()
       # in the HTableDescriptor constructor.
       # Start defining the table
       htd = org.apache.hadoop.hbase.HTableDescriptor.new(table_name)

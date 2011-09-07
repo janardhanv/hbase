@@ -46,10 +46,10 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.HLogSplitter;
 import org.apache.hadoop.hbase.regionserver.wal.OrphanHLogAfterSplitException;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
-import org.apache.hadoop.security.UserGroupInformation;
 
 /**
  * This class abstracts a bunch of operations the HMaster needs to interact with
@@ -378,7 +378,7 @@ public class MasterFileSystem {
 
   private static void setCurrentAsOwnerForRoot() throws IOException {
     HTableDescriptor.ROOT_TABLEDESC.setOwner(
-        UserGroupInformation.getCurrentUser());
+        User.getCurrent());
   }
 
   private static void setInfoFamilyCachingForRoot(final boolean b) {
@@ -393,7 +393,7 @@ public class MasterFileSystem {
 
   private static void setCurrentAsOwnerForMeta() throws IOException {
     HTableDescriptor.META_TABLEDESC.setOwner(
-        UserGroupInformation.getCurrentUser());
+        User.getCurrent());
   }
 
   private static void setInfoFamilyCachingForMeta(final boolean b) {

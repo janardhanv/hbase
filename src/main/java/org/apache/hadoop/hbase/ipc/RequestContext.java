@@ -20,7 +20,7 @@
 
 package org.apache.hadoop.hbase.ipc;
 
-import org.apache.hadoop.security.UserGroupInformation;
+import org.apache.hadoop.hbase.security.User;
 
 import java.net.InetAddress;
 
@@ -48,7 +48,7 @@ public class RequestContext {
    * <code>null</code> if no credentials were provided.
    * @return
    */
-  public static UserGroupInformation getRequestUser() {
+  public static User getRequestUser() {
     RequestContext ctx = instance.get();
     if (ctx != null) {
       return ctx.getUser();
@@ -61,9 +61,9 @@ public class RequestContext {
    * request or <code>null</code> if no user is set.
    */
   public static String getRequestUserName() {
-    UserGroupInformation user = getRequestUser();
+    User user = getRequestUser();
     if (user != null) {
-      return user.getShortUserName();
+      return user.getShortName();
     }
     return null;
   }
@@ -86,7 +86,7 @@ public class RequestContext {
    * @param remoteAddress
    * @param protocol
    */
-  public static void set(UserGroupInformation user,
+  public static void set(User user,
       InetAddress remoteAddress,
       Class<? extends VersionedProtocol> protocol) {
     RequestContext ctx = instance.get();
@@ -107,20 +107,20 @@ public class RequestContext {
     ctx.inRequest = false;
   }
 
-  private UserGroupInformation user;
+  private User user;
   private InetAddress remoteAddress;
   private Class<? extends VersionedProtocol> protocol;
   // indicates we're within a RPC request invocation
   private boolean inRequest;
 
-  private RequestContext(UserGroupInformation user, InetAddress remoteAddr,
+  private RequestContext(User user, InetAddress remoteAddr,
       Class<? extends VersionedProtocol> protocol) {
     this.user = user;
     this.remoteAddress = remoteAddr;
     this.protocol = protocol;
   }
 
-  public UserGroupInformation getUser() {
+  public User getUser() {
     return user;
   }
 

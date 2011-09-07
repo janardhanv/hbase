@@ -26,16 +26,12 @@ import java.lang.reflect.Array;
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.InvocationTargetException;
 
-import java.net.ConnectException;
 import java.net.InetSocketAddress;
-import java.net.SocketTimeoutException;
 import java.io.*;
 import java.util.Map;
 import java.util.HashMap;
 
 import javax.net.SocketFactory;
-import javax.security.auth.Subject;
-import javax.security.auth.login.LoginException;
 
 import org.apache.commons.logging.*;
 
@@ -48,11 +44,9 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Objects;
 import org.apache.hadoop.io.*;
 import org.apache.hadoop.hbase.ipc.VersionedProtocol;
-import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.hadoop.security.authorize.AuthorizationException;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.security.authorize.ServiceAuthorizationManager;
 import org.apache.hadoop.conf.*;
-import org.apache.hadoop.metrics.util.MetricsTimeVaryingRate;
 
 import org.codehaus.jackson.map.ObjectMapper;
 
@@ -129,13 +123,13 @@ class WritableRpcEngine implements RpcEngine {
   private static class Invoker implements InvocationHandler {
     private Class<? extends VersionedProtocol> protocol;
     private InetSocketAddress address;
-    private UserGroupInformation ticket;
+    private User ticket;
     private HBaseClient client;
     private boolean isClosed = false;
     final private int rpcTimeout;
 
     public Invoker(Class<? extends VersionedProtocol> protocol,
-                   InetSocketAddress address, UserGroupInformation ticket,
+                   InetSocketAddress address, User ticket,
                    Configuration conf, SocketFactory factory, int rpcTimeout) {
       this.protocol = protocol;
       this.address = address;
@@ -176,7 +170,7 @@ class WritableRpcEngine implements RpcEngine {
    * talking to a server at the named address. */
   public VersionedProtocol getProxy(
       Class<? extends VersionedProtocol> protocol, long clientVersion,
-      InetSocketAddress addr, UserGroupInformation ticket,
+      InetSocketAddress addr, User ticket,
       Configuration conf, SocketFactory factory, int rpcTimeout)
     throws IOException {
 
@@ -210,7 +204,7 @@ class WritableRpcEngine implements RpcEngine {
   public Object[] call(Method method, Object[][] params,
                        InetSocketAddress[] addrs,
                        Class<? extends VersionedProtocol> protocol,
-                       UserGroupInformation ticket, Configuration conf)
+                       User ticket, Configuration conf)
     throws IOException, InterruptedException {
 
     Invocation[] invocations = new Invocation[params.length];

@@ -97,7 +97,6 @@ import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.hadoop.io.MapWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.net.DNS;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.zookeeper.KeeperException;
 import org.apache.zookeeper.Watcher;
 
@@ -978,9 +977,9 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     if (!isMasterRunning()) {
       throw new MasterNotRunningException();
     }
-    UserGroupInformation owner = RequestContext.getRequestUser();
+    User owner = RequestContext.getRequestUser();
     if (owner == null) {
-      owner = UserGroupInformation.getCurrentUser();
+      owner = User.getCurrent();
     }
     if (hTableDescriptor.getOwnerString() == null ||
         hTableDescriptor.getOwnerString().equals("")) {

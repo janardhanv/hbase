@@ -30,15 +30,13 @@ import org.apache.hadoop.hbase.io.HbaseObjectWritable;
 import org.apache.hadoop.hbase.monitoring.MonitoredRPCHandler;
 import org.apache.hadoop.hbase.security.HBasePolicyProvider;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenSecretManager;
 import org.apache.hadoop.hbase.util.Objects;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.metrics.util.MetricsTimeVaryingRate;
 import org.apache.hadoop.net.NetUtils;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.authorize.ServiceAuthorizationManager;
-import org.apache.hadoop.security.token.SecretManager;
-import org.apache.hadoop.security.token.TokenIdentifier;
 
 import javax.net.SocketFactory;
 import java.io.DataInput;
@@ -154,13 +152,13 @@ public class SecureRpcEngine implements RpcEngine {
   private static class Invoker implements InvocationHandler {
     private Class<? extends VersionedProtocol> protocol;
     private InetSocketAddress address;
-    private UserGroupInformation ticket;
+    private User ticket;
     private SecureClient client;
     private boolean isClosed = false;
     final private int rpcTimeout;
 
     public Invoker(Class<? extends VersionedProtocol> protocol,
-        InetSocketAddress address, UserGroupInformation ticket,
+        InetSocketAddress address, User ticket,
         Configuration conf, SocketFactory factory, int rpcTimeout) {
       this.protocol = protocol;
       this.address = address;
@@ -210,10 +208,10 @@ public class SecureRpcEngine implements RpcEngine {
    */
   public VersionedProtocol getProxy(
       Class<? extends VersionedProtocol> protocol, long clientVersion,
-      InetSocketAddress addr, UserGroupInformation ticket,
+      InetSocketAddress addr, User ticket,
       Configuration conf, SocketFactory factory, int rpcTimeout)
   throws IOException {
-    if (UserGroupInformation.isSecurityEnabled()) {
+    if (User.isSecurityEnabled()) {
       HBaseSaslRpcServer.init(conf);
     }
     VersionedProtocol proxy =
@@ -244,7 +242,7 @@ public class SecureRpcEngine implements RpcEngine {
   public Object[] call(Method method, Object[][] params,
                        InetSocketAddress[] addrs,
                        Class<? extends VersionedProtocol> protocol,
-                       UserGroupInformation ticket, Configuration conf)
+                       User ticket, Configuration conf)
     throws IOException, InterruptedException {
 
     Invocation[] invocations = new Invocation[params.length];

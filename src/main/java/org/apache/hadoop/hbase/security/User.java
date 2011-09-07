@@ -62,6 +62,10 @@ public abstract class User {
   private static Log LOG = LogFactory.getLog(User.class);
   protected UserGroupInformation ugi;
 
+  public UserGroupInformation getUGI() {
+    return ugi;
+  }
+
   /**
    * Returns the full user name.  For Kerberos principals this will include
    * the host and realm portions of the principal name.
@@ -69,6 +73,15 @@ public abstract class User {
    */
   public String getName() {
     return ugi.getUserName();
+  }
+
+  /**
+   * Returns the list of groups of which this user is a member.  On secure
+   * Hadoop this returns the group information for the user as resolved on the
+   * server.  For 0.20 based Hadoop, the group names are passed from the client.
+   */
+  public String[] getGroupNames() {
+    return ugi.getGroupNames();
   }
 
   /**
@@ -115,11 +128,28 @@ public abstract class User {
    * Returns the {@code User} instance within current execution context.
    */
   public static User getCurrent() throws IOException {
+    User user;
     if (IS_SECURE_HADOOP) {
-      return new SecureHadoopUser();
+      user = new SecureHadoopUser();
     } else {
-      return new HadoopUser();
+      user = new HadoopUser();
     }
+    if (user.getUGI() == null) {
+      return null;
+    }
+    return user;
+  }
+
+  /**
+   * Wraps an underlying {@code UserGroupInformation} instance.
+   * @param ugi The base Hadoop user
+   * @return
+   */
+  public static User create(UserGroupInformation ugi) {
+    if (IS_SECURE_HADOOP) {
+      return new SecureHadoopUser(ugi);
+    }
+    return new HadoopUser(ugi);
   }
 
   /**
@@ -202,7 +232,7 @@ public abstract class User {
 
     @Override
     public String getShortName() {
-      return ugi.getUserName();
+      return ugi != null ? ugi.getUserName() : null;
     }
 
     @Override
@@ -326,6 +356,8 @@ public abstract class User {
    * 0.20 and versions 0.21 and above.
    */
   private static class SecureHadoopUser extends User {
+    private String shortName;
+
     private SecureHadoopUser() throws IOException {
       try {
         ugi = (UserGroupInformation) callStatic("getCurrentUser");
@@ -345,8 +377,11 @@ public abstract class User {
 
     @Override
     public String getShortName() {
+      if (shortName != null) return shortName;
+
       try {
-        return (String)call(ugi, "getShortUserName", null, null);
+        shortName = (String)call(ugi, "getShortUserName", null, null);
+        return shortName;
       } catch (RuntimeException re) {
         throw re;
       } catch (Exception e) {

@@ -27,9 +27,9 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
-import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.zookeeper.KeeperException;
 
 import java.io.*;
@@ -79,7 +79,7 @@ public class TableAuthManager {
   private void initGlobal(Configuration conf) {
     String currentUser = null;
     try {
-      currentUser = UserGroupInformation.getCurrentUser().getShortUserName();
+      currentUser = User.getCurrent().getShortName();
     } catch (IOException ioe) {
       LOG.warn("Unable to get current user!", ioe);
     }
@@ -189,12 +189,12 @@ public class TableAuthManager {
    * @param action
    * @return
    */
-  public boolean authorize(UserGroupInformation user, Permission.Action action) {
+  public boolean authorize(User user, Permission.Action action) {
     if (user == null) {
       return false;
     }
 
-    if (authorize(USER_CACHE.get(user.getShortUserName()), action)) {
+    if (authorize(USER_CACHE.get(user.getShortName()), action)) {
       return true;
     }
 
@@ -228,10 +228,10 @@ public class TableAuthManager {
     return false;
   }
 
-  public boolean authorize(UserGroupInformation user, byte[] table, KeyValue kv,
+  public boolean authorize(User user, byte[] table, KeyValue kv,
       TablePermission.Action action) {
     List<TablePermission> userPerms = getUserPermissions(
-        user.getShortUserName(), table);
+        user.getShortName(), table);
     if (authorize(userPerms, table, kv, action)) {
       return true;
     }
@@ -325,9 +325,9 @@ public class TableAuthManager {
     return authorize(getGroupPermissions(groupName, table), table, family, action);
   }
 
-  public boolean authorize(UserGroupInformation user, byte[] table, byte[] family,
+  public boolean authorize(User user, byte[] table, byte[] family,
       byte[] qualifier, Permission.Action action) {
-    if (authorizeUser(user.getShortUserName(), table, family, qualifier, action)) {
+    if (authorizeUser(user.getShortName(), table, family, qualifier, action)) {
       return true;
     }
 
@@ -342,7 +342,7 @@ public class TableAuthManager {
     return false;
   }
 
-  public boolean authorize(UserGroupInformation user, byte[] table, byte[] family,
+  public boolean authorize(User user, byte[] table, byte[] family,
       Permission.Action action) {
     return authorize(user, table, family, null, action);
   }
@@ -353,10 +353,10 @@ public class TableAuthManager {
    * may be scoped to a given column qualifier and does not guarantee that
    * authorize() on the same column family would return true.
    */
-  public boolean matchPermission(UserGroupInformation user,
+  public boolean matchPermission(User user,
       byte[] table, byte[] family, TablePermission.Action action) {
     List<TablePermission> userPerms = getUserPermissions(
-        user.getShortUserName(), table);
+        user.getShortName(), table);
     if (userPerms != null) {
       for (TablePermission p : userPerms) {
         if (p.matchesFamily(table, family, action)) {
@@ -382,11 +382,11 @@ public class TableAuthManager {
     return false;
   }
 
-  public boolean matchPermission(UserGroupInformation user,
+  public boolean matchPermission(User user,
       byte[] table, byte[] family, byte[] qualifier,
       TablePermission.Action action) {
     List<TablePermission> userPerms = getUserPermissions(
-        user.getShortUserName(), table);
+        user.getShortName(), table);
     if (userPerms != null) {
       for (TablePermission p : userPerms) {
         if (p.matchesFamilyQualifier(table, family, qualifier, action)) {

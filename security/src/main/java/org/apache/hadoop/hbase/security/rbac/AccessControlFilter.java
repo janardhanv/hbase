@@ -27,6 +27,7 @@ import java.util.List;
 
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.filter.FilterBase;
+import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.security.UserGroupInformation;
 
 /**
@@ -45,7 +46,7 @@ public class AccessControlFilter extends FilterBase {
 
   private TableAuthManager authManager;
   private byte[] table;
-  private UserGroupInformation user;
+  private User user;
 
   /**
    * For Writable
@@ -53,7 +54,7 @@ public class AccessControlFilter extends FilterBase {
   AccessControlFilter() {
   }
 
-  AccessControlFilter(TableAuthManager mgr, UserGroupInformation ugi,
+  AccessControlFilter(TableAuthManager mgr, User ugi,
       byte[] tableName) {
     authManager = mgr;
     table = tableName;
