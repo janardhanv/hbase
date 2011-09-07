@@ -1204,6 +1204,60 @@
         at revision 1034499 with this hdfs-895 patch:
         https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
         -->
+        <hadoop.version>0.20-append-r1057313</hadoop.version>
+      </properties>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-core</artifactId>
+          <version>${hadoop.version}</version>
+          <exclusions>
+            <exclusion>
+              <groupId>hsqldb</groupId>
+              <artifactId>hsqldb</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.sf.kosmosfs</groupId>
+              <artifactId>kfs</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.eclipse.jdt</groupId>
+              <artifactId>core</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.java.dev.jets3t</groupId>
+              <artifactId>jets3t</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>oro</groupId>
+              <artifactId>oro</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+        <!-- test deps for hadoop-0.20 profile -->
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-test</artifactId>
+          <version>${hadoop.version}</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
+    </profile>
+
+    <!-- profile for building against Hadoop 0.20+security-->
+    <profile>
+      <id>hadoop-0.20S</id>
+      <activation>
+        <property>
+          <name>hadoop.profile</name>
+          <value>20S</value>
+        </property>
+      </activation>
+      <properties>
+        <!--The below was made by patching branch-0.20-append
+        at revision 1034499 with this hdfs-895 patch:
+        https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
+        -->
         <!-- hadoop.version>0.20-append-r1057313</hadoop.version -->
         <hadoop.version>0.20-security-append-SNAPSHOT</hadoop.version>
       </properties>
@@ -1243,7 +1297,29 @@
           <scope>test</scope>
         </dependency>
       </dependencies>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>build-helper-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>add-source</id>
+                <goals>
+                  <goal>add-source</goal>
+                </goals>
+                <configuration>
+                  <sources>
+                    <source>${project.basedir}/security/src/main/java</source>
+                  </sources>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
     </profile>
+
 
     <!--
       profile for building against Hadoop 0.22.0. Activate using:
