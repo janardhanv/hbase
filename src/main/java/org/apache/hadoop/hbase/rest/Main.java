@@ -32,6 +32,9 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.rest.filter.GzipFilter;
 import org.apache.hadoop.hbase.util.VersionInfo;
+import org.apache.hadoop.hbase.security.User;
+import org.apache.hadoop.hbase.util.Strings;
+import org.apache.hadoop.net.DNS;
 
 import java.util.List;
 import java.util.ArrayList;
@@ -132,11 +135,21 @@ public class Main implements Constants {
     server.setSendServerVersion(false);
     server.setSendDateHeader(false);
     server.setStopAtShutdown(true);
-      // set up context
+    // set up context
     Context context = new Context(server, "/", Context.SESSIONS);
     context.addServlet(sh, "/*");
     context.addFilter(GzipFilter.class, "/*", 0);
 
+    // login the server principal (if using secure Hadoop)   
+    if (User.isSecurityEnabled()) {
+      String machineName = Strings.domainNamePointerToHostName(
+        DNS.getDefaultHost(conf.get("hbase.rest.dns.interface", "default"),
+          conf.get("hbase.rest.dns.nameserver", "default")));
+      User.login(conf, "hbase.rest.keytab.file", "hbase.rest.kerberos.principal",
+        machineName);
+    }
+
+    // start server
     server.start();
     server.join();
   }
