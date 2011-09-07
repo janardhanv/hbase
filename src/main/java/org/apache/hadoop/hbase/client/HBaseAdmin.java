@@ -104,6 +104,9 @@ public class HBaseAdmin implements Abortable, Closeable {
       try {
         this.connection.getMaster();
         break;
+      } catch (MasterNotRunningException mnre) {
+        HConnectionManager.deleteStaleConnection(this.connection);
+        this.connection = HConnectionManager.getConnection(this.conf);        
       } catch (UndeclaredThrowableException ute) {
         HConnectionManager.deleteStaleConnection(this.connection);
         this.connection = HConnectionManager.getConnection(this.conf);        
@@ -330,9 +333,7 @@ public class HBaseAdmin implements Abortable, Closeable {
   /**
    * Creates a new table with an initial set of empty regions defined by the
    * specified split keys.  The total number of regions created will be the
-   * number of split keys plus one (the first region has a null start key and
-   * the last region has a null end key).
-   * Synchronous operation.
+   * number of split keys plus one. Synchronous operation.
    *
    * @param desc table descriptor for table
    * @param splitKeys array of split keys for the initial regions of the table
@@ -354,7 +355,8 @@ public class HBaseAdmin implements Abortable, Closeable {
     }
     int numRegs = splitKeys == null ? 1 : splitKeys.length + 1;
     int prevRegCount = 0;
-    for (int tries = 0; tries < numRetries; ++tries) {
+    for (int tries = 0; tries < this.numRetries * this.retryLongerMultiplier;
+      ++tries) {
       // Wait for new table to come on-line
       final AtomicInteger actualRegCount = new AtomicInteger(0);
       MetaScannerVisitor visitor = new MetaScannerVisitor() {
@@ -385,9 +387,9 @@ public class HBaseAdmin implements Abortable, Closeable {
       };
       MetaScanner.metaScan(conf, visitor, desc.getName());
       if (actualRegCount.get() != numRegs) {
-        if (tries == numRetries - 1) {
-          throw new RegionOfflineException("Only " + actualRegCount.get() + 
-              " of " + numRegs + " regions are online; retries exhausted.");
+        if (tries == this.numRetries * this.retryLongerMultiplier - 1) {
+          throw new RegionOfflineException("Only " + actualRegCount.get() +
+            " of " + numRegs + " regions are online; retries exhausted.");
         }
         try { // Sleep
           Thread.sleep(getPauseTime(tries));
@@ -563,8 +565,12 @@ public class HBaseAdmin implements Abortable, Closeable {
   /**
    * Enable a table.  May timeout.  Use {@link #enableTableAsync(byte[])}
    * and {@link #isTableEnabled(byte[])} instead.
+   * The table has to be in disabled state for it to be enabled.
    * @param tableName name of the table
    * @throws IOException if a remote or network exception occurs
+   * There could be couple types of IOException
+   * TableNotFoundException means the table doesn't exist.
+   * TableNotDisabledException means the table isn't in disabled state.
    * @see #isTableEnabled(byte[])
    * @see #disableTable(byte[])
    * @see #enableTableAsync(byte[])
@@ -704,8 +710,12 @@ public class HBaseAdmin implements Abortable, Closeable {
    * Disable table and wait on completion.  May timeout eventually.  Use
    * {@link #disableTableAsync(byte[])} and {@link #isTableDisabled(String)}
    * instead.
+   * The table has to be in enabled state for it to be disabled.
    * @param tableName
    * @throws IOException
+   * There could be couple types of IOException
+   * TableNotFoundException means the table doesn't exist.
+   * TableNotEnabledException means the table isn't in enabled state.
    */
   public void disableTable(final byte [] tableName)
   throws IOException {
@@ -834,6 +844,28 @@ public class HBaseAdmin implements Abortable, Closeable {
    */
   public boolean isTableAvailable(String tableName) throws IOException {
     return connection.isTableAvailable(Bytes.toBytes(tableName));
+  }
+
+  /**
+   * Get the status of alter command - indicates how many regions have received
+   * the updated schema Asynchronous operation.
+   *
+   * @param tableName
+   *          name of the table to get the status of
+   * @return Pair indicating the number of regions updated Pair.getFirst() is the
+   *         regions that are yet to be updated Pair.getSecond() is the total number
+   *         of regions of the table
+   * @throws IOException
+   *           if a remote or network exception occurs
+   */
+  public Pair<Integer, Integer> getAlterStatus(final byte[] tableName)
+  throws IOException {
+    HTableDescriptor.isLegalTableName(tableName);
+    try {
+      return getMaster().getAlterStatus(tableName);
+    } catch (RemoteException e) {
+      throw RemoteExceptionHandler.decodeRemoteException(e);
+    }
   }
 
   /**
@@ -1009,6 +1041,45 @@ public class HBaseAdmin implements Abortable, Closeable {
     } finally {
       cleanupCatalogTracker(ct);
     }
+  }
+
+  /**
+   * For expert-admins. Runs close on the regionserver. Closes a region based on
+   * the encoded region name. The region server name is mandatory. If the
+   * servername is provided then based on the online regions in the specified
+   * regionserver the specified region will be closed. The master will not be
+   * informed of the close. Note that the regionname is the encoded regionname.
+   * 
+   * @param encodedRegionName
+   *          The encoded region name; i.e. the hash that makes up the region
+   *          name suffix: e.g. if regionname is
+   *          <code>TestTable,0094429456,1289497600452.527db22f95c8a9e0116f0cc13c680396.</code>
+   *          , then the encoded region name is:
+   *          <code>527db22f95c8a9e0116f0cc13c680396</code>.
+   * @param serverName
+   *          The servername of the regionserver. A server name is made of host,
+   *          port and startcode. This is mandatory. Here is an example:
+   *          <code> host187.example.com,60020,1289493121758</code>
+   * @return true if the region was closed, false if not.
+   * @throws IOException
+   *           if a remote or network exception occurs
+   */
+  public boolean closeRegionWithEncodedRegionName(final String encodedRegionName,
+      final String serverName) throws IOException {
+    byte[] encodedRegionNameInBytes = Bytes.toBytes(encodedRegionName);
+    if (null == serverName || ("").equals(serverName.trim())) {
+      throw new IllegalArgumentException(
+          "The servername cannot be null or empty.");
+    }
+    ServerName sn = new ServerName(serverName);
+    HRegionInterface rs = this.connection.getHRegionConnection(
+        sn.getHostname(), sn.getPort());
+    // Close the region without updating zk state.
+    boolean isRegionClosed = rs.closeRegion(encodedRegionNameInBytes, false);
+    if (false == isRegionClosed) {
+      LOG.error("Not able to close the region " + encodedRegionName + ".");
+    }
+    return isRegionClosed;
   }
 
   /**

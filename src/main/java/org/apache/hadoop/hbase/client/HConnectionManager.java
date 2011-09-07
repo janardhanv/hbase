@@ -35,7 +35,6 @@ import java.util.NoSuchElementException;
 import java.util.Map.Entry;
 import java.util.Set;
 import java.util.TreeMap;
-import java.util.TreeSet;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
@@ -198,7 +197,7 @@ public class HConnectionManager {
    * @param stopProxy
    *          Shuts down all the proxy's put up to cluster members including to
    *          cluster HMaster. Calls
-   *          {@link HBaseRPC#stopProxy(org.apache.hadoop.ipc.VersionedProtocol)}
+   *          {@link HBaseRPC#stopProxy(org.apache.hadoop.hbase.ipc.VersionedProtocol)}
    *          .
    */
   public static void deleteConnection(Configuration conf, boolean stopProxy) {
@@ -1139,7 +1138,7 @@ public class HConnectionManager {
       if (tableLocations.put(startKey, location) == null) {
         LOG.debug("Cached location for " +
             location.getRegionInfo().getRegionNameAsString() +
-            " is " + location.getServerAddress());
+            " is " + location.getHostnamePort());
       }
     }
 
@@ -1183,8 +1182,13 @@ public class HConnectionManager {
     throws IOException {
       if (master) getMaster();
       HRegionInterface server;
-      String rsName = isa != null?
-          isa.toString(): Addressing.createHostAndPortStr(hostname, port);
+      String rsName = null;
+      if (isa != null) {
+        rsName = Addressing.createHostAndPortStr(isa.getHostName(),
+            isa.getPort());
+      } else {
+        rsName = Addressing.createHostAndPortStr(hostname, port);
+      }
       // See if we already have a connection (common case)
       server = this.servers.get(rsName);
       if (server == null) {
@@ -1207,7 +1211,8 @@ public class HConnectionManager {
                   serverInterfaceClass, HRegionInterface.VERSION,
                   address, this.conf,
                   this.maxRPCAttempts, this.rpcTimeout, this.rpcTimeout);
-              this.servers.put(address.toString(), server);
+              this.servers.put(Addressing.createHostAndPortStr(
+                  address.getHostName(), address.getPort()), server);
             } catch (RemoteException e) {
               LOG.warn("RemoteException connecting to RS", e);
               // Throw what the RemoteException was carrying.

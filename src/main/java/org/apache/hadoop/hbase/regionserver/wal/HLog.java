@@ -29,11 +29,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.net.URLEncoder;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.NavigableSet;
-import java.util.Arrays;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -55,7 +55,12 @@ import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.PathFilter;
 import org.apache.hadoop.fs.Syncable;
-import org.apache.hadoop.hbase.*;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ClassSize;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -119,14 +124,13 @@ public class HLog implements Syncable {
   private final Path dir;
   private final Configuration conf;
   // Listeners that are called on WAL events.
-  private List<WALObserver> listeners =
-    new CopyOnWriteArrayList<WALObserver>();
+  private List<WALActionsListener> listeners =
+    new CopyOnWriteArrayList<WALActionsListener>();
   private final long optionalFlushInterval;
   private final long blocksize;
   private final String prefix;
   private final Path oldLogDir;
-  private boolean logRollRequested;
-
+  private boolean logRollRunning;
 
   private static Class<? extends Writer> logWriterClass;
   private static Class<? extends Reader> logReaderClass;
@@ -138,7 +142,9 @@ public class HLog implements Syncable {
   }
 
   private FSDataOutputStream hdfs_out; // FSDataOutputStream associated with the current SequenceFile.writer
-  private int initialReplication; // initial replication factor of SequenceFile.writer
+  // Minimum tolerable replicas, if the actual value is lower than it, 
+  // rollWriter will be triggered
+  private int minTolerableReplication;
   private Method getNumCurrentReplicas; // refers to DFSOutputStream.getNumCurrentReplicas
   final static Object [] NO_ARGS = new Object []{};
 
@@ -186,6 +192,17 @@ public class HLog implements Syncable {
 
   //number of transactions in the current Hlog.
   private final AtomicInteger numEntries = new AtomicInteger(0);
+  // If live datanode count is lower than the default replicas value,
+  // RollWriter will be triggered in each sync(So the RollWriter will be
+  // triggered one by one in a short time). Using it as a workaround to slow
+  // down the roll frequency triggered by checkLowReplication().
+  private volatile int consecutiveLogRolls = 0;
+  private final int lowReplicationRollLimit;
+
+  // If consecutiveLogRolls is larger than lowReplicationRollLimit,
+  // then disable the rolling in checkLowReplication().
+  // Enable it if the replications recover.
+  private volatile boolean lowReplicationRollEnabled = true;
 
   // If > than this size, roll the log. This is typically 0.95 times the size
   // of the default Hdfs block size.
@@ -213,6 +230,11 @@ public class HLog implements Syncable {
    * Thread that handles optional sync'ing
    */
   private final LogSyncer logSyncerThread;
+
+  /** Number of log close errors tolerated before we abort */
+  private final int closeErrorsTolerated;
+
+  private final AtomicInteger closeErrorCount = new AtomicInteger();
 
   /**
    * Pattern used to validate a HLog file name
@@ -295,7 +317,7 @@ public class HLog implements Syncable {
    * @throws IOException
    */
   public HLog(final FileSystem fs, final Path dir, final Path oldLogDir,
-      final Configuration conf, final List<WALObserver> listeners,
+      final Configuration conf, final List<WALActionsListener> listeners,
       final String prefix) throws IOException {
     this(fs, dir, oldLogDir, conf, listeners, true, prefix);
   }
@@ -321,7 +343,7 @@ public class HLog implements Syncable {
    * @throws IOException
    */
   public HLog(final FileSystem fs, final Path dir, final Path oldLogDir,
-      final Configuration conf, final List<WALObserver> listeners,
+      final Configuration conf, final List<WALActionsListener> listeners,
       final boolean failIfLogDirExists, final String prefix)
  throws IOException {
     super();
@@ -329,7 +351,7 @@ public class HLog implements Syncable {
     this.dir = dir;
     this.conf = conf;
     if (listeners != null) {
-      for (WALObserver i: listeners) {
+      for (WALActionsListener i: listeners) {
         registerWALActionsListener(i);
       }
     }
@@ -353,7 +375,15 @@ public class HLog implements Syncable {
       }
     }
     this.maxLogs = conf.getInt("hbase.regionserver.maxlogs", 32);
+    this.minTolerableReplication = conf.getInt(
+        "hbase.regionserver.hlog.tolerable.lowreplication",
+        this.fs.getDefaultReplication());
+    this.lowReplicationRollLimit = conf.getInt(
+        "hbase.regionserver.hlog.lowreplication.rolllimit", 5);
     this.enabled = conf.getBoolean("hbase.regionserver.hlog.enabled", true);
+    this.closeErrorsTolerated = conf.getInt(
+        "hbase.regionserver.logroll.errors.tolerated", 0);
+
     LOG.info("HLog configuration: blocksize=" +
       StringUtils.byteDesc(this.blocksize) +
       ", rollsize=" + StringUtils.byteDesc(this.logrollsize) +
@@ -404,11 +434,11 @@ public class HLog implements Syncable {
     return m;
   }
 
-  public void registerWALActionsListener (final WALObserver listener) {
+  public void registerWALActionsListener(final WALActionsListener listener) {
     this.listeners.add(listener);
   }
 
-  public boolean unregisterWALActionsListener(final WALObserver listener) {
+  public boolean unregisterWALActionsListener(final WALActionsListener listener) {
     return this.listeners.remove(listener);
   }
 
@@ -475,14 +505,43 @@ public class HLog implements Syncable {
    * @throws IOException
    */
   public byte [][] rollWriter() throws FailedLogCloseException, IOException {
+    return rollWriter(false);
+  }
+
+  /**
+   * Roll the log writer. That is, start writing log messages to a new file.
+   *
+   * Because a log cannot be rolled during a cache flush, and a cache flush
+   * spans two method calls, a special lock needs to be obtained so that a cache
+   * flush cannot start when the log is being rolled and the log cannot be
+   * rolled during a cache flush.
+   *
+   * <p>Note that this method cannot be synchronized because it is possible that
+   * startCacheFlush runs, obtaining the cacheFlushLock, then this method could
+   * start which would obtain the lock on this but block on obtaining the
+   * cacheFlushLock and then completeCacheFlush could be called which would wait
+   * for the lock on this and consequently never release the cacheFlushLock
+   *
+   * @param force If true, force creation of a new writer even if no entries
+   * have been written to the current writer
+   * @return If lots of logs, flush the returned regions so next time through
+   * we can clean logs. Returns null if nothing to flush.  Names are actual
+   * region names as returned by {@link HRegionInfo#getEncodedName()}
+   * @throws org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException
+   * @throws IOException
+   */
+  public byte [][] rollWriter(boolean force)
+      throws FailedLogCloseException, IOException {
     // Return if nothing to flush.
-    if (this.writer != null && this.numEntries.get() <= 0) {
+    if (!force && this.writer != null && this.numEntries.get() <= 0) {
       return null;
     }
     byte [][] regionsToFlush = null;
     this.cacheFlushLock.lock();
+    this.logRollRunning = true;
     try {
       if (closed) {
+        LOG.debug("HLog closed.  Skipping rolling of writer");
         return regionsToFlush;
       }
       // Do all the preparation outside of the updateLock to block
@@ -490,8 +549,10 @@ public class HLog implements Syncable {
       long currentFilenum = this.filenum;
       this.filenum = System.currentTimeMillis();
       Path newPath = computeFilename();
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Enabling new writer for "+FSUtils.getPath(newPath));
+      }
       HLog.Writer nextWriter = this.createWriterInstance(fs, newPath, conf);
-      int nextInitialReplication = fs.getFileStatus(newPath).getReplication();
       // Can we get at the dfsclient outputstream?  If an instance of
       // SFLW, it'll have done the necessary reflection to get at the
       // protected field name.
@@ -501,7 +562,7 @@ public class HLog implements Syncable {
       }
       // Tell our listeners that a new log was created
       if (!this.listeners.isEmpty()) {
-        for (WALObserver i : this.listeners) {
+        for (WALActionsListener i : this.listeners) {
           i.logRolled(newPath);
         }
       }
@@ -510,7 +571,6 @@ public class HLog implements Syncable {
         // Clean up current writer.
         Path oldFile = cleanupCurrentWriter(currentFilenum);
         this.writer = nextWriter;
-        this.initialReplication = nextInitialReplication;
         this.hdfs_out = nextHdfsOut;
 
         LOG.info((oldFile != null?
@@ -520,7 +580,6 @@ public class HLog implements Syncable {
             this.fs.getFileStatus(oldFile).getLen() + ". ": "") +
           "New hlog " + FSUtils.getPath(newPath));
         this.numEntries.set(0);
-        this.logRollRequested = false;
       }
       // Can we delete any of the old log files?
       if (this.outputfiles.size() > 0) {
@@ -538,6 +597,7 @@ public class HLog implements Syncable {
         }
       }
     } finally {
+      this.logRollRunning = false;
       this.cacheFlushLock.unlock();
     }
     return regionsToFlush;
@@ -724,14 +784,21 @@ public class HLog implements Syncable {
       // Close the current writer, get a new one.
       try {
         this.writer.close();
+        closeErrorCount.set(0);
       } catch (IOException e) {
-        // Failed close of log file.  Means we're losing edits.  For now,
-        // shut ourselves down to minimize loss.  Alternative is to try and
-        // keep going.  See HBASE-930.
-        FailedLogCloseException flce =
-          new FailedLogCloseException("#" + currentfilenum);
-        flce.initCause(e);
-        throw e;
+        LOG.error("Failed close of HLog writer", e);
+        int errors = closeErrorCount.incrementAndGet();
+        if (errors <= closeErrorsTolerated) {
+          LOG.warn("Riding over HLog close failure! error count="+errors);
+        } else {
+          // Failed close of log file.  Means we're losing edits.  For now,
+          // shut ourselves down to minimize loss.  Alternative is to try and
+          // keep going.  See HBASE-930.
+          FailedLogCloseException flce =
+            new FailedLogCloseException("#" + currentfilenum);
+          flce.initCause(e);
+          throw flce;
+        }
       }
       if (currentfilenum >= 0) {
         oldFile = computeFilename(currentfilenum);
@@ -813,7 +880,7 @@ public class HLog implements Syncable {
     try {
       // Tell our listeners that the log is closing
       if (!this.listeners.isEmpty()) {
-        for (WALObserver i : this.listeners) {
+        for (WALActionsListener i : this.listeners) {
           i.logCloseRequested();
         }
       }
@@ -950,12 +1017,14 @@ public class HLog implements Syncable {
         // throw exceptions on interrupt
         while(!this.isInterrupted()) {
 
-          Thread.sleep(this.optionalFlushInterval);
-          sync();
+          try {
+            Thread.sleep(this.optionalFlushInterval);
+            sync();
+          } catch (IOException e) {
+            LOG.error("Error while syncing, requesting close of hlog ", e);
+            requestLogRoll();
+          }
         }
-      } catch (IOException e) {
-        LOG.error("Error while syncing, requesting close of hlog ", e);
-        requestLogRoll();
       } catch (InterruptedException e) {
         LOG.debug(getName() + " interrupted while waiting for sync requests");
       } finally {
@@ -977,7 +1046,7 @@ public class HLog implements Syncable {
       synchronized (this.updateLock) {
         syncTime += System.currentTimeMillis() - now;
         syncOps++;
-        if (!logRollRequested) {
+        if (!this.logRollRunning) {
           checkLowReplication();
           if (this.writer.getLength() > this.logrollsize) {
             requestLogRoll();
@@ -986,25 +1055,51 @@ public class HLog implements Syncable {
       }
 
     } catch (IOException e) {
-      LOG.fatal("Could not append. Requesting close of hlog", e);
+      LOG.fatal("Could not sync. Requesting close of hlog", e);
       requestLogRoll();
       throw e;
     }
   }
 
   private void checkLowReplication() {
-    // if the number of replicas in HDFS has fallen below the initial
+    // if the number of replicas in HDFS has fallen below the configured
     // value, then roll logs.
     try {
       int numCurrentReplicas = getLogReplication();
-      if (numCurrentReplicas != 0 &&
-          numCurrentReplicas < this.initialReplication) {
-        LOG.warn("HDFS pipeline error detected. " +
-            "Found " + numCurrentReplicas + " replicas but expecting " +
-            this.initialReplication + " replicas. " +
-            " Requesting close of hlog.");
-        requestLogRoll();
-        logRollRequested = true;
+      if (numCurrentReplicas != 0
+          && numCurrentReplicas < this.minTolerableReplication) {
+        if (this.lowReplicationRollEnabled) {
+          if (this.consecutiveLogRolls < this.lowReplicationRollLimit) {
+            LOG.warn("HDFS pipeline error detected. " + "Found "
+                + numCurrentReplicas + " replicas but expecting no less than "
+                + this.minTolerableReplication + " replicas. "
+                + " Requesting close of hlog.");
+            requestLogRoll();
+            // If rollWriter is requested, increase consecutiveLogRolls. Once it
+            // is larger than lowReplicationRollLimit, disable the
+            // LowReplication-Roller
+            this.consecutiveLogRolls++;
+          } else {
+            LOG.warn("Too many consecutive RollWriter requests, it's a sign of "
+                + "the total number of live datanodes is lower than the tolerable replicas.");
+            this.consecutiveLogRolls = 0;
+            this.lowReplicationRollEnabled = false;
+          }
+        }
+      } else if (numCurrentReplicas >= this.minTolerableReplication) {
+
+        if (!this.lowReplicationRollEnabled) {
+          // The new writer's log replicas is always the default value.
+          // So we should not enable LowReplication-Roller. If numEntries
+          // is lower than or equals 1, we consider it as a new writer.
+          if (this.numEntries.get() <= 1) {
+            return;
+          }
+          // Once the live datanode number and the replicas return to normal,
+          // enable the LowReplication-Roller.
+          this.lowReplicationRollEnabled = true;
+          LOG.info("LowReplication-Roller was enabled.");
+        }
       }
     } catch (Exception e) {
       LOG.warn("Unable to invoke DFSOutputStream.getNumCurrentReplicas" + e +
@@ -1053,7 +1148,7 @@ public class HLog implements Syncable {
 
   private void requestLogRoll() {
     if (!this.listeners.isEmpty()) {
-      for (WALObserver i: this.listeners) {
+      for (WALActionsListener i: this.listeners) {
         i.logRollRequested();
       }
     }
@@ -1066,7 +1161,7 @@ public class HLog implements Syncable {
       return;
     }
     if (!this.listeners.isEmpty()) {
-      for (WALObserver i: this.listeners) {
+      for (WALActionsListener i: this.listeners) {
         i.visitLogEntryBeforeWrite(htd, logKey, logEdit);
       }
     }
@@ -1260,6 +1355,15 @@ public class HLog implements Syncable {
    */
   public static boolean isMetaFamily(byte [] family) {
     return Bytes.equals(METAFAMILY, family);
+  }
+
+  /**
+   * Get LowReplication-Roller status
+   * 
+   * @return lowReplicationRollEnabled
+   */
+  public boolean isLowReplicationRollEnabled() {
+    return lowReplicationRollEnabled;
   }
 
   @SuppressWarnings("unchecked")

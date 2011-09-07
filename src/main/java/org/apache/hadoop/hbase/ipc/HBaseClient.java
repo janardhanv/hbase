@@ -58,7 +58,6 @@ import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.ipc.RemoteException;
-import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.net.NetUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
@@ -516,23 +515,22 @@ public class HBaseClient {
         return;
       }
 
-      DataOutputBuffer d=null;
+      // For serializing the data to be written.
+
+      final DataOutputBuffer d = new DataOutputBuffer();
       try {
+        if (LOG.isDebugEnabled())
+          LOG.debug(getName() + " sending #" + call.id);
+
+        d.writeInt(0xdeadbeef); // placeholder for data length
+        d.writeInt(call.id);
+        call.param.write(d);
+        byte[] data = d.getData();
+        int dataLength = d.getLength();
+        // fill in the placeholder
+        Bytes.putInt(data, 0, dataLength - 4);
         //noinspection SynchronizeOnNonFinalField
         synchronized (this.out) { // FindBugs IS2_INCONSISTENT_SYNC
-          if (LOG.isDebugEnabled())
-            LOG.debug(getName() + " sending #" + call.id);
-
-          //for serializing the
-          //data to be written
-          d = new DataOutputBuffer();
-          d.writeInt(0xdeadbeef); // placeholder for data length
-          d.writeInt(call.id);
-          call.param.write(d);
-          byte[] data = d.getData();
-          int dataLength = d.getLength();
-          // fill in the placeholder
-          Bytes.putInt(data, 0, dataLength - 4);
           out.write(data, 0, dataLength);
           out.flush();
         }
@@ -560,14 +558,13 @@ public class HBaseClient {
         if (LOG.isDebugEnabled())
           LOG.debug(getName() + " got value #" + id);
 
-        Call call = calls.get(id);
+        Call call = calls.remove(id);
 
         boolean isError = in.readBoolean();     // read if error
         if (isError) {
           //noinspection ThrowableInstanceNeverThrown
           call.setException(new RemoteException( WritableUtils.readString(in),
               WritableUtils.readString(in)));
-          calls.remove(id);
         } else {
           Writable value = ReflectionUtils.newInstance(valueClass, conf);
           value.readFields(in);                 // read value
@@ -576,7 +573,6 @@ public class HBaseClient {
           if (call != null) {
             call.setValue(value);
           }
-          calls.remove(id);
         }
       } catch (IOException e) {
         if (e instanceof SocketTimeoutException && remoteId.rpcTimeout > 0) {
@@ -762,12 +758,19 @@ public class HBaseClient {
   }
 
   /**
-   * Return the pool type specified in the configuration, if it roughly equals either
-   * the name of {@link PoolType#RoundRobin} or {@link PoolType#ThreadLocal}, otherwise
-   * default to the former type.
+   * Return the pool type specified in the configuration, which must be set to
+   * either {@link PoolType#RoundRobin} or {@link PoolType#ThreadLocal},
+   * otherwise default to the former.
+   *
+   * For applications with many user threads, use a small round-robin pool. For
+   * applications with few user threads, you may want to try using a
+   * thread-local pool. In any case, the number of {@link HBaseClient} instances
+   * should not exceed the operating system's hard limit on the number of
+   * connections.
    *
    * @param config configuration
-   * @return either a {@link PoolType#RoundRobin} or {@link PoolType#ThreadLocal}
+   * @return either a {@link PoolType#RoundRobin} or
+   *         {@link PoolType#ThreadLocal}
    */
   private static PoolType getPoolType(Configuration config) {
     return PoolType.valueOf(config.get(HConstants.HBASE_CLIENT_IPC_POOL_TYPE),
@@ -775,8 +778,8 @@ public class HBaseClient {
   }
 
   /**
-   * Return the pool size specified in the configuration, otherwise the maximum allowable 
-   * size (which for all intents and purposes represents an unbounded pool).
+   * Return the pool size specified in the configuration, which is applicable only if
+   * the pool type is {@link PoolType#RoundRobin}.
    *
    * @param config
    * @return the maximum pool size

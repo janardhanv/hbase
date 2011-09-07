@@ -19,8 +19,6 @@
  */
 package org.apache.hadoop.hbase.regionserver.wal;
 
-import static org.apache.hadoop.hbase.util.FSUtils.recoverFileLease;
-
 import java.io.EOFException;
 import java.io.IOException;
 import java.io.InterruptedIOException;
@@ -202,8 +200,10 @@ public class HLogSplitter {
     splits = splitLog(logfiles);
 
     splitTime = EnvironmentEdgeManager.currentTimeMillis() - startTime;
-    logAndReport("hlog file splitting completed in " + splitTime +
-        " ms for " + srcDir.toString());
+    String msg = "hlog file splitting completed in " + splitTime +
+        " ms for " + srcDir.toString();
+    status.markComplete(msg);
+    LOG.info(msg);
     return splits;
   }
   
@@ -688,7 +688,7 @@ public class HLogSplitter {
     }
 
     try {
-      recoverFileLease(fs, path, conf);
+      FSUtils.getInstance(fs, conf).recoverFileLease(fs, path, conf);
       try {
         in = getReader(fs, path, conf);
       } catch (EOFException e) {
@@ -995,7 +995,10 @@ public class HLogSplitter {
     }
 
     void finish() {
-      shouldStop = true;
+      synchronized (dataAvailable) {
+        shouldStop = true;
+        dataAvailable.notifyAll();
+      }
     }
   }
 

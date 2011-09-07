@@ -64,7 +64,7 @@ import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.ipc.RpcServer;
-import org.apache.hadoop.hbase.master.LoadBalancer.RegionPlan;
+import org.apache.hadoop.hbase.master.RegionPlan;
 import org.apache.hadoop.hbase.master.handler.DeleteTableHandler;
 import org.apache.hadoop.hbase.master.handler.DisableTableHandler;
 import org.apache.hadoop.hbase.master.handler.EnableTableHandler;
@@ -72,7 +72,9 @@ import org.apache.hadoop.hbase.master.handler.ModifyTableHandler;
 import org.apache.hadoop.hbase.master.handler.TableAddFamilyHandler;
 import org.apache.hadoop.hbase.master.handler.TableDeleteFamilyHandler;
 import org.apache.hadoop.hbase.master.handler.TableModifyFamilyHandler;
+import org.apache.hadoop.hbase.master.handler.CreateTableHandler;
 import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
+import org.apache.hadoop.hbase.monitoring.MemoryBoundedLogMessageBuffer;
 import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.monitoring.TaskMonitor;
 import org.apache.hadoop.hbase.regionserver.HRegion;
@@ -157,6 +159,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   private CatalogTracker catalogTracker;
   // Cluster status zk tracker and local setter
   private ClusterStatusTracker clusterStatusTracker;
+  
+  // buffer for "fatal error" notices from region servers
+  // in the cluster. This is only used for assisting
+  // operations/debugging.
+  private MemoryBoundedLogMessageBuffer rsFatals;
 
   // This flag is for stopping this Master instance.  Its set when we are
   // stopping or aborting
@@ -224,6 +231,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     this.isa = this.rpcServer.getListenerAddress();
     this.serverName = new ServerName(this.isa.getHostName(),
       this.isa.getPort(), System.currentTimeMillis());
+    this.rsFatals = new MemoryBoundedLogMessageBuffer(
+        conf.getLong("hbase.master.buffer.for.rs.fatals", 1*1024*1024));
 
     // initialize server principal (if using secure Hadoop)
     User.login(conf, "hbase.master.keytab.file",
@@ -357,7 +366,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
 
     this.assignmentManager = new AssignmentManager(this, serverManager,
         this.catalogTracker, this.executorService);
-    this.balancer = new LoadBalancer(conf);
+    this.balancer = LoadBalancerFactory.getLoadBalancer(conf);
     zooKeeper.registerListenerFirst(assignmentManager);
 
     this.regionServerTracker = new RegionServerTracker(zooKeeper, this,
@@ -469,6 +478,9 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     status.setStatus("Starting assignment manager");
     this.assignmentManager.joinCluster();
 
+    this.balancer.setClusterStatus(getClusterStatus());
+    this.balancer.setMasterServices(this);
+    
     // Start balancer and meta catalog janitor after meta and regions have
     // been assigned.
     status.setStatus("Starting balancer and catalog janitor");
@@ -666,6 +678,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
      String a = this.conf.get("hbase.master.info.bindAddress", "0.0.0.0");
      this.infoServer = new InfoServer(MASTER, a, port, false, this.conf);
      this.infoServer.addServlet("status", "/master-status", MasterStatusServlet.class);
+     this.infoServer.addServlet("dump", "/dump", MasterDumpServlet.class);
      this.infoServer.setAttribute(MASTER, this);
      this.infoServer.start();
     }
@@ -754,8 +767,17 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     this.serverManager.regionServerReport(new ServerName(sn), hsl);
     if (hsl != null && this.metrics != null) {
       // Up our metrics.
-      this.metrics.incrementRequests(hsl.getNumberOfRequests());
+      this.metrics.incrementRequests(hsl.getTotalNumberOfRequests());
     }
+  }
+
+  @Override
+  public void reportRSFatalError(byte [] sn, String errorText) {
+    ServerName serverName = new ServerName(sn);
+    String msg = "Region server " + serverName + " reported a fatal error:\n"
+        + errorText;
+    LOG.error(msg);
+    rsFatals.add(msg);
   }
 
   public boolean isMasterRunning() {
@@ -920,14 +942,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     }
   }
 
-  public void createTable(HTableDescriptor desc, byte [][] splitKeys)
-  throws IOException {
-    createTable(desc, splitKeys, false);
-  }
-
   public void createTable(HTableDescriptor hTableDescriptor,
-                          byte [][] splitKeys,
-                          boolean sync)
+    byte [][] splitKeys)
   throws IOException {
     if (!isMasterRunning()) {
       throw new MasterNotRunningException();
@@ -944,117 +960,38 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       cpHost.preCreateTable(hTableDescriptor, splitKeys);
     }
     HRegionInfo [] newRegions = getHRegionInfos(hTableDescriptor, splitKeys);
-    int timeout = conf.getInt("hbase.client.catalog.timeout", 10000);
-    // Need META availability to create a table
-    try {
-      if(catalogTracker.waitForMeta(timeout) == null) {
-        throw new NotAllMetaRegionsOnlineException();
-      }
-    } catch (InterruptedException e) {
-      LOG.warn("Interrupted waiting for meta availability", e);
-      throw new IOException(e);
+
+    this.executorService.submit(new CreateTableHandler(this,
+      this.fileSystemManager, this.serverManager, hTableDescriptor, conf,
+      newRegions, catalogTracker, assignmentManager));
+
+    if (cpHost != null) {
+      // TODO, remove sync parameter from postCreateTable method
+      cpHost.postCreateTable(newRegions, false);
     }
-    createTable(hTableDescriptor ,newRegions, sync);
   }
 
   private HRegionInfo[] getHRegionInfos(HTableDescriptor hTableDescriptor,
-                                        byte[][] splitKeys) {
-  HRegionInfo[] hRegionInfos = null;
-  if (splitKeys == null || splitKeys.length == 0) {
-    hRegionInfos = new HRegionInfo[]{
-        new HRegionInfo(hTableDescriptor.getName(), null, null)};
-  } else {
-    int numRegions = splitKeys.length + 1;
-    hRegionInfos = new HRegionInfo[numRegions];
-    byte[] startKey = null;
-    byte[] endKey = null;
-    for (int i = 0; i < numRegions; i++) {
-      endKey = (i == splitKeys.length) ? null : splitKeys[i];
-      hRegionInfos[i] =
-          new HRegionInfo(hTableDescriptor.getName(), startKey, endKey);
-      startKey = endKey;
+    byte[][] splitKeys) {
+    HRegionInfo[] hRegionInfos = null;
+    if (splitKeys == null || splitKeys.length == 0) {
+      hRegionInfos = new HRegionInfo[]{
+          new HRegionInfo(hTableDescriptor.getName(), null, null)};
+    } else {
+      int numRegions = splitKeys.length + 1;
+      hRegionInfos = new HRegionInfo[numRegions];
+      byte[] startKey = null;
+      byte[] endKey = null;
+      for (int i = 0; i < numRegions; i++) {
+        endKey = (i == splitKeys.length) ? null : splitKeys[i];
+        hRegionInfos[i] =
+            new HRegionInfo(hTableDescriptor.getName(), startKey, endKey);
+        startKey = endKey;
+      }
     }
+    return hRegionInfos;
   }
-  return hRegionInfos;
-}
 
-  private synchronized void createTable(final HTableDescriptor hTableDescriptor,
-                                        final HRegionInfo [] newRegions,
-      final boolean sync)
-  throws IOException {
-    String tableName = newRegions[0].getTableNameAsString();
-    if (MetaReader.tableExists(catalogTracker, tableName)) {
-      throw new TableExistsException(tableName);
-    }
-    // TODO: Currently we make the table descriptor and as side-effect the
-    // tableDir is created.  Should we change below method to be createTable
-    // where we create table in tmp dir with its table descriptor file and then
-    // do rename to move it into place?
-    FSUtils.createTableDescriptor(hTableDescriptor, conf);
-
-    // 1. Set table enabling flag up in zk.
-    try {
-      assignmentManager.getZKTable().setEnabledTable(tableName);
-    } catch (KeeperException e) {
-      throw new IOException("Unable to ensure that the table will be" +
-          " enabled because of a ZooKeeper issue", e);
-    }
-
-    List<HRegionInfo> regionInfos = new ArrayList<HRegionInfo>();
-    final int batchSize = this.conf.getInt("hbase.master.createtable.batchsize", 100);
-    HLog hlog = null;
-    for (int regionIdx = 0; regionIdx < newRegions.length; regionIdx++) {
-      HRegionInfo newRegion = newRegions[regionIdx];
-      // 2. Create HRegion
-      HRegion region = HRegion.createHRegion(newRegion,
-          fileSystemManager.getRootDir(), conf, hTableDescriptor, hlog);
-      if (hlog == null) {
-        hlog = region.getLog();
-      }
-
-      regionInfos.add(region.getRegionInfo());
-      if (regionIdx % batchSize == 0) {
-        // 3. Insert into META
-        MetaEditor.addRegionsToMeta(catalogTracker, regionInfos);
-        regionInfos.clear();
-      }
-
-      // 4. Close the new region to flush to disk.  Close log file too.
-      region.close();
-    }
-    hlog.closeAndDelete();
-    if (regionInfos.size() > 0) {
-      MetaEditor.addRegionsToMeta(catalogTracker, regionInfos);
-    }
-
-    // 5. Trigger immediate assignment of the regions in round-robin fashion
-    List<ServerName> servers = serverManager.getOnlineServersList();
-    try {
-      this.assignmentManager.assignUserRegions(Arrays.asList(newRegions), servers);
-    } catch (InterruptedException ie) {
-      LOG.error("Caught " + ie + " during round-robin assignment");
-      throw new IOException(ie);
-    }
-
-    // 6. If sync, wait for assignment of regions
-    if (sync) {
-      LOG.debug("Waiting for " + newRegions.length + " region(s) to be assigned");
-      for (HRegionInfo regionInfo : newRegions) {
-        try {
-          this.assignmentManager.waitForAssignment(regionInfo);
-        } catch (InterruptedException e) {
-          LOG.info("Interrupted waiting for region to be assigned during " +
-              "create table call", e);
-          Thread.currentThread().interrupt();
-          return;
-        }
-      }
-    }
-
-    if (cpHost != null) {
-      cpHost.postCreateTable(newRegions, sync);
-    }
-  }
 
   private static boolean isCatalogTable(final byte [] tableName) {
     return Bytes.equals(tableName, HConstants.ROOT_TABLE_NAME) ||
@@ -1069,6 +1006,18 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     if (cpHost != null) {
       cpHost.postDeleteTable(tableName);
     }
+  }
+
+  /**
+   * Get the number of regions of the table that have been updated by the alter.
+   *
+   * @return Pair indicating the number of regions updated Pair.getFirst is the
+   *         regions that are yet to be updated Pair.getSecond is the total number
+   *         of regions of the table
+   */
+  public Pair<Integer, Integer> getAlterStatus(byte[] tableName)
+  throws IOException {
+    return this.assignmentManager.getReopenStatus(tableName);
   }
 
   public void addColumn(byte [] tableName, HColumnDescriptor column)
@@ -1109,7 +1058,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       cpHost.preEnableTable(tableName);
     }
     this.executorService.submit(new EnableTableHandler(this, tableName,
-      catalogTracker, assignmentManager));
+      catalogTracker, assignmentManager, false));
     if (cpHost != null) {
       cpHost.postEnableTable(tableName);
     }
@@ -1120,7 +1069,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       cpHost.preDisableTable(tableName);
     }
     this.executorService.submit(new DisableTableHandler(this, tableName,
-      catalogTracker, assignmentManager));
+      catalogTracker, assignmentManager, false));
     if (cpHost != null) {
       cpHost.postDisableTable(tableName);
     }
@@ -1305,6 +1254,10 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   public AssignmentManager getAssignmentManager() {
     return this.assignmentManager;
   }
+  
+  public MemoryBoundedLogMessageBuffer getRegionServerFatalLogBuffer() {
+    return rsFatals;
+  }
 
   @Override
   public void shutdown() {
@@ -1350,6 +1303,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     return this.stopped;
   }
 
+  boolean isAborted() {
+    return this.abort;
+  }
+  
+  
   /**
    * Report whether this master is currently the active master or not.
    * If not active master, we are parked on ZK waiting to become active.

@@ -87,7 +87,7 @@ public class AccessControlLists {
    */
   static void init(MasterServices master) throws IOException {
     if (!MetaReader.tableExists(master.getCatalogTracker(), ACL_TABLE_NAME_STR)) {
-      master.createTable(ACL_TABLEDESC, null, false);
+      master.createTable(ACL_TABLEDESC, null);
     }
   }
 

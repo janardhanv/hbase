@@ -126,6 +126,7 @@ public abstract class EventHandler implements Runnable, Comparable<Runnable> {
     C_M_ADD_FAMILY            (44),   // Client asking Master to add family to table
     C_M_DELETE_FAMILY         (45),   // Client asking Master to delete family of table
     C_M_MODIFY_FAMILY         (46),   // Client asking Master to modify family of table
+    C_M_CREATE_TABLE          (47),   // Client asking Master to create a table
 
     // Updates from master to ZK. This is done by the master and there is
     // nothing to process by either Master or RS
@@ -139,6 +140,14 @@ public abstract class EventHandler implements Runnable, Comparable<Runnable> {
      * Constructor
      */
     EventType(int value) {}
+    public boolean isOnlineSchemaChangeSupported() {
+      return (
+        this.equals(EventType.C_M_ADD_FAMILY) ||
+        this.equals(EventType.C_M_DELETE_FAMILY) ||
+        this.equals(EventType.C_M_MODIFY_FAMILY) ||
+        this.equals(EventType.C_M_MODIFY_TABLE)
+      );
+    }
   }
 
   /**
@@ -227,5 +236,22 @@ public abstract class EventHandler implements Runnable, Comparable<Runnable> {
    */
   public synchronized void setListener(EventHandlerListener listener) {
     this.listener = listener;
+  }
+  
+  @Override
+  public String toString() {
+    return "Event #" + getSeqid() +
+      " of type " + eventType +
+      " (" + getInformativeName() + ")";
+  }
+
+  /**
+   * Event implementations should override thie class to provide an
+   * informative name about what event they are handling. For example,
+   * event-specific information such as which region or server is
+   * being processed should be included if possible.
+   */
+  public String getInformativeName() {
+    return this.getClass().toString();
   }
 }

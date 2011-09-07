@@ -20,6 +20,7 @@
 
 package org.apache.hadoop.hbase.regionserver;
 
+import com.google.common.collect.ImmutableList;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 
@@ -27,7 +28,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.Coprocessor;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.client.*;
 import org.apache.hadoop.hbase.coprocessor.*;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
@@ -42,7 +46,6 @@ import org.apache.hadoop.util.StringUtils;
 import java.io.IOException;
 import java.util.*;
 import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * Implements the coprocessor environment and runtime support for coprocessors
@@ -92,16 +95,6 @@ public class RegionCoprocessorHost
     }
   }
 
-  public static final Pattern CP_KEY_PATTERN = Pattern.compile
-      ("coprocessor\\$([0-9]+)", Pattern.CASE_INSENSITIVE);
-  public static final Pattern CP_VALUE_PATTERN =
-      Pattern.compile("([^\\|]*)\\|([^\\|]+)\\|[\\s]*([\\d]*)[\\s]*(\\|.*)?");
-
-  public static final String PARAMETER_KEY_PATTERN = "[^=,]+";
-  public static final String PARAMETER_VALUE_PATTERN = "[^,]+";
-  public static final Pattern CFG_SPEC_MATCH = Pattern.compile(
-      "(" + PARAMETER_KEY_PATTERN + ")=(" + PARAMETER_VALUE_PATTERN  + "),?");
-
   /** The region server services */
   RegionServerServices rsServices;
   /** The region */
@@ -123,6 +116,11 @@ public class RegionCoprocessorHost
     // load system default cp's from configuration.
     loadSystemCoprocessors(conf, REGION_COPROCESSOR_CONF_KEY);
 
+    // load system default cp's for user tables from configuration.
+    if (!HTableDescriptor.isMetaTable(region.getRegionInfo().getTableName())) {
+      loadSystemCoprocessors(conf, USER_REGION_COPROCESSOR_CONF_KEY);
+    }
+
     // load Coprocessor From HDFS
     loadTableCoprocessors(conf);
   }
@@ -135,10 +133,10 @@ public class RegionCoprocessorHost
         region.getTableDesc().getValues().entrySet()) {
       String key = Bytes.toString(e.getKey().get()).trim();
       String spec = Bytes.toString(e.getValue().get()).trim();
-      if (CP_KEY_PATTERN.matcher(key).matches()) {
+      if (HConstants.CP_HTD_ATTR_KEY_PATTERN.matcher(key).matches()) {
         // found one
         try {
-          Matcher matcher = CP_VALUE_PATTERN.matcher(spec);
+          Matcher matcher = HConstants.CP_HTD_ATTR_VALUE_PATTERN.matcher(spec);
           if (matcher.matches()) {
             // jar file path can be empty if the cp class can be loaded
             // from class loader.
@@ -156,7 +154,7 @@ public class RegionCoprocessorHost
             if (cfgSpec != null) {
               cfgSpec = cfgSpec.substring(cfgSpec.indexOf('|') + 1);
               Configuration newConf = HBaseConfiguration.create(conf);
-              Matcher m = CFG_SPEC_MATCH.matcher(cfgSpec);
+              Matcher m = HConstants.CP_HTD_ATTR_VALUE_PARAM_PATTERN.matcher(cfgSpec);
               while (m.find()) {
                 newConf.set(m.group(1), m.group(2));
               }
@@ -261,15 +259,43 @@ public class RegionCoprocessorHost
   }
 
   /**
-   * Invoked before a region is compacted.
-   * @param willSplit true if the compaction is about to trigger a split
+   * Called prior to selecting the {@link StoreFile}s for compaction from
+   * the list of currently available candidates.
+   * @param store The store where compaction is being requested
+   * @param candidates The currently available store files
+   * @return If {@code true}, skip the normal selection process and use the current list
    */
-  public void preCompact(boolean willSplit) {
+  public boolean preCompactSelection(Store store, List<StoreFile> candidates) {
+    ObserverContext<RegionCoprocessorEnvironment> ctx = null;
+    boolean bypass = false;
+    for (RegionEnvironment env: coprocessors) {
+      if (env.getInstance() instanceof RegionObserver) {
+        ctx = ObserverContext.createAndPrepare(env, ctx);
+        ((RegionObserver)env.getInstance()).preCompactSelection(
+            ctx, store, candidates);
+        bypass |= ctx.shouldBypass();
+        if (ctx.shouldComplete()) {
+          break;
+        }
+      }
+    }
+    return bypass;
+  }
+
+  /**
+   * Called after the {@link StoreFile}s to be compacted have been selected
+   * from the available candidates.
+   * @param store The store where compaction is being requested
+   * @param selected The store files selected to compact
+   */
+  public void postCompactSelection(Store store,
+      ImmutableList<StoreFile> selected) {
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
     for (RegionEnvironment env: coprocessors) {
       if (env.getInstance() instanceof RegionObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
-        ((RegionObserver)env.getInstance()).preCompact(ctx, willSplit);
+        ((RegionObserver)env.getInstance()).postCompactSelection(
+            ctx, store, selected);
         if (ctx.shouldComplete()) {
           break;
         }
@@ -278,15 +304,38 @@ public class RegionCoprocessorHost
   }
 
   /**
-   * Invoked after a region is compacted.
-   * @param willSplit true if the compaction is about to trigger a split
+   * Called prior to rewriting the store files selected for compaction
+   * @param store the store being compacted
+   * @param scanner the scanner used to read store data during compaction
    */
-  public void postCompact(boolean willSplit) {
+  public InternalScanner preCompact(Store store, InternalScanner scanner) {
+    ObserverContext<RegionCoprocessorEnvironment> ctx = null;
+    boolean bypass = false;
+    for (RegionEnvironment env: coprocessors) {
+      if (env.getInstance() instanceof RegionObserver) {
+        ctx = ObserverContext.createAndPrepare(env, ctx);
+        scanner = ((RegionObserver)env.getInstance()).preCompact(
+            ctx, store, scanner);
+        bypass |= ctx.shouldBypass();
+        if (ctx.shouldComplete()) {
+          break;
+        }
+      }
+    }
+    return bypass ? null : scanner;
+  }
+
+  /**
+   * Called after the store compaction has completed.
+   * @param store the store being compacted
+   * @param resultFile the new store file written during compaction
+   */
+  public void postCompact(Store store, StoreFile resultFile) {
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
     for (RegionEnvironment env: coprocessors) {
       if (env.getInstance() instanceof RegionObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
-        ((RegionObserver)env.getInstance()).postCompact(ctx, willSplit);
+        ((RegionObserver)env.getInstance()).postCompact(ctx, store, resultFile);
         if (ctx.shouldComplete()) {
           break;
         }
@@ -804,9 +853,9 @@ public class RegionCoprocessorHost
    * bypassed, false otherwise
    * @exception IOException Exception
    */
-  public InternalScanner preScannerOpen(Scan scan) throws IOException {
+  public RegionScanner preScannerOpen(Scan scan) throws IOException {
     boolean bypass = false;
-    InternalScanner s = null;
+    RegionScanner s = null;
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
     for (RegionEnvironment env: coprocessors) {
       if (env.getInstance() instanceof RegionObserver) {
@@ -827,7 +876,7 @@ public class RegionCoprocessorHost
    * @return the scanner instance to use
    * @exception IOException Exception
    */
-  public InternalScanner postScannerOpen(final Scan scan, InternalScanner s)
+  public RegionScanner postScannerOpen(final Scan scan, RegionScanner s)
       throws IOException {
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
     for (RegionEnvironment env: coprocessors) {

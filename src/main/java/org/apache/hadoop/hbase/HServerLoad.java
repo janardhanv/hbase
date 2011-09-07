@@ -40,11 +40,15 @@ implements WritableComparable<HServerLoad> {
   // Empty load instance.
   public static final HServerLoad EMPTY_HSERVERLOAD = new HServerLoad();
 
-  /** Number of requests since last report
+  /** Number of requests per second since last report.
    */
   // TODO: Instead build this up out of region counters.
   private int numberOfRequests = 0;
 
+  /** Total Number of requests from the start of the region server.
+   */
+  private int totalNumberOfRequests = 0;
+  
   /** the amount of used heap, in MB */
   private int usedHeapMB = 0;
 
@@ -93,6 +97,10 @@ implements WritableComparable<HServerLoad> {
     private int readRequestsCount;
     /** the current total write requests made to region */
     private int writeRequestsCount;
+    /** the total compacting key values in currently running compaction */
+    private long totalCompactingKVs;
+    /** the completed count of key values in currently running compaction */
+    private long currentCompactedKVs;
 
     /** The current total size of root-level indexes for the region, in KB. */
     private int rootIndexSizeKB;
@@ -117,11 +125,14 @@ implements WritableComparable<HServerLoad> {
      * @param name
      * @param stores
      * @param storefiles
+     * @param storeUncompressedSizeMB
      * @param storefileSizeMB
      * @param memstoreSizeMB
      * @param storefileIndexSizeMB
      * @param readRequestsCount
      * @param writeRequestsCount
+     * @param totalCompactingKVs
+     * @param currentCompactedKVs
      */
     public RegionLoad(final byte[] name, final int stores,
         final int storefiles, final int storeUncompressedSizeMB,
@@ -129,7 +140,8 @@ implements WritableComparable<HServerLoad> {
         final int memstoreSizeMB, final int storefileIndexSizeMB,
         final int rootIndexSizeKB, final int totalStaticIndexSizeKB,
         final int totalStaticBloomSizeKB,
-        final int readRequestsCount, final int writeRequestsCount) {
+        final int readRequestsCount, final int writeRequestsCount,
+        final long totalCompactingKVs, final long currentCompactedKVs) {
       this.name = name;
       this.stores = stores;
       this.storefiles = storefiles;
@@ -142,6 +154,8 @@ implements WritableComparable<HServerLoad> {
       this.totalStaticBloomSizeKB = totalStaticBloomSizeKB;
       this.readRequestsCount = readRequestsCount;
       this.writeRequestsCount = writeRequestsCount;
+      this.totalCompactingKVs = totalCompactingKVs;
+      this.currentCompactedKVs = currentCompactedKVs;
     }
 
     // Getters
@@ -194,7 +208,7 @@ implements WritableComparable<HServerLoad> {
     public int getStorefileIndexSizeMB() {
       return storefileIndexSizeMB;
     }
-    
+
     /**
      * @return the number of requests made to region
      */
@@ -214,6 +228,20 @@ implements WritableComparable<HServerLoad> {
      */
     public long getWriteRequestsCount() {
       return writeRequestsCount;
+    }
+
+    /**
+     * @return the total number of kvs in current compaction
+     */
+    public long getTotalCompactingKVs() {
+      return totalCompactingKVs;
+    }
+
+    /**
+     * @return the number of already compacted kvs in current compaction
+     */
+    public long getCurrentCompactedKVs() {
+      return currentCompactedKVs;
     }
 
     // Setters
@@ -268,6 +296,21 @@ implements WritableComparable<HServerLoad> {
       this.writeRequestsCount = requestsCount;
     }
 
+    /**
+     * @param totalCompactingKVs the number of kvs total in current compaction
+     */
+    public void setTotalCompactingKVs(long totalCompactingKVs) {
+      this.totalCompactingKVs = totalCompactingKVs;
+    }
+
+    /**
+     * @param currentCompactedKVs the number of kvs already compacted in
+     * current compaction
+     */
+    public void setCurrentCompactedKVs(long currentCompactedKVs) {
+      this.currentCompactedKVs = currentCompactedKVs;
+    }
+
     // Writable
     public void readFields(DataInput in) throws IOException {
       super.readFields(in);
@@ -287,6 +330,8 @@ implements WritableComparable<HServerLoad> {
       this.rootIndexSizeKB = in.readInt();
       this.totalStaticIndexSizeKB = in.readInt();
       this.totalStaticBloomSizeKB = in.readInt();
+      this.totalCompactingKVs = in.readLong();
+      this.currentCompactedKVs = in.readLong();
     }
 
     public void write(DataOutput out) throws IOException {
@@ -305,6 +350,8 @@ implements WritableComparable<HServerLoad> {
       out.writeInt(rootIndexSizeKB);
       out.writeInt(totalStaticIndexSizeKB);
       out.writeInt(totalStaticBloomSizeKB);
+      out.writeLong(totalCompactingKVs);
+      out.writeLong(currentCompactedKVs);
     }
 
     /**
@@ -312,9 +359,9 @@ implements WritableComparable<HServerLoad> {
      */
     @Override
     public String toString() {
-      StringBuilder sb = Strings.appendKeyValue(new StringBuilder(), "stores",
+      StringBuilder sb = Strings.appendKeyValue(new StringBuilder(), "numberOfStores",
         Integer.valueOf(this.stores));
-      sb = Strings.appendKeyValue(sb, "storefiles",
+      sb = Strings.appendKeyValue(sb, "numberOfStorefiles",
         Integer.valueOf(this.storefiles));
       sb = Strings.appendKeyValue(sb, "storefileUncompressedSizeMB",
         Integer.valueOf(this.storeUncompressedSizeMB));
@@ -323,7 +370,7 @@ implements WritableComparable<HServerLoad> {
       if (this.storeUncompressedSizeMB != 0) {
         sb = Strings.appendKeyValue(sb, "compressionRatio",
             String.format("%.4f", (float)this.storefileSizeMB/
-                (float)this.storeUncompressedSizeMB));        
+                (float)this.storeUncompressedSizeMB));
       }
       sb = Strings.appendKeyValue(sb, "memstoreSizeMB",
         Integer.valueOf(this.memstoreSizeMB));
@@ -339,6 +386,17 @@ implements WritableComparable<HServerLoad> {
           Integer.valueOf(this.totalStaticIndexSizeKB));
       sb = Strings.appendKeyValue(sb, "totalStaticBloomSizeKB",
         Integer.valueOf(this.totalStaticBloomSizeKB));
+      sb = Strings.appendKeyValue(sb, "totalCompactingKVs",
+          Long.valueOf(this.totalCompactingKVs));
+      sb = Strings.appendKeyValue(sb, "currentCompactedKVs",
+          Long.valueOf(this.currentCompactedKVs));
+      float compactionProgressPct = Float.NaN;
+      if( this.totalCompactingKVs > 0 ) {
+        compactionProgressPct = Float.valueOf(
+            this.currentCompactedKVs / this.totalCompactingKVs);
+      }
+      sb = Strings.appendKeyValue(sb, "compactionProgressPct",
+          compactionProgressPct);
       return sb.toString();
     }
   }
@@ -367,12 +425,14 @@ implements WritableComparable<HServerLoad> {
    * @param usedHeapMB
    * @param maxHeapMB
    */
-  public HServerLoad(final int numberOfRequests, final int usedHeapMB,
-      final int maxHeapMB, final Map<byte[], RegionLoad> regionLoad) {
+  public HServerLoad(final int totalNumberOfRequests,
+      final int numberOfRequests, final int usedHeapMB, final int maxHeapMB,
+      final Map<byte[], RegionLoad> regionLoad) {
     this.numberOfRequests = numberOfRequests;
     this.usedHeapMB = usedHeapMB;
     this.maxHeapMB = maxHeapMB;
     this.regionLoad = regionLoad;
+    this.totalNumberOfRequests = totalNumberOfRequests;
   }
 
   /**
@@ -380,7 +440,8 @@ implements WritableComparable<HServerLoad> {
    * @param hsl the template HServerLoad
    */
   public HServerLoad(final HServerLoad hsl) {
-    this(hsl.numberOfRequests, hsl.usedHeapMB, hsl.maxHeapMB, hsl.getRegionsLoad());
+    this(hsl.totalNumberOfRequests, hsl.numberOfRequests, hsl.usedHeapMB,
+        hsl.maxHeapMB, hsl.getRegionsLoad());
     for (Map.Entry<byte[], RegionLoad> e : hsl.regionLoad.entrySet()) {
       this.regionLoad.put(e.getKey(), e.getValue());
     }
@@ -419,13 +480,13 @@ implements WritableComparable<HServerLoad> {
   public String toString(int msgInterval) {
     int numberOfRegions = this.regionLoad.size();
     StringBuilder sb = new StringBuilder();
-    sb = Strings.appendKeyValue(sb, "requests",
+    sb = Strings.appendKeyValue(sb, "requestsPerSecond",
       Integer.valueOf(numberOfRequests/msgInterval));
-    sb = Strings.appendKeyValue(sb, "regions",
+    sb = Strings.appendKeyValue(sb, "numberOfOnlineRegions",
       Integer.valueOf(numberOfRegions));
-    sb = Strings.appendKeyValue(sb, "usedHeap",
+    sb = Strings.appendKeyValue(sb, "usedHeapMB",
       Integer.valueOf(this.usedHeapMB));
-    sb = Strings.appendKeyValue(sb, "maxHeap", Integer.valueOf(maxHeapMB));
+    sb = Strings.appendKeyValue(sb, "maxHeapMB", Integer.valueOf(maxHeapMB));
     return sb.toString();
   }
 
@@ -456,10 +517,17 @@ implements WritableComparable<HServerLoad> {
   }
 
   /**
-   * @return the numberOfRequests
+   * @return the numberOfRequests per second.
    */
   public int getNumberOfRequests() {
     return numberOfRequests;
+  }
+  
+  /**
+   * @return the numberOfRequests
+   */
+  public int getTotalNumberOfRequests() {
+    return totalNumberOfRequests;
   }
 
   /**
@@ -538,6 +606,7 @@ implements WritableComparable<HServerLoad> {
       rl.readFields(in);
       regionLoad.put(rl.getName(), rl);
     }
+    totalNumberOfRequests = in.readInt();
   }
 
   public void write(DataOutput out) throws IOException {
@@ -549,6 +618,7 @@ implements WritableComparable<HServerLoad> {
     out.writeInt(this.regionLoad.size());
     for (RegionLoad rl: regionLoad.values())
       rl.write(out);
+    out.writeInt(totalNumberOfRequests);
   }
 
   // Comparable

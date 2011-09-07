@@ -32,10 +32,8 @@ import java.util.TreeMap;
 import java.util.regex.Matcher;
 
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hbase.coprocessor.Coprocessor;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
 import org.apache.hadoop.hbase.io.hfile.Compression;
-import org.apache.hadoop.hbase.regionserver.RegionCoprocessorHost;
 import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -537,6 +535,52 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
   }
 
   /**
+   * @return Name of this table and then a map of all of the column family
+   * descriptors (with only the non-default column family attributes)
+   */
+  public String toStringCustomizedValues() {
+    StringBuilder s = new StringBuilder();
+    s.append('{');
+    s.append(HConstants.NAME);
+    s.append(" => '");
+    s.append(Bytes.toString(name));
+    s.append("'");
+    for (Map.Entry<ImmutableBytesWritable, ImmutableBytesWritable> e:
+        values.entrySet()) {
+      String key = Bytes.toString(e.getKey().get());
+      String value = Bytes.toString(e.getValue().get());
+      if (key == null) {
+        continue;
+      }
+      String upperCase = key.toUpperCase();
+      if (upperCase.equals(IS_ROOT) || upperCase.equals(IS_META)) {
+        // Skip. Don't bother printing out read-only values if false.
+        if (value.toLowerCase().equals(Boolean.FALSE.toString())) {
+          continue;
+        }
+      }
+      s.append(", ");
+      s.append(Bytes.toString(e.getKey().get()));
+      s.append(" => '");
+      s.append(Bytes.toString(e.getValue().get()));
+      s.append("'");
+    }
+    s.append(", ");
+    s.append(FAMILIES);
+    s.append(" => [");
+    int size = families.values().size();
+    int i = 0;
+    for(HColumnDescriptor hcd : families.values()) {
+      s.append(hcd.toStringCustomizedValues());
+      i++;
+      if( i != size)
+        s.append(", ");
+    }
+    s.append("]}");
+    return s.toString();
+  }
+
+  /**
    * @see java.lang.Object#equals(java.lang.Object)
    */
   @Override
@@ -722,14 +766,13 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
       throw new IOException("Coprocessor " + className + " already exists.");
     }
     // validate parameter kvs
-    //String kvString = "";
     StringBuilder kvString = new StringBuilder();
     if (kvs != null) {
       for (Map.Entry<String, String> e: kvs.entrySet()) {
-        if (!e.getKey().matches(RegionCoprocessorHost.PARAMETER_KEY_PATTERN)) {
+        if (!e.getKey().matches(HConstants.CP_HTD_ATTR_VALUE_PARAM_KEY_PATTERN)) {
           throw new IOException("Illegal parameter key = " + e.getKey());
         }
-        if (!e.getValue().matches(RegionCoprocessorHost.PARAMETER_VALUE_PATTERN)) {
+        if (!e.getValue().matches(HConstants.CP_HTD_ATTR_VALUE_PARAM_VALUE_PATTERN)) {
           throw new IOException("Illegal parameter (" + e.getKey() +
               ") value = " + e.getValue());
         }
@@ -748,7 +791,7 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
     for (Map.Entry<ImmutableBytesWritable, ImmutableBytesWritable> e:
         this.values.entrySet()) {
       keyMatcher =
-          RegionCoprocessorHost.CP_KEY_PATTERN.matcher(
+          HConstants.CP_HTD_ATTR_KEY_PATTERN.matcher(
               Bytes.toString(e.getKey().get()));
       if (!keyMatcher.matches()) {
         continue;
@@ -771,13 +814,13 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
     for (Map.Entry<ImmutableBytesWritable, ImmutableBytesWritable> e:
         this.values.entrySet()) {
       keyMatcher =
-          RegionCoprocessorHost.CP_KEY_PATTERN.matcher(
+          HConstants.CP_HTD_ATTR_KEY_PATTERN.matcher(
               Bytes.toString(e.getKey().get()));
       if (!keyMatcher.matches()) {
         continue;
       }
       valueMatcher =
-        RegionCoprocessorHost.CP_VALUE_PATTERN.matcher(
+        HConstants.CP_HTD_ATTR_VALUE_PATTERN.matcher(
             Bytes.toString(e.getValue().get()));
       if (!valueMatcher.matches()) {
         continue;

@@ -42,7 +42,7 @@ import org.apache.hadoop.hbase.*;
 import org.apache.hadoop.hbase.regionserver.wal.HLog.Reader;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
-import org.apache.hadoop.hbase.coprocessor.Coprocessor;
+import org.apache.hadoop.hbase.Coprocessor;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
 import org.apache.hadoop.hbase.coprocessor.SampleRegionWALObserver;
 import org.apache.hadoop.hdfs.DFSClient;
@@ -64,7 +64,8 @@ public class TestHLog  {
   {
     ((Log4JLogger)DataNode.LOG).getLogger().setLevel(Level.ALL);
     ((Log4JLogger)LeaseManager.LOG).getLogger().setLevel(Level.ALL);
-    ((Log4JLogger)FSNamesystem.LOG).getLogger().setLevel(Level.ALL);
+    ((Log4JLogger)LogFactory.getLog("org.apache.hadoop.hdfs.server.namenode.FSNamesystem"))
+      .getLogger().setLevel(Level.ALL);
     ((Log4JLogger)DFSClient.LOG).getLogger().setLevel(Level.ALL);
     ((Log4JLogger)HLog.LOG).getLogger().setLevel(Level.ALL);
   }
@@ -408,7 +409,8 @@ public class TestHLog  {
       public Exception exception = null;
       public void run() {
           try {
-            FSUtils.recoverFileLease(recoveredFs, walPath, rlConf);
+            FSUtils.getInstance(fs, rlConf)
+              .recoverFileLease(recoveredFs, walPath, rlConf);
           } catch (IOException e) {
             exception = e;
           }
@@ -593,7 +595,7 @@ public class TestHLog  {
     final byte [] tableName = Bytes.toBytes("tablename");
     final byte [] row = Bytes.toBytes("row");
     HLog log = new HLog(fs, dir, oldLogDir, conf);
-    DumbWALObserver visitor = new DumbWALObserver();
+    DumbWALActionsListener visitor = new DumbWALActionsListener();
     log.registerWALActionsListener(visitor);
     long timestamp = System.currentTimeMillis();
     HTableDescriptor htd = new HTableDescriptor();
@@ -691,7 +693,7 @@ public class TestHLog  {
     }
   }
 
-  static class DumbWALObserver implements WALObserver {
+  static class DumbWALActionsListener implements WALActionsListener {
     int increments = 0;
 
     @Override

@@ -63,7 +63,6 @@ import org.apache.hadoop.hbase.util.ByteBufferOutputStream;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
-import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.util.StringUtils;
@@ -93,15 +92,7 @@ public abstract class HBaseServer implements RpcServer {
    */
   private static final int DEFAULT_MAX_QUEUE_SIZE_PER_HANDLER = 10;
 
-  private static final String WARN_RESPONSE_SIZE =
-      "hbase.ipc.warn.response.size";
-
-  /** Default value for above param */
-  private static final int DEFAULT_WARN_RESPONSE_SIZE = 100 * 1024 * 1024;
-
   static final int BUFFER_INITIAL_SIZE = 1024;
-
-  protected final int warnResponseSize;
 
   private static final String WARN_DELAYED_CALLS =
       "hbase.ipc.warn.delayedrpc.number";
@@ -114,6 +105,8 @@ public abstract class HBaseServer implements RpcServer {
 
   public static final Log LOG =
     LogFactory.getLog("org.apache.hadoop.ipc.HBaseServer");
+  protected static final Log TRACELOG =
+      LogFactory.getLog("org.apache.hadoop.ipc.HBaseServer.trace");
 
   protected static final ThreadLocal<RpcServer> SERVER =
     new ThreadLocal<RpcServer>();
@@ -333,11 +326,6 @@ public abstract class HBaseServer implements RpcServer {
         }
       } catch (IOException e) {
         LOG.warn("Error sending response to call: ", e);
-      }
-
-      if (buf.size() > warnResponseSize) {
-        LOG.warn("responseTooLarge for: "+this+": Size: "
-            + StringUtils.humanReadableInt(buf.size()));
       }
 
       this.response = buf.getByteBuffer();
@@ -1164,7 +1152,7 @@ public abstract class HBaseServer implements RpcServer {
       int id = dis.readInt();                    // try to read an id
 
       if (LOG.isDebugEnabled())
-        LOG.debug(" got #" + id);
+        LOG.debug(" got call #" + id + ", " + buf.length + " bytes");
 
       Writable param = ReflectionUtils.newInstance(paramClass, conf);           // read param
       param.readFields(dis);
@@ -1350,8 +1338,6 @@ public abstract class HBaseServer implements RpcServer {
     this.tcpNoDelay = conf.getBoolean("ipc.server.tcpnodelay", false);
     this.tcpKeepAlive = conf.getBoolean("ipc.server.tcpkeepalive", true);
 
-    this.warnResponseSize = conf.getInt(WARN_RESPONSE_SIZE,
-                                        DEFAULT_WARN_RESPONSE_SIZE);
     this.warnDelayedCalls = conf.getInt(WARN_DELAYED_CALLS,
                                         DEFAULT_WARN_DELAYED_CALLS);
     this.delayedCalls = new AtomicInteger(0);

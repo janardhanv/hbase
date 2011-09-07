@@ -28,7 +28,7 @@ import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.security.TokenInfo;
 import org.apache.hadoop.hbase.security.KerberosInfo;
-import org.apache.hadoop.ipc.VersionedProtocol;
+import org.apache.hadoop.hbase.util.Pair;
 
 /**
  * Clients interact with the HMasterInterface to gain access to meta-level
@@ -59,9 +59,9 @@ public interface HMasterInterface extends VersionedProtocol {
   // Admin tools would use these cmds
 
   /**
-   * Creates a new table.  If splitKeys are specified, then the table will be
-   * created with an initial set of multiple regions.  If splitKeys is null,
-   * the table will be created with a single region.
+   * Creates a new table asynchronously.  If splitKeys are specified, then the
+   * table will be created with an initial set of multiple regions.
+   * If splitKeys is null, the table will be created with a single region.
    * @param desc table descriptor
    * @param splitKeys
    * @throws IOException
@@ -75,6 +75,19 @@ public interface HMasterInterface extends VersionedProtocol {
    * @throws IOException e
    */
   public void deleteTable(final byte [] tableName) throws IOException;
+
+  /**
+   * Used by the client to get the number of regions that have received the
+   * updated schema
+   *
+   * @param tableName
+   * @return Pair indicating the number of regions updated Pair.getFirst() is the
+   *         regions that are yet to be updated Pair.getSecond() is the total number
+   *         of regions of the table
+   * @throws IOException
+   */
+  public Pair<Integer, Integer> getAlterStatus(byte[] tableName)
+      throws IOException;
 
   /**
    * Adds a column to the specified table

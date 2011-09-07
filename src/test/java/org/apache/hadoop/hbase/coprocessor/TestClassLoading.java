@@ -27,6 +27,8 @@ import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MiniHBaseCluster;
+import org.apache.hadoop.hbase.CoprocessorEnvironment;
+import org.apache.hadoop.hbase.Coprocessor;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
@@ -138,8 +140,13 @@ public class TestClassLoading {
     // only add hbase classes to classpath. This is a little bit tricky: assume
     // the classpath is {hbaseSrc}/target/classes.
     String currentDir = new File(".").getAbsolutePath();
-    options.add(currentDir + Path.SEPARATOR + "target"+ Path.SEPARATOR +
-      "classes");
+    String classpath =
+        currentDir + Path.SEPARATOR + "target"+ Path.SEPARATOR + "classes" +
+        System.getProperty("path.separator") +
+        System.getProperty("surefire.test.class.path");
+    options.add(classpath);
+    LOG.debug("Setting classpath to: "+classpath);
+
     JavaCompiler.CompilationTask task = compiler.getTask(null, fm, null,
       options, null, cu);
     assertTrue("Compile file " + sourceCodeFile + " failed.", task.call());

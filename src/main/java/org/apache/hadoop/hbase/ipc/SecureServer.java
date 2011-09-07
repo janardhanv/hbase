@@ -153,11 +153,6 @@ public abstract class SecureServer extends HBaseServer {
         LOG.warn("Error sending response to call: ", e);
       }
 
-      if (buf.size() > warnResponseSize) {
-        LOG.warn("responseTooLarge for: "+this+": Size: "
-            + StringUtils.humanReadableInt(buf.size()));
-      }
-
       this.response = buf.getByteBuffer();
     }
 

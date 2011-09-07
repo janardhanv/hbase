@@ -42,12 +42,13 @@ import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
+import org.apache.hadoop.hbase.io.hfile.BlockCacheColumnFamilySummary;
 import org.apache.hadoop.hbase.regionserver.RegionOpeningState;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.security.TokenInfo;
 import org.apache.hadoop.hbase.security.KerberosInfo;
 import org.apache.hadoop.ipc.RemoteException;
-import org.apache.hadoop.ipc.VersionedProtocol;
+import org.apache.hadoop.hbase.ipc.VersionedProtocol;
 
 /**
  * Clients interact with HRegionServers using a handle to the HRegionInterface.
@@ -370,6 +371,21 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
    */
   public boolean closeRegion(final HRegionInfo region, final boolean zk)
   throws IOException;
+  
+  /**
+   * Closes the region in the RS with the specified encoded regionName and will
+   * use or not use ZK during the close according to the specified flag. Note
+   * that the encoded region name is in byte format.
+   * 
+   * @param encodedRegionName
+   *          in bytes
+   * @param zk
+   *          true if to use zookeeper, false if need not.
+   * @return true if region is closed, false if not.
+   * @throws IOException
+   */
+  public boolean closeRegion(byte[] encodedRegionName, final boolean zk)
+      throws IOException;
 
   // Region administrative methods
 
@@ -492,4 +508,14 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
      final byte[] family, final byte[] qualifier, final CompareOp compareOp,
      final WritableByteArrayComparable comparator, final Delete delete)
      throws IOException;
+  
+  /**
+   * Performs a BlockCache summary and returns a List of BlockCacheColumnFamilySummary objects.
+   * This method could be fairly heavyweight in that it evaluates the entire HBase file-system
+   * against what is in the RegionServer BlockCache. 
+   * 
+   * @return BlockCacheColumnFamilySummary
+   * @throws IOException exception
+   */
+  public List<BlockCacheColumnFamilySummary> getBlockCacheColumnFamilySummaries() throws IOException;
 }

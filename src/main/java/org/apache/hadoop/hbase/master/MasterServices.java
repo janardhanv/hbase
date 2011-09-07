@@ -68,8 +68,8 @@ public interface MasterServices extends Server {
    * @param sync If true, waits for all initial regions to be assigned before
    *     returning
    */
-  public void createTable(HTableDescriptor desc, byte [][] splitKeys,
-      boolean sync) throws IOException;
+  public void createTable(HTableDescriptor desc, byte [][] splitKeys)
+      throws IOException;
 
   /**
    * @return Return table descriptors implementation.

@@ -214,7 +214,7 @@ to ensure well-formedness of your document after an edit session.
     needed to add a durable sync. Use the released version of CDH3 at least (They
     have just posted an update).  MapR includes a commercial, reimplementation of HDFS.
     It has a durable sync as well as some other interesting features that are not
-    yet in Apache Hadoop.  Their <link xlink:href="http://www.mapr.com/products/download.html">M3</link>
+    yet in Apache Hadoop.  Their <link xlink:href="http://www.mapr.com/products/mapr-editions/m3-edition">M3</link>
     product is free to use and unlimited.
     </para>
 
@@ -341,7 +341,7 @@ to ensure well-formedness of your document after an edit session.
           For example, adding the properties below to your
           <filename>hbase-site.xml</filename> says that HBase should use the
           <filename>/hbase</filename> directory in the HDFS whose namenode is
-          at port 9000 on your local machine, and that it should run with one
+          at port 8020 on your local machine, and that it should run with one
           replica only (recommended for pseudo-distributed mode):</para>
 
           <programlisting>
@@ -349,7 +349,7 @@ to ensure well-formedness of your document after an edit session.
   ...
   &lt;property&gt;
     &lt;name&gt;hbase.rootdir&lt;/name&gt;
-    &lt;value&gt;hdfs://localhost:9000/hbase&lt;/value&gt;
+    &lt;value&gt;hdfs://localhost:8020/hbase&lt;/value&gt;
     &lt;description&gt;The directory shared by RegionServers.
     &lt;/description&gt;
   &lt;/property&gt;
@@ -396,7 +396,7 @@ to ensure well-formedness of your document after an edit session.
           <varname>hbase.rootdir</varname> at the appropriate HDFS NameNode
           and location in HDFS where you would like HBase to write data. For
           example, if you namenode were running at namenode.example.org on
-          port 9000 and you wanted to home your HBase in HDFS at
+          port 8020 and you wanted to home your HBase in HDFS at
           <filename>/hbase</filename>, make the following
           configuration.</para>
 
@@ -405,7 +405,7 @@ to ensure well-formedness of your document after an edit session.
   ...
   &lt;property&gt;
     &lt;name&gt;hbase.rootdir&lt;/name&gt;
-    &lt;value&gt;hdfs://namenode.example.org:9000/hbase&lt;/value&gt;
+    &lt;value&gt;hdfs://namenode.example.org:8020/hbase&lt;/value&gt;
     &lt;description&gt;The directory shared by RegionServers.
     &lt;/description&gt;
   &lt;/property&gt;
@@ -856,7 +856,7 @@ config.set("hbase.zookeeper.quorum", "localhost");  // Here we are running zooke
   &lt;/property&gt;
   &lt;property&gt;
     &lt;name&gt;hbase.rootdir&lt;/name&gt;
-    &lt;value&gt;hdfs://example0:9000/hbase&lt;/value&gt;
+    &lt;value&gt;hdfs://example0:8020/hbase&lt;/value&gt;
     &lt;description&gt;The directory shared by RegionServers.
     &lt;/description&gt;
   &lt;/property&gt;
@@ -1076,9 +1076,50 @@ script to perform a network IO safe rolling split
 of all regions.
 </para>
       </section>
-
+      <section xml:id="managed.compactions"><title>Managed Compactions</title>
+      <para>A common administrative technique is to manage major compactions manually, rather than letting 
+      HBase do it.  By default, <varname>HConstants.MAJOR_COMPACTION_PERIOD</varname> is one day and major compactions
+      may kick in when you least desire it - especially on a busy system.  To "turn off" automatic major compactions set
+      the value to <varname>Long.MAX_VALUE</varname>. 
+      </para>
+      <para>It is important to stress that major compactions are absolutely necessary for StoreFile cleanup, the only variant is when
+      they occur.  They can be administered through the HBase shell, or via 
+      <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/HBaseAdmin.html#majorCompact%28java.lang.String%29">HBaseAdmin</link>.
+      </para>
+      </section>
+      
       </section>
 
       </section>
 
+	  <section xml:id="config.bloom">
+	    <title>Bloom Filter Configuration</title>
+        <section>
+        <title><varname>io.hfile.bloom.enabled</varname> global kill
+        switch</title>
+
+        <para><code>io.hfile.bloom.enabled</code> in
+        <classname>Configuration</classname> serves as the kill switch in case
+        something goes wrong. Default = <varname>true</varname>.</para>
+        </section>
+
+        <section>
+        <title><varname>io.hfile.bloom.error.rate</varname></title>
+
+        <para><varname>io.hfile.bloom.error.rate</varname> = average false
+        positive rate. Default = 1%. Decrease rate by ½ (e.g. to .5%) == +1
+        bit per bloom entry.</para>
+        </section>
+
+        <section>
+        <title><varname>io.hfile.bloom.max.fold</varname></title>
+
+        <para><varname>io.hfile.bloom.max.fold</varname> = guaranteed minimum
+        fold rate. Most people should leave this alone. Default = 7, or can
+        collapse to at least 1/128th of original size. See the
+        <emphasis>Development Process</emphasis> section of the document <link
+        xlink:href="https://issues.apache.org/jira/secure/attachment/12444007/Bloom_Filters_in_HBase.pdf">BloomFilters
+        in HBase</link> for more on what this option means.</para>
+        </section>
+      </section>
   </chapter>

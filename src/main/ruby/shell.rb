@@ -230,6 +230,9 @@ Shell.load_command_group(
     revoke
     user_permission
     list
+    show_filters
+    alter_status
+    alter_async
   ]
 )
 

@@ -25,6 +25,8 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.Coprocessor;
+import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.client.*;
@@ -49,6 +51,8 @@ import java.util.*;
 public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
   public static final String REGION_COPROCESSOR_CONF_KEY =
       "hbase.coprocessor.region.classes";
+  public static final String USER_REGION_COPROCESSOR_CONF_KEY =
+      "hbase.coprocessor.user.region.classes";
   public static final String MASTER_COPROCESSOR_CONF_KEY =
       "hbase.coprocessor.master.classes";
   public static final String WAL_COPROCESSOR_CONF_KEY =

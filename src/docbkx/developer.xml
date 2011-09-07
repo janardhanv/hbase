@@ -1,5 +1,5 @@
 <?xml version="1.0"?>
-    <chapter xml:id="build"
+    <chapter xml:id="developer"
       version="5.0" xmlns="http://docbook.org/ns/docbook"
       xmlns:xlink="http://www.w3.org/1999/xlink"
       xmlns:xi="http://www.w3.org/2001/XInclude"
@@ -9,7 +9,6 @@
       xmlns:db="http://docbook.org/ns/docbook">
     <title>Developing HBase</title>
     <para>This chapter will be of interest only to those developing HBase (i.e., as opposed to using it).
-    See the HBase wiki <link xlink:href="http://wiki.apache.org/hadoop/Hbase/HowToContribute">How To Contribute</link>
     </para>
     <section xml:id="repos">
       <title>HBase Repositories</title>
@@ -33,8 +32,9 @@ git clone git://git.apache.org/hbase.git
             <section xml:id="eclipse.code.formatting">
             <title>Code Formatting</title>
             <para>See <link xlink:href="https://issues.apache.org/jira/browse/HBASE-3678">HBASE-3678 Add Eclipse-based Apache Formatter to HBase Wiki</link>
-              for an Eclipse formatter to help ensure your code conforms to HBase'y coding conventsion.
+              for an Eclipse formatter to help ensure your code conforms to HBase'y coding convention.
             The issue includes instructions for loading the attached formatter.</para>
+            <para>Also, no @author tags - that's a rule.  Quality Javadoc comments are appreciated.  And include the Apache license.</para>
             </section>         
             <section xml:id="eclipse.svn">
             <title>Subversive Plugin</title>
@@ -83,6 +83,8 @@ Access restriction: The method getLong(Object, long) from the type Unsafe is not
        <title>Maven Build Commands</title>
        <para>All commands executed from the local HBase project directory.
        </para>
+       <para>Note:  use Maven 2, not Maven 3.
+       </para>
        <section xml:id="maven.build.commands.compile"> 
           <title>Compile</title>
           <programlisting>
@@ -103,17 +105,58 @@ mvn test -Dtest=TestXYZ
        </section>       
            
     </section>
-    <section xml:id="unit.tests"> 
-        <title>Unit Tests</title>
-        <para>In HBase we use <link xlink:href="http://junit.org">JUnit</link> 4.
+  
+    <section xml:id="getting.involved"> 
+        <title>Getting Involved</title>
+        <para>HBase gets better only when people contribute!
+        </para>
+        <section xml:id="mailing.list">
+          <title>Mailing Lists</title>
+          <para>Sign up for the dev-list and the user-list.  See the 
+          <link xlink:href="http://hbase.apache.org/mail-lists.html">mailing lists</link> page.
+          Posing questions - and helping to answer other people's questions - is encouraged!  
+          There are varying levels of experience on both lists so patience and politeness are encouraged (and please 
+          stay on topic.)  
+          </para>
+        </section>
+        <section xml:id="jira">
+          <title>Jira</title>
+          <para>Check for existing issues in <link xlink:href="https://issues.apache.org/jira/browse/HBASE">Jira</link>.  
+          If it's either a new feature request, enhancement, or a bug, file a ticket.
+          </para>
+          <section xml:id="jira.priorities"><title>Jira Priorities</title>
+          <para>The following is a guideline on setting Jira issue priorities:
+                <itemizedlist>
+                <listitem>Blocker: Should only be used if the issue WILL cause data loss or cluster instability reliably.</listitem>
+                <listitem>Critical: The issue described can cause data loss or cluster instability in some cases.</listitem>
+                <listitem>Major: Important but not tragic issues, like updates to the client API that will add a lot of much-needed functionality or significant
+                bugs that need to be fixed but that don't cause data loss.</listitem>
+                <listitem>Minor: Useful enhancements and annoying but not damaging bugs.</listitem> 
+                <listitem>Trivial: Useful enhancements but generally cosmetic.</listitem> 
+                </itemizedlist>  
+             </para> 
+        </section>
+       </section>
+      </section>  <!--  getting involved -->
+      
+      <section xml:id="developing">
+        <title>Developing</title>
+        <section xml:id="codelines"><title>Codelines</title>
+          <para>Most development is done on TRUNK.  However, there are branches for minor releases (e.g., 0.90.1, 0.90.2, and 0.90.3 are on the 0.90 branch).</para>
+          <para>If you have any questions on this just send an email to the dev dist-list.</para>
+        </section>
+  
+        <section xml:id="unit.tests"> 
+          <title>Unit Tests</title>
+          <para>In HBase we use <link xlink:href="http://junit.org">JUnit</link> 4.
             If you need to run miniclusters of HDFS, ZooKeeper, HBase, or MapReduce testing,
             be sure to checkout the <classname>HBaseTestingUtility</classname>.
             Alex Baranau of Sematext describes how it can be used in
             <link xlink:href="http://blog.sematext.com/2010/08/30/hbase-case-study-using-hbasetestingutility-for-local-testing-development/">HBase Case-Study: Using HBaseTestingUtility for Local Testing and Development</link> (2010).
-        </para>
-        <section xml:id="mockito">
-          <title>Mocito</title>
-          <para>Sometimes you don't need a full running server
+          </para>
+          <section xml:id="mockito">
+           <title>Mockito</title>
+           <para>Sometimes you don't need a full running server
               unit testing.  For example, some methods can make do with a
               a <classname>org.apache.hadoop.hbase.Server</classname> instance
               or a <classname>org.apache.hadoop.hbase.master.MasterServices</classname>
@@ -122,65 +165,187 @@ mvn test -Dtest=TestXYZ
               In these cases, you maybe able to get away with a mocked
               <classname>Server</classname> instance.  For example:
               <programlisting>
+              TODO...
               </programlisting>
            </para>
-        </section>
-    </section> 
+         </section>
+          <section xml:id="code.standards">
+           <title>Code Standards</title>
+           <para>See <xref linkend="eclipse.code.formatting"/> and <xref linkend="common.patch.feedback"/>.
+           </para>
+           </section>
+        </section>   <!--  unit tests  -->       
 
-    <section xml:id="getting.involved"> 
-        <title>Getting Involved</title>
-        <para>HBase gets better only when people contribute!  The following are highlights from the HBase wiki on 
-        <link xlink:href="http://wiki.apache.org/hadoop/Hbase/HowToContribute">How To Contribute</link>.
-        </para>
-        <section xml:id="mailing.list">
-          <title>Mailing Lists</title>
-          <para>Sign up for the dev-list, and the user-list too for greater coverage.  See the 
-          <link xlink:href="http://hbase.apache.org/mail-lists.html">mailing lists</link> page.
-          </para>
-        </section>
-        <section xml:id="jira">
-          <title>Jira</title>
-          <para>Check for existing issues in <link xlink:href="https://issues.apache.org/jira/browse/HBASE">Jira</link>.  
-          If it's either a new feature request, enhancement, or a bug, file a ticket.
-          </para>
-        </section>
-        <section xml:id="submitting.patches">
+      </section>  <!--  developing -->
+
+       <section xml:id="submitting.patches">
           <title>Submitting Patches</title>
           <section xml:id="submitting.patches.create">
             <title>Create Patch</title>
-          <para>Patch files can be easily generated from Eclipse, for example by selecting Team -&gt; Create Patch.
+          <para>Patch files can be easily generated from Eclipse, for example by selecting "Team -&gt; Create Patch".
+          Patches can also be created by git diff and svn diff.
           </para>
           <para>Please submit one patch-file per Jira.  For example, if multiple files are changed make sure the 
           selected resource when generating the patch is a directory.  Patch files can reflect changes in multiple files. </para>
+          <para>Make sure you review <xref linkend="eclipse.code.formatting"/> for code style. </para>
           </section>
           <section xml:id="submitting.patches.naming">
             <title>Patch File Naming</title>
           <para>The patch file should have the HBase Jira ticket in the name.  For example, if a patch was submitted for <filename>Foo.java</filename>, then
-          a patch file called <filename>Foo_HBASE_XXX.patch</filename> would be acceptable where XXX is the HBase Jira number.
+          a patch file called <filename>Foo_HBASE_XXXX.patch</filename> would be acceptable where XXXX is the HBase Jira number.
+          </para>
+          <para>If you generating from a branch, then including the target branch in the filename is advised, e.g., <filename>HBASE-XXXX-0.90.patch</filename>.
           </para>
           </section>
           <section xml:id="submitting.patches.tests">
             <title>Unit Tests</title>
-            <para>Yes, please.  Please try to include unit tests with every code patch (and especially new classes and large changes).</para>
+            <para>Yes, please.  Please try to include unit tests with every code patch (and especially new classes and large changes).
+            Make sure unit tests pass locally before submitting the patch.</para>
+            <para>Also, see <xref linkend="mockito"/>.</para>
           </section>
           <section xml:id="submitting.patches.jira">
             <title>Attach Patch to Jira</title>
-          <para>The patch should be attached to the associated Jira ticket.
+            <para>The patch should be attached to the associated Jira ticket "More Actions -&gt; Attach Files".  Make sure you click the
+            ASF license inclusion, otherwise the patch can't be considered for inclusion.
+            </para>
+            <para>Once attached to the ticket, click "Submit Patch" and 
+            the status of the ticket will change.  Committers will review submitted patches for inclusion into the codebase.  Please
+            understand that not every patch may get committed, and that feedback will likely be provided on the patch.  Fear not, though,
+            because the HBase community is helpful!
+            </para>
+         </section>
+          
+        <section xml:id="common.patch.feedback">
+            <title>Common Patch Feedback</title>
+          <para>The following items are representative of common patch feedback. Your patch process will go faster if these are
+          taken into account <emphasis>before</emphasis> submission.
           </para>
-          <para>Once attached to the ticket, click "submit patch" and 
-          the status of the ticket will change.  Committers will review submitted patches for inclusion into the codebase.  Please
-          understand that not every patch may get committed, and that feedback will likely be provided on the patch.  Fear not, though,
-          because the HBase community is helpful!
+          <para>
+          See the <link xlink:href="http://www.oracle.com/technetwork/java/codeconv-138413.html">Java coding standards</link> 
+          for more information on coding conventions in Java.
+          </para>
+          <section xml:id="common.patch.feedback.space.invaders">
+            <title>Space Invaders</title>
+            <para>Rather than do this...
+<programlisting>
+if ( foo.equals( bar ) ) {     // don't do this
+</programlisting>
+			... do this instead...        
+<programlisting>
+if (foo.equals(bar)) {
+</programlisting>
+          </para>
+          <para>Also, rather than do this...
+<programlisting>
+foo = barArray[ i ];     // don't do this
+</programlisting>
+			... do this instead...        
+<programlisting>
+foo = barArray[i];   
+</programlisting>
           </para>
           </section>
-        </section>
+          <section xml:id="common.patch.feedback.autogen">
+            <title>Auto Generated Code</title>
+            <para>Auto-generated code in Eclipse often looks like this...
+<programlisting>
+ public void readFields(DataInput arg0) throws IOException {    // don't do this
+   foo = arg0.readUTF();                                       // don't do this
+</programlisting>
+			... do this instead ...        
+<programlisting>
+ public void readFields(DataInput di) throws IOException {
+   foo = di.readUTF();
+</programlisting>
+           See the difference?  'arg0' is what Eclipse uses for arguments by default.
+           </para>
+          </section>
+          <section xml:id="common.patch.feedback.longlines">
+            <title>Long Lines</title>
+            <para>
+            Keep lines less than 80 characters.
+<programlisting>
+Bar bar = foo.veryLongMethodWithManyArguments(argument1, argument2, argument3, argument4, argument5);  // don't do this
+</programlisting>
+			... do this instead ...        
+<programlisting>
+Bar bar = foo.veryLongMethodWithManyArguments(argument1,
+ argument2, argument3,argument4, argument5); 
+</programlisting>
+           ... or this, whichever looks better ...
+<programlisting>
+Bar bar = foo.veryLongMethodWithManyArguments(
+ argument1, argument2, argument3,argument4, argument5); 
+</programlisting>
+           </para>
+          </section>
+          <section xml:id="common.patch.feedback.trailingspaces">
+            <title>Trailing Spaces</title>
+            <para>
+            This happens more than people would imagine.
+<programlisting>
+Bar bar = foo.getBar();     &lt;--- imagine there's an extra space(s) after the semicolon instead of a line break.
+</programlisting>
+            Make sure there's a line-break after the end of your code, and also avoid lines that have nothing
+            but whitespace. 
+            </para>
+         </section> 
+          <section xml:id="common.patch.feedback.writable">
+            <title>Implementing Writable</title>
+            <para>Every class returned by RegionServers must implement <code>Writable</code>.  If you
+            are creating a new class that needs to implement this interface, don't forget the default constructor.
+            </para>
+          </section>
+          <section xml:id="common.patch.feedback.javadoc">
+            <title>Javadoc</title>
+            <para>This is also a very common feedback item.  Don't forget Javadoc!
+            </para>
+          </section>
+          <section xml:id="common.patch.feedback.javadoc.defaults">
+            <title>Javadoc - Useless Defaults</title>
+            <para>Don't just leave the @param arguments the way your IDE generated them.  Don't do this...
+<programlisting>
+  /**
+   * 
+   * @param bar             &lt;---- don't do this!!!!
+   * @return                &lt;---- or this!!!!
+   */
+  public Foo getFoo(Bar bar);
+</programlisting> 
+            ... either add something descriptive to the @param and @return lines, or just remove them. 
+            But the preference is to add something descriptive and useful.          
+            </para>
+          </section>
+          <section xml:id="common.patch.feedback.onething">
+            <title>One Thing At A Time, Folks</title>
+            <para>If you submit a patch for one thing, don't do auto-reformatting or unrelated reformatting of code on a completely
+            different area of code. 
+            </para>
+            <para>Likewise, don't add unrelated cleanup or refactorings outside the scope of your Jira. 
+            </para>
+          </section>
+          <section xml:id="common.patch.feedback.tests">
+            <title>Ambigious Unit Tests</title>
+            <para>Make sure that you're clear about what you are testing in your unit tests and why. 
+            </para>
+          </section>
+
+        </section>   <!--  patch feedback -->
+ 
+         <section xml:id="reviewboard">
+            <title>ReviewBoard</title>
+          <para>Larger patches should go through <link xlink:href="http://reviews.apache.org">ReviewBoard</link>.
+          </para>
+        </section> 
         <section xml:id="committing.patches">
           <title>Committing Patches</title>
           <para>
-          See <link xlink:href="http://wiki.apache.org/hadoop/Hbase/HowToCommit">How To Commit</link> in the HBase wiki.
+          Committers do this.  See <link xlink:href="http://wiki.apache.org/hadoop/Hbase/HowToCommit">How To Commit</link> in the HBase wiki.
+          </para>
+          <para>Commiters will also resolve the Jira, typically after the patch passes a build.
           </para>
         </section>
+
+       </section>   <!--  submitting patches -->
     
-    </section>
-          
     </chapter>

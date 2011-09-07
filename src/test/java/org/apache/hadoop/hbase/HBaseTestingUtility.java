@@ -69,6 +69,7 @@ import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.DistributedFileSystem;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.server.namenode.FSNamesystem;
+import org.apache.hadoop.hdfs.server.namenode.LeaseManager;
 import org.apache.hadoop.hdfs.server.namenode.NameNode;
 import org.apache.hadoop.mapred.MiniMRCluster;
 import org.apache.zookeeper.ZooKeeper;
@@ -223,7 +224,27 @@ public class HBaseTestingUtility {
    * @return The mini dfs cluster created.
    */
   public MiniDFSCluster startMiniDFSCluster(int servers) throws Exception {
-    return startMiniDFSCluster(servers, null);
+    return startMiniDFSCluster(servers, null, null);
+  }
+
+  /**
+   * Start a minidfscluster.
+   * This is useful if you want to run datanode on distinct hosts for things
+   * like HDFS block location verification.
+   * If you start MiniDFSCluster without host names, all instances of the
+   * datanodes will have the same host name.
+   * @param hosts hostnames DNs to run on.
+   * @throws Exception
+   * @see {@link #shutdownMiniDFSCluster()}
+   * @return The mini dfs cluster created.
+   */
+  public MiniDFSCluster startMiniDFSCluster(final String hosts[])
+    throws Exception {
+    if ( hosts != null && hosts.length != 0) {
+      return startMiniDFSCluster(hosts.length, null, hosts);
+    } else {
+      return startMiniDFSCluster(1, null, null);
+    }
   }
 
   /**
@@ -237,6 +258,22 @@ public class HBaseTestingUtility {
    */
   public MiniDFSCluster startMiniDFSCluster(int servers, final File dir)
   throws Exception {
+    return startMiniDFSCluster(servers, dir, null);
+  }
+
+  
+  /**
+   * Start a minidfscluster.
+   * Can only create one.
+   * @param servers How many DNs to start.
+   * @param dir Where to home your dfs cluster.
+   * @param hosts hostnames DNs to run on.
+   * @throws Exception
+   * @see {@link #shutdownMiniDFSCluster()}
+   * @return The mini dfs cluster created.
+   */
+  public MiniDFSCluster startMiniDFSCluster(int servers, final File dir, final String hosts[])
+  throws Exception {
     // This does the following to home the minidfscluster
     //     base_dir = new File(System.getProperty("test.build.data", "build/test/data"), "dfs/");
     // Some tests also do this:
@@ -249,7 +286,7 @@ public class HBaseTestingUtility {
     System.setProperty(TEST_DIRECTORY_KEY, this.clusterTestBuildDir.toString());
     System.setProperty("test.cache.data", this.clusterTestBuildDir.toString());
     this.dfsCluster = new MiniDFSCluster(0, this.conf, servers, true, true,
-      true, null, null, null, null);
+      true, null, null, hosts, null);
     // Set this just-started cluser as our filesystem.
     FileSystem fs = this.dfsCluster.getFileSystem();
     this.conf.set("fs.defaultFS", fs.getUri().toString());
@@ -356,6 +393,20 @@ public class HBaseTestingUtility {
     return startMiniCluster(1, numSlaves);
   }
 
+  
+  /**
+   * start minicluster
+   * @throws Exception
+   * @see {@link #shutdownMiniCluster()}
+   * @return Mini hbase cluster instance created.
+   */
+  public MiniHBaseCluster startMiniCluster(final int numMasters,
+    final int numSlaves)
+  throws Exception {
+    return startMiniCluster(numMasters, numSlaves, null);
+  }
+  
+  
   /**
    * Start up a minicluster of hbase, optionally dfs, and zookeeper.
    * Modifies Configuration.  Homes the cluster data directory under a random
@@ -365,18 +416,31 @@ public class HBaseTestingUtility {
    * hbase masters.  If numMasters > 1, you can find the active/primary master
    * with {@link MiniHBaseCluster#getMaster()}.
    * @param numSlaves Number of slaves to start up.  We'll start this many
-   * datanodes and regionservers.  If numSlaves is > 1, then make sure
+   * regionservers. If dataNodeHosts == null, this also indicates the number of
+   * datanodes to start. If dataNodeHosts != null, the number of datanodes is
+   * based on dataNodeHosts.length.
+   * If numSlaves is > 1, then make sure
    * hbase.regionserver.info.port is -1 (i.e. no ui per regionserver) otherwise
    * bind errors.
+   * @param dataNodeHosts hostnames DNs to run on.
+   * This is useful if you want to run datanode on distinct hosts for things
+   * like HDFS block location verification.
+   * If you start MiniDFSCluster without host names,
+   * all instances of the datanodes will have the same host name.
    * @throws Exception
    * @see {@link #shutdownMiniCluster()}
    * @return Mini hbase cluster instance created.
    */
   public MiniHBaseCluster startMiniCluster(final int numMasters,
-      final int numSlaves)
+    final int numSlaves, final String[] dataNodeHosts)
   throws Exception {
+    int numDataNodes = numSlaves;
+    if ( dataNodeHosts != null && dataNodeHosts.length != 0) {
+      numDataNodes = dataNodeHosts.length;
+    }
+    
     LOG.info("Starting up minicluster with " + numMasters + " master(s) and " +
-        numSlaves + " regionserver(s) and datanode(s)");
+        numSlaves + " regionserver(s) and " + numDataNodes + " datanode(s)");
     // If we already put up a cluster, fail.
     String testBuildPath = conf.get(TEST_DIRECTORY_KEY, null);
     isRunningCluster(testBuildPath);
@@ -390,7 +454,7 @@ public class HBaseTestingUtility {
     System.setProperty(TEST_DIRECTORY_KEY, this.clusterTestBuildDir.getPath());
     // Bring up mini dfs cluster. This spews a bunch of warnings about missing
     // scheme. Complaints are 'Scheme is undefined for build/test/data/dfs/name1'.
-    startMiniDFSCluster(numSlaves, this.clusterTestBuildDir);
+    startMiniDFSCluster(numDataNodes, this.clusterTestBuildDir, dataNodeHosts);
     this.dfsCluster.waitClusterUp();
 
     // Start up a zk cluster.
@@ -628,6 +692,31 @@ public class HBaseTestingUtility {
           HColumnDescriptor.DEFAULT_IN_MEMORY,
           HColumnDescriptor.DEFAULT_BLOCKCACHE,
           HColumnDescriptor.DEFAULT_BLOCKSIZE, HColumnDescriptor.DEFAULT_TTL,
+          HColumnDescriptor.DEFAULT_BLOOMFILTER,
+          HColumnDescriptor.DEFAULT_REPLICATION_SCOPE);
+      desc.addFamily(hcd);
+    }
+    getHBaseAdmin().createTable(desc);
+    return new HTable(new Configuration(getConfiguration()), tableName);
+  }
+
+  /**
+   * Create a table.
+   * @param tableName
+   * @param families
+   * @param numVersions
+   * @return An HTable instance for the created table.
+   * @throws IOException
+   */
+  public HTable createTable(byte[] tableName, byte[][] families,
+    int numVersions, int blockSize) throws IOException {
+    HTableDescriptor desc = new HTableDescriptor(tableName);
+    for (byte[] family : families) {
+      HColumnDescriptor hcd = new HColumnDescriptor(family, numVersions,
+          HColumnDescriptor.DEFAULT_COMPRESSION,
+          HColumnDescriptor.DEFAULT_IN_MEMORY,
+          HColumnDescriptor.DEFAULT_BLOCKCACHE,
+          blockSize, HColumnDescriptor.DEFAULT_TTL,
           HColumnDescriptor.DEFAULT_BLOOMFILTER,
           HColumnDescriptor.DEFAULT_REPLICATION_SCOPE);
       desc.addFamily(hcd);
@@ -1355,7 +1444,11 @@ public class HBaseTestingUtility {
     field = nn.getClass().getDeclaredField("namesystem");
     field.setAccessible(true);
     FSNamesystem namesystem = (FSNamesystem)field.get(nn);
-    namesystem.leaseManager.setLeasePeriod(100, 50000);
+
+    field = namesystem.getClass().getDeclaredField("leaseManager");
+    field.setAccessible(true);
+    LeaseManager lm = (LeaseManager)field.get(namesystem);
+    lm.setLeasePeriod(100, 50000);
   }
 
   /**

@@ -99,7 +99,7 @@
   <developer>
       <id>dmeil</id>
       <name>Doug Meil</name>
-      <email>doug@explorys.com</email>
+      <email>dmeil@apache.org</email>
       <timezone>-5</timezone>
       <organization>Explorys</organization>
       <organizationUrl>http://www.explorys.com</organizationUrl>
@@ -283,6 +283,16 @@
           <artifactId>maven-surefire-report-plugin</artifactId>
           <version>2.9</version>
         </plugin>
+        <plugin>
+          <groupId>org.apache.avro</groupId>
+          <artifactId>avro-maven-plugin</artifactId>
+          <version>${avro.version}</version>
+        </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>build-helper-maven-plugin</artifactId>
+          <version>1.5</version>
+        </plugin>
       </plugins>
     </pluginManagement>
 
@@ -302,6 +312,23 @@
     </resources>
 
     <plugins>
+      <plugin>
+        <groupId>org.apache.avro</groupId>
+        <artifactId>avro-maven-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>generate-avro-sources</id>
+            <phase>generate-sources</phase>
+            <goals>
+              <goal>schema</goal>
+              <goal>protocol</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <outputDirectory>${project.build.directory}/generated-sources/java</outputDirectory>
+        </configuration>
+      </plugin>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>xml-maven-plugin</artifactId>
@@ -345,6 +372,7 @@
           <sectionLabelIncludesComponentLabel>true</sectionLabelIncludesComponentLabel>
           <targetDirectory>${basedir}/target/site/book/</targetDirectory>
           <htmlStylesheet>../css/freebsd_docbook.css</htmlStylesheet>
+          <imgSrcPath>../images/</imgSrcPath>
         </configuration>
             <goals>
               <goal>generate-html</goal>
@@ -361,6 +389,7 @@
           <sectionLabelIncludesComponentLabel>true</sectionLabelIncludesComponentLabel>
           <targetDirectory>${basedir}/target/site/</targetDirectory>
           <htmlStylesheet>css/freebsd_docbook.css</htmlStylesheet>
+          <imgSrcPath>images/</imgSrcPath>
         </configuration>
             <goals>
               <goal>generate-html</goal>
@@ -486,18 +515,18 @@
 
                 <mkdir dir="${build.webapps}/master/WEB-INF"/>
                 <jspcompiler uriroot="${src.webapps}/master"
-                             outputdir="${generated.sources}"
+                             outputdir="${generated.sources}/java"
                              package="org.apache.hadoop.hbase.generated.master"
                              webxml="${build.webapps}/master/WEB-INF/web.xml"/>
 
                 <mkdir dir="${build.webapps}/regionserver/WEB-INF"/>
                 <jspcompiler uriroot="${src.webapps}/regionserver"
-                             outputdir="${generated.sources}"
+                             outputdir="${generated.sources}/java"
                              package="org.apache.hadoop.hbase.generated.regionserver"
                              webxml="${build.webapps}/regionserver/WEB-INF/web.xml"/>
 
                 <exec executable="sh">
-                  <arg line="${basedir}/src/saveVersion.sh ${project.version} ${generated.sources}"/>
+                  <arg line="${basedir}/src/saveVersion.sh ${project.version} ${generated.sources}/java"/>
                 </exec>
               </tasks>
             </configuration>
@@ -563,7 +592,7 @@
         <version>1.5</version>
         <executions>
           <execution>
-            <id>add-jspc-source</id>
+            <id>jspcSource-packageInfo-Avro-source</id>
             <phase>generate-sources</phase>
             <goals>
               <goal>add-source</goal>
@@ -571,18 +600,7 @@
             <configuration>
               <sources>
                 <source>${basedir}/target/jspc</source>
-              </sources>
-            </configuration>
-          </execution>
-          <execution>
-            <id>add-package-info</id>
-            <phase>generate-sources</phase>
-            <goals>
-              <goal>add-source</goal>
-            </goals>
-            <configuration>
-              <sources>
-                <source>${project.build.directory}/generated-sources</source>
+                <source>${project.build.directory}/generated-sources/java</source>
               </sources>
             </configuration>
           </execution>
@@ -636,7 +654,7 @@
     <compileSource>1.6</compileSource>
 
     <!-- Dependencies -->
-    <avro.version>1.4.1</avro.version>
+    <avro.version>1.5.3</avro.version>
     <commons-cli.version>1.2</commons-cli.version>
     <commons-codec.version>1.4</commons-codec.version>
     <commons-httpclient.version>3.1</commons-httpclient.version><!-- pretty outdated -->
@@ -644,12 +662,7 @@
     <commons-logging.version>1.1.1</commons-logging.version>
     <commons-math.version>2.1</commons-math.version>
     <guava.version>r09</guava.version>
-    <!--The below was made by patching branch-0.20-append
-    at revision 1034499 with this hdfs-895 patch:
-    https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
-    -->
-    <!-- hadoop.version>0.20.104.3-append-SNAPSHOT</hadoop.version -->
-    <hadoop.version>0.20-security-append-SNAPSHOT</hadoop.version>
+    <jackson.version>1.5.5</jackson.version>
     <jasper.version>5.5.23</jasper.version>
     <jaxb-api.version>2.1</jaxb-api.version>
     <jetty.version>6.1.26</jetty.version>
@@ -660,7 +673,7 @@
     <junit.version>4.8.2</junit.version>
     <log4j.version>1.2.16</log4j.version>
     <mockito-all.version>1.8.5</mockito-all.version>
-    <protobuf.version>2.3.0</protobuf.version>
+    <protobuf.version>2.4.0a</protobuf.version>
     <slf4j.version>1.5.8</slf4j.version><!-- newer version available -->
     <stax-api.version>1.0.1</stax-api.version>
     <thrift.version>0.6.1</thrift.version>
@@ -689,9 +702,6 @@
           implementation of the same, because Hadoop also uses this version
         * javax.servlet:jsp-api in favour of org.mortbay.jetty:jsp-api-2.1
         * javax.xml.stream:stax-api in favour of stax:stax-api
-
-      Note: Both org.apache.avro:avro and com.sun.jersey:jersey-json depend on Jackson so the version
-        is chosen which comes first in the list of dependencies (jersey in this case)
     -->
 
     <!-- General dependencies -->
@@ -751,31 +761,9 @@
       </exclusions>
     </dependency>
     <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-core</artifactId>
-      <version>${hadoop.version}</version>
-      <exclusions>
-        <exclusion>
-          <groupId>hsqldb</groupId>
-          <artifactId>hsqldb</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>net.sf.kosmosfs</groupId>
-          <artifactId>kfs</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>org.eclipse.jdt</groupId>
-          <artifactId>core</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>net.java.dev.jets3t</groupId>
-          <artifactId>jets3t</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>oro</groupId>
-          <artifactId>oro</artifactId>
-        </exclusion>
-      </exclusions>
+      <groupId>org.apache.avro</groupId>
+      <artifactId>avro-ipc</artifactId>
+      <version>${avro.version}</version>
     </dependency>
     <dependency>
       <groupId>org.apache.zookeeper</groupId>
@@ -840,6 +828,29 @@
       <groupId>org.mortbay.jetty</groupId>
       <artifactId>servlet-api-2.5</artifactId>
       <version>${jetty.jspapi.version}</version>
+    </dependency>
+    <!-- While jackson is also a dependency of both jersey and avro, these 
+         can bring in jars from different, incompatible versions. We force 
+         the same version with these dependencies -->
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-core-asl</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-mapper-asl</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-jaxrs</artifactId>
+      <version>${jackson.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-xc</artifactId>
+      <version>${jackson.version}</version>
     </dependency>
     <dependency>
       <groupId>org.slf4j</groupId>
@@ -957,12 +968,6 @@
       <groupId>org.apache.commons</groupId>
       <artifactId>commons-math</artifactId>
       <version>${commons-math.version}</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.hadoop</groupId>
-      <artifactId>hadoop-test</artifactId>
-      <version>${hadoop.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -1128,6 +1133,213 @@
           </plugin>
         </plugins>
       </build>
+    </profile>
+
+    <!-- profile for building against Hadoop 0.20.0 -->
+    <profile>
+      <id>hadoop-0.20</id>
+      <activation>
+        <property>
+          <name>!hadoop23</name>
+        </property>
+      </activation>
+      <properties>
+        <!--The below was made by patching branch-0.20-append
+        at revision 1034499 with this hdfs-895 patch:
+        https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
+        -->
+        <!-- hadoop.version>0.20-append-r1057313</hadoop.version -->
+        <hadoop.version>0.20-security-append-SNAPSHOT</hadoop.version>
+      </properties>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-core</artifactId>
+          <version>${hadoop.version}</version>
+          <exclusions>
+            <exclusion>
+              <groupId>hsqldb</groupId>
+              <artifactId>hsqldb</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.sf.kosmosfs</groupId>
+              <artifactId>kfs</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.eclipse.jdt</groupId>
+              <artifactId>core</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.java.dev.jets3t</groupId>
+              <artifactId>jets3t</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>oro</groupId>
+              <artifactId>oro</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+        <!-- test deps for hadoop-0.20 profile -->
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-test</artifactId>
+          <version>${hadoop.version}</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
+    </profile>
+
+    <!--
+      profile for building against Hadoop 0.23.0. Activate using:
+       mvn -Dhadoop23
+    -->
+    <profile>
+      <id>hadoop-0.23</id>
+      <activation>
+        <property>
+          <name>hadoop23</name>
+        </property>
+      </activation>
+      <properties>
+        <hadoop.version>0.23.0-SNAPSHOT</hadoop.version>
+      </properties>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-common</artifactId>
+          <version>${hadoop.version}</version>
+          <exclusions>
+            <!--Needs more work, tightening-->
+            <exclusion>
+              <groupId>hsqldb</groupId>
+              <artifactId>hsqldb</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.sf.kosmosfs</groupId>
+              <artifactId>kfs</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.eclipse.jdt</groupId>
+              <artifactId>core</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.java.dev.jets3t</groupId>
+              <artifactId>jets3t</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>oro</groupId>
+              <artifactId>oro</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>jdiff</groupId>
+              <artifactId>jdiff</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.apache.lucene</groupId>
+              <artifactId>lucene-core</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+        <!-- need the annotations to avoid compiler issues. This is
+             really an upstream issue with Hadoop -->
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-annotations</artifactId>
+          <version>${hadoop.version}</version>
+          <scope>provided</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-hdfs</artifactId>
+          <version>${hadoop.version}</version>
+          <exclusions>
+            <!--Needs more work, tightening-->
+            <exclusion>
+              <groupId>hsqldb</groupId>
+              <artifactId>hsqldb</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.sf.kosmosfs</groupId>
+              <artifactId>kfs</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.eclipse.jdt</groupId>
+              <artifactId>core</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.java.dev.jets3t</groupId>
+              <artifactId>jets3t</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>oro</groupId>
+              <artifactId>oro</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>jdiff</groupId>
+              <artifactId>jdiff</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.apache.lucene</groupId>
+              <artifactId>lucene-core</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-mapred</artifactId>
+          <version>${hadoop.version}</version>
+          <exclusions>
+            <!--Needs more work, tightening-->
+            <exclusion>
+              <groupId>hsqldb</groupId>
+              <artifactId>hsqldb</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.sf.kosmosfs</groupId>
+              <artifactId>kfs</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.eclipse.jdt</groupId>
+              <artifactId>core</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>net.java.dev.jets3t</groupId>
+              <artifactId>jets3t</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>oro</groupId>
+              <artifactId>oro</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>jdiff</groupId>
+              <artifactId>jdiff</artifactId>
+            </exclusion>
+            <exclusion>
+              <groupId>org.apache.lucene</groupId>
+              <artifactId>lucene-core</artifactId>
+            </exclusion>
+          </exclusions>
+        </dependency>
+        <!-- test deps for hadoop-0.23 profile -->
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-common-test</artifactId>
+          <version>${hadoop.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-hdfs-test</artifactId>
+          <version>${hadoop.version}</version>
+          <scope>test</scope>
+        </dependency>
+        <dependency>
+          <groupId>org.apache.hadoop</groupId>
+          <artifactId>hadoop-mapred-test</artifactId>
+          <version>${hadoop.version}</version>
+          <scope>test</scope>
+        </dependency>
+      </dependencies>
     </profile>
   </profiles>
  

@@ -60,6 +60,7 @@ import org.apache.hadoop.hbase.DroppedSnapshotException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HDFSBlocksDistribution;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
@@ -460,6 +461,61 @@ public class HRegion implements HeapSize { // , Writable{
       }
     }
     return false;
+  }
+  
+  /**
+   * This function will return the HDFS blocks distribution based on the data
+   * captured when HFile is created
+   * @return The HDFS blocks distribution for the region.
+   */
+  public HDFSBlocksDistribution getHDFSBlocksDistribution() {
+    HDFSBlocksDistribution hdfsBlocksDistribution =
+      new HDFSBlocksDistribution();
+    synchronized (this.stores) {
+      for (Store store : this.stores.values()) {
+        for (StoreFile sf : store.getStorefiles()) {
+          HDFSBlocksDistribution storeFileBlocksDistribution =
+            sf.getHDFSBlockDistribution();
+          hdfsBlocksDistribution.add(storeFileBlocksDistribution);
+        }
+      }
+    }
+    return hdfsBlocksDistribution;
+  }
+
+  /**
+   * This is a helper function to compute HDFS block distribution on demand
+   * @param conf configuration
+   * @param tableDescriptor HTableDescriptor of the table
+   * @param regionEncodedName encoded name of the region
+   * @return The HDFS blocks distribution for the given region.
+ * @throws IOException
+   */
+  static public HDFSBlocksDistribution computeHDFSBlocksDistribution(
+    Configuration conf, HTableDescriptor tableDescriptor,
+    String regionEncodedName) throws IOException {
+    HDFSBlocksDistribution hdfsBlocksDistribution =
+      new HDFSBlocksDistribution();
+    Path tablePath = FSUtils.getTablePath(FSUtils.getRootDir(conf),
+      tableDescriptor.getName());
+    FileSystem fs = tablePath.getFileSystem(conf);
+         
+    for (HColumnDescriptor family: tableDescriptor.getFamilies()) {
+      Path storeHomeDir = Store.getStoreHomedir(tablePath, regionEncodedName,
+      family.getName());
+      if (!fs.exists(storeHomeDir))continue;
+
+      FileStatus[] hfilesStatus = null;
+      hfilesStatus = fs.listStatus(storeHomeDir);
+
+      for (FileStatus hfileStatus : hfilesStatus) {
+        HDFSBlocksDistribution storeFileBlocksDistribution =
+          FSUtils.computeHDFSBlocksDistribution(fs, hfileStatus, 0,
+          hfileStatus.getLen());
+        hdfsBlocksDistribution.add(storeFileBlocksDistribution);
+      }
+    }
+    return hdfsBlocksDistribution;
   }
   
   public AtomicLong getMemstoreSize() {
@@ -882,10 +938,6 @@ public class HRegion implements HeapSize { // , Writable{
         LOG.debug("Skipping compaction on " + this + " because closed");
         return false;
       }
-      if (coprocessorHost != null) {
-        status.setStatus("Running coprocessor preCompact hooks");
-        coprocessorHost.preCompact(false);
-      }
       boolean decr = true;
       try {
         synchronized (writestate) {
@@ -920,10 +972,6 @@ public class HRegion implements HeapSize { // , Writable{
             }
           }
         }
-      }
-      if (coprocessorHost != null) {
-        status.setStatus("Running coprocessor post-compact hooks");
-        coprocessorHost.postCompact(false);
       }
       status.markComplete("Compaction complete");
       return true;
@@ -1242,9 +1290,8 @@ public class HRegion implements HeapSize { // , Writable{
     this.readRequestsCount.increment();
     try {
       Store store = getStore(family);
-      KeyValue kv = new KeyValue(row, HConstants.LATEST_TIMESTAMP);
       // get the closest key. (HStore.getRowKeyAtOrBefore can return null)
-      KeyValue key = store.getRowKeyAtOrBefore(kv);
+      KeyValue key = store.getRowKeyAtOrBefore(row);
       Result result = null;
       if (key != null) {
         Get get = new Get(key.getRow());
@@ -1267,10 +1314,10 @@ public class HRegion implements HeapSize { // , Writable{
    * This Iterator must be closed by the caller.
    *
    * @param scan configured {@link Scan}
-   * @return InternalScanner
+   * @return RegionScanner
    * @throws IOException read exceptions
    */
-  public InternalScanner getScanner(Scan scan) throws IOException {
+  public RegionScanner getScanner(Scan scan) throws IOException {
    return getScanner(scan, null);
   }
 
@@ -1283,7 +1330,7 @@ public class HRegion implements HeapSize { // , Writable{
     }
   }
 
-  protected InternalScanner getScanner(Scan scan, List<KeyValueScanner> additionalScanners) throws IOException {
+  protected RegionScanner getScanner(Scan scan, List<KeyValueScanner> additionalScanners) throws IOException {
     startRegionOperation();
     this.readRequestsCount.increment();
     try {
@@ -1294,16 +1341,16 @@ public class HRegion implements HeapSize { // , Writable{
           checkFamily(family);
         }
       }
-      return instantiateInternalScanner(scan, additionalScanners);
+      return instantiateRegionScanner(scan, additionalScanners);
 
     } finally {
       closeRegionOperation();
     }
   }
 
-  protected InternalScanner instantiateInternalScanner(Scan scan,
+  protected RegionScanner instantiateRegionScanner(Scan scan,
       List<KeyValueScanner> additionalScanners) throws IOException {
-    return new RegionScanner(scan, additionalScanners,
+    return new RegionScannerImpl(scan, additionalScanners,
         RequestContext.getRequestUserName());
   }
 
@@ -1528,13 +1575,14 @@ public class HRegion implements HeapSize { // , Writable{
    */
   private static class BatchOperationInProgress<T> {
     T[] operations;
-    OperationStatusCode[] retCodes;
     int nextIndexToProcess = 0;
+    OperationStatus[] retCodeDetails;
 
     public BatchOperationInProgress(T[] operations) {
       this.operations = operations;
-      retCodes = new OperationStatusCode[operations.length];
-      Arrays.fill(retCodes, OperationStatusCode.NOT_RUN);
+      this.retCodeDetails = new OperationStatus[operations.length];
+      Arrays.fill(this.retCodeDetails, new OperationStatus(
+          OperationStatusCode.NOT_RUN));
     }
 
     public boolean isDone() {
@@ -1546,7 +1594,7 @@ public class HRegion implements HeapSize { // , Writable{
    * Perform a batch put with no pre-specified locks
    * @see HRegion#put(Pair[])
    */
-  public OperationStatusCode[] put(Put[] puts) throws IOException {
+  public OperationStatus[] put(Put[] puts) throws IOException {
     @SuppressWarnings("unchecked")
     Pair<Put, Integer> putsAndLocks[] = new Pair[puts.length];
 
@@ -1558,10 +1606,15 @@ public class HRegion implements HeapSize { // , Writable{
 
   /**
    * Perform a batch of puts.
-   * @param putsAndLocks the list of puts paired with their requested lock IDs.
+   * 
+   * @param putsAndLocks
+   *          the list of puts paired with their requested lock IDs.
+   * @return an array of OperationStatus which internally contains the
+   *         OperationStatusCode and the exceptionMessage if any.
    * @throws IOException
    */
-  public OperationStatusCode[] put(Pair<Put, Integer>[] putsAndLocks) throws IOException {
+  public OperationStatus[] put(
+      Pair<Put, Integer>[] putsAndLocks) throws IOException {
     BatchOperationInProgress<Pair<Put, Integer>> batchOp =
       new BatchOperationInProgress<Pair<Put,Integer>>(putsAndLocks);
 
@@ -1582,11 +1635,12 @@ public class HRegion implements HeapSize { // , Writable{
         requestFlush();
       }
     }
-    return batchOp.retCodes;
+    return batchOp.retCodeDetails;
   }
 
   @SuppressWarnings("unchecked")
-  private long doMiniBatchPut(BatchOperationInProgress<Pair<Put, Integer>> batchOp) throws IOException {
+  private long doMiniBatchPut(
+      BatchOperationInProgress<Pair<Put, Integer>> batchOp) throws IOException {
     /* Run coprocessor pre hook outside of locks to avoid deadlock */
     if (coprocessorHost != null) {
       List<Pair<Put, Integer>> ops =
@@ -1640,7 +1694,8 @@ public class HRegion implements HeapSize { // , Writable{
           checkFamilies(familyMap.keySet());
         } catch (NoSuchColumnFamilyException nscf) {
           LOG.warn("No such column family in batch put", nscf);
-          batchOp.retCodes[lastIndexExclusive] = OperationStatusCode.BAD_FAMILY;
+          batchOp.retCodeDetails[lastIndexExclusive] = new OperationStatus(
+              OperationStatusCode.BAD_FAMILY, nscf.getMessage());
           lastIndexExclusive++;
           continue;
         }
@@ -1670,7 +1725,8 @@ public class HRegion implements HeapSize { // , Writable{
       // ----------------------------------
       for (int i = firstIndex; i < lastIndexExclusive; i++) {
         // skip invalid
-        if (batchOp.retCodes[i] != OperationStatusCode.NOT_RUN) continue;
+        if (batchOp.retCodeDetails[i].getOperationStatusCode()
+            != OperationStatusCode.NOT_RUN) continue;
 
         updateKVTimestamps(
             familyMaps[i].values(),
@@ -1687,7 +1743,10 @@ public class HRegion implements HeapSize { // , Writable{
       WALEdit walEdit = new WALEdit();
       for (int i = firstIndex; i < lastIndexExclusive; i++) {
         // Skip puts that were determined to be invalid during preprocessing
-        if (batchOp.retCodes[i] != OperationStatusCode.NOT_RUN) continue;
+        if (batchOp.retCodeDetails[i].getOperationStatusCode()
+            != OperationStatusCode.NOT_RUN) {
+          continue;
+        }
 
         Put p = batchOp.operations[i].getFirst();
         if (!p.getWriteToWAL()) continue;
@@ -1703,9 +1762,13 @@ public class HRegion implements HeapSize { // , Writable{
       // ----------------------------------
       long addedSize = 0;
       for (int i = firstIndex; i < lastIndexExclusive; i++) {
-        if (batchOp.retCodes[i] != OperationStatusCode.NOT_RUN) continue;
+        if (batchOp.retCodeDetails[i].getOperationStatusCode()
+            != OperationStatusCode.NOT_RUN) {
+          continue;
+        }
         addedSize += applyFamilyMapToMemstore(familyMaps[i]);
-        batchOp.retCodes[i] = OperationStatusCode.SUCCESS;
+        batchOp.retCodeDetails[i] = new OperationStatus(
+            OperationStatusCode.SUCCESS);
       }
 
       // ------------------------------------
@@ -1714,7 +1777,10 @@ public class HRegion implements HeapSize { // , Writable{
       if (coprocessorHost != null) {
         for (int i = firstIndex; i < lastIndexExclusive; i++) {
           // only for successful puts
-          if (batchOp.retCodes[i] != OperationStatusCode.SUCCESS) continue;
+          if (batchOp.retCodeDetails[i].getOperationStatusCode()
+              != OperationStatusCode.SUCCESS) {
+            continue;
+          }
           Put p = batchOp.operations[i].getFirst();
           coprocessorHost.postPut(familyMaps[i], p.getWriteToWAL());
         }
@@ -1731,8 +1797,9 @@ public class HRegion implements HeapSize { // , Writable{
       }
       if (!success) {
         for (int i = firstIndex; i < lastIndexExclusive; i++) {
-          if (batchOp.retCodes[i] == OperationStatusCode.NOT_RUN) {
-            batchOp.retCodes[i] = OperationStatusCode.FAILURE;
+          if (batchOp.retCodeDetails[i].getOperationStatusCode() == OperationStatusCode.NOT_RUN) {
+            batchOp.retCodeDetails[i] = new OperationStatus(
+                OperationStatusCode.FAILURE);
           }
         }
       }
@@ -2528,11 +2595,9 @@ public class HRegion implements HeapSize { // , Writable{
   }
 
   /**
-   * RegionScanner is an iterator through a bunch of rows in an HRegion.
-   * <p>
-   * It is used to combine scanners from multiple Stores (aka column families).
+   * RegionScannerImpl is used to combine scanners from multiple Stores (aka column families).
    */
-  class RegionScanner implements InternalScanner {
+  class RegionScannerImpl implements RegionScanner {
     // Package local for testability
     KeyValueHeap storeHeap = null;
     private final byte [] stopRow;
@@ -2544,10 +2609,10 @@ public class HRegion implements HeapSize { // , Writable{
     private long readPt;
     private String owner;
 
-    public HRegionInfo getRegionName() {
+    public HRegionInfo getRegionInfo() {
       return regionInfo;
     }
-    RegionScanner(Scan scan, List<KeyValueScanner> additionalScanners,
+    RegionScannerImpl(Scan scan, List<KeyValueScanner> additionalScanners,
         String owner)
     throws IOException {
       //DebugPrint.println("HRegionScanner.<init>");
@@ -2576,6 +2641,10 @@ public class HRegion implements HeapSize { // , Writable{
         scanners.add(store.getScanner(scan, entry.getValue()));
       }
       this.storeHeap = new KeyValueHeap(scanners, comparator);
+    }
+
+    RegionScannerImpl(Scan scan) throws IOException {
+      this(scan, null, RequestContext.getRequestUserName());
     }
 
     /**
@@ -2635,7 +2704,7 @@ public class HRegion implements HeapSize { // , Writable{
     /*
      * @return True if a filter rules the scanner is over, done.
      */
-    synchronized boolean isFilterDone() {
+    public synchronized boolean isFilterDone() {
       return this.filter != null && this.filter.filterAllRemaining();
     }
 
@@ -3314,7 +3383,7 @@ public class HRegion implements HeapSize { // , Writable{
 
     // memstore scan
     iscan.checkOnlyMemStore();
-    InternalScanner scanner = null;
+    RegionScanner scanner = null;
     try {
       scanner = getScanner(iscan);
       scanner.next(results);
@@ -3394,7 +3463,7 @@ public class HRegion implements HeapSize { // , Writable{
        }
     }
 
-    InternalScanner scanner = null;
+    RegionScanner scanner = null;
     try {
       scanner = getScanner(scan);
       scanner.next(results);
@@ -3785,7 +3854,7 @@ public class HRegion implements HeapSize { // , Writable{
         // Default behavior
         Scan scan = new Scan();
         // scan.addFamily(HConstants.CATALOG_FAMILY);
-        InternalScanner scanner = region.getScanner(scan);
+        RegionScanner scanner = region.getScanner(scan);
         try {
           List<KeyValue> kvs = new ArrayList<KeyValue>();
           boolean done = false;
@@ -3831,18 +3900,27 @@ public class HRegion implements HeapSize { // , Writable{
     // nothing
   }
 
+  /**
+   * Return the splitpoint. null indicates the region isn't splittable
+   * If the splitpoint isn't explicitly specified, it will go over the stores
+   * to find the best splitpoint. Currently the criteria of best splitpoint
+   * is based on the size of the store.
+   */
   public byte[] checkSplit() {
     if (this.splitPoint != null) {
       return this.splitPoint;
     }
-    byte[] splitPoint = null;
+    byte[] splitPointFromLargestStore = null;
+    long largestStoreSize = 0;
     for (Store s : stores.values()) {
-      splitPoint = s.checkSplit();
-      if (splitPoint != null) {
-        return splitPoint;
+      byte[] splitPoint = s.checkSplit();
+      long storeSize = s.getSize();
+      if (splitPoint != null && largestStoreSize < storeSize) {
+        splitPointFromLargestStore = splitPoint;
+        largestStoreSize = storeSize;
       }
     }
-    return null;
+    return splitPointFromLargestStore;
   }
 
   /**

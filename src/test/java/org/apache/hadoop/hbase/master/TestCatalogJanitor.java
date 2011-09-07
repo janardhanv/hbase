@@ -133,8 +133,8 @@ public class TestCatalogJanitor {
     }
 
     @Override
-    public void createTable(HTableDescriptor desc, byte[][] splitKeys,
-        boolean sync) throws IOException {
+    public void createTable(HTableDescriptor desc, byte[][] splitKeys)
+        throws IOException {
       // no-op
     }
 

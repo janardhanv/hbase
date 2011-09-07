@@ -19,6 +19,8 @@ package org.apache.hadoop.hbase.coprocessor;
 import java.util.List;
 import java.util.Map;
 
+import com.google.common.collect.ImmutableList;
+import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Delete;
@@ -31,6 +33,9 @@ import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
+import org.apache.hadoop.hbase.regionserver.RegionScanner;
+import org.apache.hadoop.hbase.regionserver.Store;
+import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.regionserver.wal.HLogKey;
 import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 
@@ -76,12 +81,22 @@ public abstract class BaseRegionObserver implements RegionObserver {
       HRegion l, HRegion r) { }
 
   @Override
-  public void preCompact(ObserverContext<RegionCoprocessorEnvironment> e,
-      boolean willSplit) { }
+  public void preCompactSelection(final ObserverContext<RegionCoprocessorEnvironment> c,
+      final Store store, final List<StoreFile> candidates) { }
+
+  @Override
+  public void postCompactSelection(final ObserverContext<RegionCoprocessorEnvironment> c,
+      final Store store, final ImmutableList<StoreFile> selected) { }
+
+  @Override
+  public InternalScanner preCompact(ObserverContext<RegionCoprocessorEnvironment> e,
+      final Store store, final InternalScanner scanner) {
+    return scanner;
+  }
 
   @Override
   public void postCompact(ObserverContext<RegionCoprocessorEnvironment> e,
-      boolean willSplit) { }
+      final Store store, final StoreFile resultFile) { }
 
   @Override
   public void preGetClosestRowBefore(final ObserverContext<RegionCoprocessorEnvironment> e,
@@ -196,14 +211,14 @@ public abstract class BaseRegionObserver implements RegionObserver {
   }
 
   @Override
-  public InternalScanner preScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> e,
-      final Scan scan, final InternalScanner s) throws IOException {
+  public RegionScanner preScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> e,
+      final Scan scan, final RegionScanner s) throws IOException {
     return s;
   }
 
   @Override
-  public InternalScanner postScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> e,
-      final Scan scan, final InternalScanner s) throws IOException {
+  public RegionScanner postScannerOpen(final ObserverContext<RegionCoprocessorEnvironment> e,
+      final Scan scan, final RegionScanner s) throws IOException {
     return s;
   }
 

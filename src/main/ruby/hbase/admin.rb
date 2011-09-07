@@ -19,6 +19,7 @@
 #
 
 include Java
+java_import org.apache.hadoop.hbase.util.Pair
 
 # Wrapper for org.apache.hadoop.hbase.client.HBaseAdmin
 
@@ -30,7 +31,7 @@ module Hbase
       @admin = org.apache.hadoop.hbase.client.HBaseAdmin.new(configuration)
       connection = @admin.getConnection()
       @zk_wrapper = connection.getZooKeeperWatcher()
-      zk = @zk_wrapper.getZooKeeper()
+      zk = @zk_wrapper.getRecoverableZooKeeper().getZooKeeper()
       @zk_main = org.apache.zookeeper.ZooKeeperMain.new(zk)
       @formatter = formatter
       @meta = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
@@ -212,13 +213,18 @@ module Hbase
         @admin.createTable(htd, splits)
       end
     end
-
+    
     #----------------------------------------------------------------------------------------------
-    # Closes a region
-    def close_region(region_name, server = nil)
-      @admin.closeRegion(region_name, server)
+    # Closes a region.
+    # If server name is nil, we presume region_name is full region name (HRegionInfo.getRegionName).
+    # If server name is not nil, we presume it is the region's encoded name (HRegionInfo.getEncodedName)
+    def close_region(region_name, server)
+      if (server == nil || !closeEncodedRegion?(region_name, server))         
+      	@admin.closeRegion(region_name, server)
+      end	
     end
 
+    #----------------------------------------------------------------------------------------------
     #----------------------------------------------------------------------------------------------
     # Assign a region
     def assign(region_name, force)
@@ -234,7 +240,7 @@ module Hbase
     #----------------------------------------------------------------------------------------------
     # Move a region
     def move(encoded_region_name, server = nil)
-      @admin.move(org.apache.hadoop.hbase.util.Bytes.toBytes(encoded_region_name), server ? org.apache.hadoop.hbase.util.Bytes.toBytes(server): nil)
+      @admin.move(encoded_region_name.to_java_bytes, server ? server.to_java_bytes: nil)
     end
 
     #----------------------------------------------------------------------------------------------
@@ -341,17 +347,31 @@ module Hbase
       return ((block_given?) ? count : res)
     end
 
-    #----------------------------------------------------------------------------------------------
-    # Change table structure or table options
-    def alter(table_name, *args)
+    # Check the status of alter command (number of regions reopened)
+    def alter_status(table_name)
       # Table name should be a string
       raise(ArgumentError, "Table name must be of type String") unless table_name.kind_of?(String)
 
       # Table should exist
       raise(ArgumentError, "Can't find a table: #{table_name}") unless exists?(table_name)
 
-      # Table should be disabled
-      raise(ArgumentError, "Table #{table_name} is enabled. Disable it first before altering.") if enabled?(table_name)
+      status = Pair.new()
+      begin
+        status = @admin.getAlterStatus(table_name.to_java_bytes)
+        puts "#{status.getSecond() - status.getFirst()}/#{status.getSecond()} regions updated."
+	      sleep 1
+      end while status != nil && status.getFirst() != 0
+      puts "Done."
+    end
+
+    #----------------------------------------------------------------------------------------------
+    # Change table structure or table options
+    def alter(table_name, wait = true, *args)
+      # Table name should be a string
+      raise(ArgumentError, "Table name must be of type String") unless table_name.kind_of?(String)
+
+      # Table should exist
+      raise(ArgumentError, "Can't find a table: #{table_name}") unless exists?(table_name)
 
       # There should be at least one argument
       raise(ArgumentError, "There should be at least one argument but the table name") if args.empty?
@@ -388,6 +408,10 @@ module Hbase
           # If column already exist, then try to alter it. Create otherwise.
           if htd.hasFamily(column_name.to_java_bytes)
             @admin.modifyColumn(table_name, column_name, descriptor)
+            if wait == true
+              puts "Updating all regions with the new schema..."
+              alter_status(table_name)
+            end
           else
             descriptor = hcd(arg, htd)
             column_name = descriptor.getNameAsString
@@ -397,6 +421,10 @@ module Hbase
               @admin.modifyColumn(table_name, column_name, descriptor)
             else
             @admin.addColumn(table_name, descriptor)
+            if wait == true
+              puts "Updating all regions with the new schema..."
+              alter_status(table_name)
+            end
           end
           end
           next
@@ -406,6 +434,10 @@ module Hbase
         if method == "delete"
           raise(ArgumentError, "NAME parameter missing for delete method") unless arg[NAME]
           @admin.deleteColumn(table_name, arg[NAME])
+          if wait == true
+            puts "Updating all regions with the new schema..."
+            alter_status(table_name)
+          end
           next
         end
 
@@ -418,6 +450,10 @@ module Hbase
           # (2) Here, we handle the alternate syntax of ownership setting, where method => 'table_att' is specified.
           htd.setOwnerString(arg[OWNER]) if arg[OWNER]
           @admin.modifyTable(table_name.to_java_bytes, htd)
+          if wait == true
+            puts "Updating all regions with the new schema..."
+            alter_status(table_name)
+          end
           next
         end
 
@@ -487,6 +523,12 @@ module Hbase
     end
 
     #----------------------------------------------------------------------------------------------
+    #Is supplied region name is encoded region name
+    def closeEncodedRegion?(region_name, server)
+       @admin.closeRegionWithEncodedRegionName(region_name, server)
+    end   
+
+    #----------------------------------------------------------------------------------------------
     # Return a new HColumnDescriptor made of passed args
     def hcd(arg, htd)
       # String arg, single parameter constructor
@@ -505,6 +547,7 @@ module Hbase
       family.setCompressionType(org.apache.hadoop.hbase.io.hfile.Compression::Algorithm.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::COMPRESSION])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::COMPRESSION)
       family.setBlocksize(JInteger.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::BLOCKSIZE])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::BLOCKSIZE)
       family.setMaxVersions(JInteger.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::VERSIONS])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::VERSIONS)
+      family.setMinVersions(JInteger.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::MIN_VERSIONS])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::MIN_VERSIONS)
       if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::BLOOMFILTER)
         bloomtype = arg[org.apache.hadoop.hbase.HColumnDescriptor::BLOOMFILTER].upcase
         unless org.apache.hadoop.hbase.regionserver.StoreFile::BloomType.constants.include?(bloomtype)      
@@ -532,7 +575,7 @@ module Hbase
 
       # Read region info
       # FIXME: fail gracefully if can't find the region
-      region_bytes = org.apache.hadoop.hbase.util.Bytes.toBytes(region_name)
+      region_bytes = region_name.to_java_bytes
       g = org.apache.hadoop.hbase.client.Get.new(region_bytes)
       g.addColumn(org.apache.hadoop.hbase.HConstants::CATALOG_FAMILY, org.apache.hadoop.hbase.HConstants::REGIONINFO_QUALIFIER)
       hri_bytes = meta.get(g).value

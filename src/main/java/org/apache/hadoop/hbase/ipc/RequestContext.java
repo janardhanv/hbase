@@ -20,7 +20,6 @@
 
 package org.apache.hadoop.hbase.ipc;
 
-import org.apache.hadoop.ipc.VersionedProtocol;
 import org.apache.hadoop.security.UserGroupInformation;
 
 import java.net.InetAddress;
