@@ -728,7 +728,6 @@
     <slf4j.version>1.5.8</slf4j.version><!-- newer version available -->
     <stax-api.version>1.0.1</stax-api.version>
     <thrift.version>0.7.0</thrift.version>
-    <zookeeper.version>3.4.0-security</zookeeper.version>
     <hadoop-snappy.version>0.0.1-SNAPSHOT</hadoop-snappy.version>
 
     <package.prefix>/usr</package.prefix>	           
@@ -1205,6 +1204,7 @@
         https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
         -->
         <hadoop.version>0.20-append-r1057313</hadoop.version>
+        <zookeeper.version>3.3.3</zookeeper.version>
       </properties>
       <dependencies>
         <dependency>
@@ -1260,6 +1260,7 @@
         -->
         <!-- hadoop.version>0.20-append-r1057313</hadoop.version -->
         <hadoop.version>0.20-security-append-SNAPSHOT</hadoop.version>
+        <zookeeper.version>3.4.0-security</zookeeper.version>
       </properties>
       <dependencies>
         <dependency>
@@ -1492,6 +1493,7 @@
       </activation>
       <properties>
         <hadoop.version>0.23.0-SNAPSHOT</hadoop.version>
+        <zookeeper.version>3.3.3</zookeeper.version>
       </properties>
       <dependencies>
         <dependency>
