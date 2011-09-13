@@ -56,6 +56,7 @@ import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
 import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
+import org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException;
 import org.apache.hadoop.hbase.util.Addressing;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
@@ -106,10 +107,10 @@ public class HBaseAdmin implements Abortable, Closeable {
         break;
       } catch (MasterNotRunningException mnre) {
         HConnectionManager.deleteStaleConnection(this.connection);
-        this.connection = HConnectionManager.getConnection(this.conf);        
+        this.connection = HConnectionManager.getConnection(this.conf);
       } catch (UndeclaredThrowableException ute) {
         HConnectionManager.deleteStaleConnection(this.connection);
-        this.connection = HConnectionManager.getConnection(this.conf);        
+        this.connection = HConnectionManager.getConnection(this.conf);
       }
       try { // Sleep
         Thread.sleep(getPauseTime(tries));
@@ -485,8 +486,23 @@ public class HBaseAdmin implements Abortable, Closeable {
           firstMetaServer.getRegionInfo().getRegionName(), scan);
         // Get a batch at a time.
         Result values = server.next(scannerId);
+
+        // let us wait until .META. table is updated and
+        // HMaster removes the table from its HTableDescriptors
         if (values == null) {
-          break;
+          boolean tableExists = false;
+          HTableDescriptor[] htds = getMaster().getHTableDescriptors();
+          if (htds != null && htds.length > 0) {
+            for (HTableDescriptor htd: htds) {
+              if (Bytes.equals(tableName, htd.getName())) {
+                tableExists = true;
+                break;
+              }
+            }
+          }
+          if (!tableExists) {
+            break;
+          }
         }
       } catch (IOException ex) {
         if(tries == numRetries - 1) {           // no more tries left
@@ -1581,4 +1597,24 @@ public class HBaseAdmin implements Abortable, Closeable {
     return this.connection.getHTableDescriptors(tableNames);
   }
 
+  /**
+   * Roll the log writer. That is, start writing log messages to a new file.
+   * 
+   * @param serverName
+   *          The servername of the regionserver. A server name is made of host,
+   *          port and startcode. This is mandatory. Here is an example:
+   *          <code> host187.example.com,60020,1289493121758</code>
+   * @return If lots of logs, flush the returned regions so next time through
+   * we can clean logs. Returns null if nothing to flush.  Names are actual
+   * region names as returned by {@link HRegionInfo#getEncodedName()}  
+   * @throws IOException if a remote or network exception occurs
+   * @throws FailedLogCloseException
+   */
+ public synchronized  byte[][] rollHLogWriter(String serverName)
+      throws IOException, FailedLogCloseException {
+    ServerName sn = new ServerName(serverName);
+    HRegionInterface rs = this.connection.getHRegionConnection(
+        sn.getHostname(), sn.getPort());
+    return rs.rollHLogWriter();
+  }
 }

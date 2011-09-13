@@ -42,6 +42,7 @@ import org.apache.commons.logging.*;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.client.Operation;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.monitoring.MonitoredRPCHandler;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Objects;
@@ -270,6 +271,9 @@ class WritableRpcEngine implements RpcEngine {
     private static final int DEFAULT_WARN_RESPONSE_TIME = 10000; // milliseconds
     private static final int DEFAULT_WARN_RESPONSE_SIZE = 100 * 1024 * 1024;
 
+    /** Names for suffixed metrics */
+    private static final String ABOVE_ONE_SEC_METRIC = ".aboveOneSec.";
+
     private final int warnResponseTime;
     private final int warnResponseSize;
 
@@ -304,7 +308,8 @@ class WritableRpcEngine implements RpcEngine {
       this.ifaces = ifaces;
 
       // create metrics for the advertised interfaces this server implements.
-      this.rpcMetrics.createMetrics(this.ifaces);
+      String [] metricSuffixes = new String [] {ABOVE_ONE_SEC_METRIC};
+      this.rpcMetrics.createMetrics(this.ifaces, false, metricSuffixes);
 
       this.authorize =
         conf.getBoolean(
@@ -318,7 +323,7 @@ class WritableRpcEngine implements RpcEngine {
 
     @Override
     public Writable call(Class<? extends VersionedProtocol> protocol,
-        Writable param, long receivedTime)
+        Writable param, long receivedTime, MonitoredRPCHandler status)
     throws IOException {
       try {
         Invocation call = (Invocation)param;
@@ -327,6 +332,9 @@ class WritableRpcEngine implements RpcEngine {
               "cause is a version mismatch between client and server.");
         }
         if (verbose) log("Call: " + call);
+        status.setRPC(call.getMethodName(), call.getParameters(), receivedTime);
+        status.setRPCPacket(param);
+        status.resume("Servicing call");
 
         Method method =
           protocol.getMethod(call.getMethodName(),
@@ -371,18 +379,18 @@ class WritableRpcEngine implements RpcEngine {
           // when tagging, we let TooLarge trump TooSmall to keep output simple
           // note that large responses will often also be slow.
           logResponse(call, (tooLarge ? "TooLarge" : "TooSlow"),
-              startTime, processingTime, qTime, responseSize);
+              status.getClient(), startTime, processingTime, qTime,
+              responseSize);
           // provides a count of log-reported slow responses
           if (tooSlow) {
-            rpcMetrics.inc(call.getMethodName() + ".slowResponse.",
-                processingTime);
+            rpcMetrics.rpcSlowResponseTime.inc(processingTime);
           }
         }
         if (processingTime > 1000) {
           // we use a hard-coded one second period so that we can clearly
           // indicate the time period we're warning about in the name of the 
           // metric itself
-          rpcMetrics.inc(call.getMethodName() + ".aboveOneSec.",
+          rpcMetrics.inc(call.getMethodName() + ABOVE_ONE_SEC_METRIC,
               processingTime);
         }
 
@@ -410,13 +418,14 @@ class WritableRpcEngine implements RpcEngine {
      * client Operations.
      * @param call The call to log.
      * @param tag  The tag that will be used to indicate this event in the log.
+     * @param client          The address of the client who made this call.
      * @param startTime       The time that the call was initiated, in ms.
      * @param processingTime  The duration that the call took to run, in ms.
      * @param qTime           The duration that the call spent on the queue 
      *                        prior to being initiated, in ms.
      * @param responseSize    The size in bytes of the response buffer.
      */
-    private void logResponse(Invocation call, String tag,
+    private void logResponse(Invocation call, String tag, String clientAddress,
         long startTime, int processingTime, int qTime, long responseSize)
       throws IOException {
       Object params[] = call.getParameters();
@@ -428,6 +437,7 @@ class WritableRpcEngine implements RpcEngine {
       responseInfo.put("processingtimems", processingTime);
       responseInfo.put("queuetimems", qTime);
       responseInfo.put("responsesize", responseSize);
+      responseInfo.put("client", clientAddress);
       responseInfo.put("class", instance.getClass().getSimpleName());
       responseInfo.put("method", call.getMethodName());
       if (params.length == 2 && instance instanceof HRegionServer &&
@@ -446,7 +456,7 @@ class WritableRpcEngine implements RpcEngine {
       } else if (params.length == 1 && instance instanceof HRegionServer &&
           params[0] instanceof Operation) {
         // annotate the response map with operation details
-        responseInfo.putAll(((Operation) params[1]).toMap());
+        responseInfo.putAll(((Operation) params[0]).toMap());
         // report to the log file
         LOG.warn("(operation" + tag + "): " +
             mapper.writeValueAsString(responseInfo));

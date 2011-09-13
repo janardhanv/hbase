@@ -409,12 +409,12 @@ public class AccessController extends BaseRegionObserver
 
   @Override
   public void preCreateTable(ObserverContext<MasterCoprocessorEnvironment> c,
-      HTableDescriptor desc, byte[][] splitKeys) throws IOException {
+      HTableDescriptor desc, HRegionInfo[] regions) throws IOException {
     requirePermission(Permission.Action.CREATE);
   }
   @Override
   public void postCreateTable(ObserverContext<MasterCoprocessorEnvironment> c,
-      HRegionInfo[] regions, boolean sync) throws IOException {}
+      HTableDescriptor desc, HRegionInfo[] regions) throws IOException {}
 
   @Override
   public void preDeleteTable(ObserverContext<MasterCoprocessorEnvironment> c,
@@ -499,16 +499,16 @@ public class AccessController extends BaseRegionObserver
 
   @Override
   public void preAssign(ObserverContext<MasterCoprocessorEnvironment> c,
-      byte[] regionName, boolean force) throws IOException {
+      HRegionInfo regionInfo, boolean force) throws IOException {
     requirePermission(Permission.Action.ADMIN);
   }
   @Override
   public void postAssign(ObserverContext<MasterCoprocessorEnvironment> c,
-      HRegionInfo regionInfo) throws IOException {}
+      HRegionInfo regionInfo, boolean force) throws IOException {}
 
   @Override
   public void preUnassign(ObserverContext<MasterCoprocessorEnvironment> c,
-      byte[] regionName, boolean force) throws IOException {
+       HRegionInfo regionInfo, boolean force) throws IOException {
     requirePermission(Permission.Action.ADMIN);
   }
   @Override

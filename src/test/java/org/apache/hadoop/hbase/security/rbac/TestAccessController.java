@@ -348,7 +348,7 @@ public class TestAccessController {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preAssign(ObserverContext.createAndPrepare(CP_ENV, null),
-            firstRegion.getKey().getRegionName(), false);
+            firstRegion.getKey(), false);
         return null;
       }
     };
@@ -372,8 +372,8 @@ public class TestAccessController {
 
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
-        ACCESS_CONTROLLER.preUnassign(ObserverContext.createAndPrepare(CP_ENV, null), firstRegion.getKey().getRegionName(),
-            false);
+        ACCESS_CONTROLLER.preUnassign(ObserverContext.createAndPrepare(CP_ENV, null),
+            firstRegion.getKey(), false);
         return null;
       }
     };

@@ -71,13 +71,13 @@ public class MasterCoprocessorHost
   }
 
   /* Implementation of hooks for invoking MasterObservers */
-  void preCreateTable(HTableDescriptor desc, byte[][] splitKeys)
-      throws IOException {
+  void preCreateTable(HTableDescriptor htd, HRegionInfo[] regions)
+    throws IOException {
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
-        ((MasterObserver)env.getInstance()).preCreateTable(ctx, desc, splitKeys);
+        ((MasterObserver)env.getInstance()).preCreateTable(ctx, htd, regions);
         if (ctx.shouldComplete()) {
           break;
         }
@@ -85,12 +85,13 @@ public class MasterCoprocessorHost
     }
   }
 
-  void postCreateTable(HRegionInfo[] regions, boolean sync) throws IOException {
+  void postCreateTable(HTableDescriptor htd, HRegionInfo[] regions)
+    throws IOException {
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
-        ((MasterObserver)env.getInstance()).postCreateTable(ctx, regions, sync);
+        ((MasterObserver)env.getInstance()).postCreateTable(ctx, htd, regions);
         if (ctx.shouldComplete()) {
           break;
         }
@@ -152,18 +153,21 @@ public class MasterCoprocessorHost
     }
   }
 
-  void preAddColumn(byte [] tableName, HColumnDescriptor column)
+  boolean preAddColumn(byte [] tableName, HColumnDescriptor column)
       throws IOException {
+    boolean bypass = false;
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         ((MasterObserver)env.getInstance()).preAddColumn(ctx, tableName, column);
+        bypass |= ctx.shouldBypass();
         if (ctx.shouldComplete()) {
           break;
         }
       }
     }
+    return bypass;
   }
 
   void postAddColumn(byte [] tableName, HColumnDescriptor column)
@@ -180,19 +184,22 @@ public class MasterCoprocessorHost
     }
   }
 
-  void preModifyColumn(byte [] tableName, HColumnDescriptor descriptor)
+  boolean preModifyColumn(byte [] tableName, HColumnDescriptor descriptor)
       throws IOException {
+    boolean bypass = false;
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         ((MasterObserver)env.getInstance()).preModifyColumn(
             ctx, tableName, descriptor);
+        bypass |= ctx.shouldBypass();
         if (ctx.shouldComplete()) {
           break;
         }
       }
     }
+    return bypass;
   }
 
   void postModifyColumn(byte [] tableName, HColumnDescriptor descriptor)
@@ -210,18 +217,21 @@ public class MasterCoprocessorHost
     }
   }
 
-  void preDeleteColumn(final byte [] tableName, final byte [] c)
+  boolean preDeleteColumn(final byte [] tableName, final byte [] c)
       throws IOException {
+    boolean bypass = false;
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         ((MasterObserver)env.getInstance()).preDeleteColumn(ctx, tableName, c);
+        bypass |= ctx.shouldBypass();
         if (ctx.shouldComplete()) {
           break;
         }
       }
     }
+    return bypass;
   }
 
   void postDeleteColumn(final byte [] tableName, final byte [] c)
@@ -290,19 +300,22 @@ public class MasterCoprocessorHost
     }
   }
 
-  void preMove(final HRegionInfo region, final ServerName srcServer, final ServerName destServer)
+  boolean preMove(final HRegionInfo region, final ServerName srcServer, final ServerName destServer)
       throws IOException {
+    boolean bypass = false;
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         ((MasterObserver)env.getInstance()).preMove(
             ctx, region, srcServer, destServer);
+        bypass |= ctx.shouldBypass();
         if (ctx.shouldComplete()) {
           break;
         }
       }
     }
+    return bypass;
   }
 
   void postMove(final HRegionInfo region, final ServerName srcServer, final ServerName destServer)
@@ -320,14 +333,14 @@ public class MasterCoprocessorHost
     }
   }
 
-  boolean preAssign(final byte [] regionName, final boolean force)
+  boolean preAssign(final HRegionInfo regionInfo, final boolean force)
       throws IOException {
     boolean bypass = false;
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
-        ((MasterObserver)env.getInstance()).preAssign(ctx, regionName, force);
+        ((MasterObserver)env.getInstance()).preAssign(ctx, regionInfo, force);
         bypass |= ctx.shouldBypass();
         if (ctx.shouldComplete()) {
           break;
@@ -337,12 +350,12 @@ public class MasterCoprocessorHost
     return bypass;
   }
 
-  void postAssign(final HRegionInfo regionInfo) throws IOException {
+  void postAssign(final HRegionInfo regionInfo, final boolean force) throws IOException {
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
-        ((MasterObserver)env.getInstance()).postAssign(ctx, regionInfo);
+        ((MasterObserver)env.getInstance()).postAssign(ctx, regionInfo, force);
         if (ctx.shouldComplete()) {
           break;
         }
@@ -350,7 +363,7 @@ public class MasterCoprocessorHost
     }
   }
 
-  boolean preUnassign(final byte [] regionName, final boolean force)
+  boolean preUnassign(final HRegionInfo regionInfo, final boolean force)
       throws IOException {
     boolean bypass = false;
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
@@ -358,7 +371,7 @@ public class MasterCoprocessorHost
       if (env.getInstance() instanceof MasterObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         ((MasterObserver)env.getInstance()).preUnassign(
-            ctx, regionName, force);
+            ctx, regionInfo, force);
         bypass |= ctx.shouldBypass();
         if (ctx.shouldComplete()) {
           break;

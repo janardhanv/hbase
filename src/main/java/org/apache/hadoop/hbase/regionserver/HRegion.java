@@ -39,6 +39,7 @@ import java.util.NavigableMap;
 import java.util.NavigableSet;
 import java.util.Random;
 import java.util.TreeMap;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.CountDownLatch;
@@ -1398,7 +1399,7 @@ public class HRegion implements HeapSize { // , Writable{
       try {
         // All edits for the given row (across all column families) must happen atomically.
         prepareDelete(delete);
-        delete(delete.getFamilyMap(), writeToWAL);
+        delete(delete.getFamilyMap(), delete.getClusterId(), writeToWAL);
       } finally {
         if(lockid == null) releaseRowLock(lid);
       }
@@ -1407,14 +1408,13 @@ public class HRegion implements HeapSize { // , Writable{
     }
   }
 
-
   /**
    * @param familyMap map of family to edits for the given family.
    * @param writeToWAL
    * @throws IOException
    */
-  public void delete(Map<byte[], List<KeyValue>> familyMap, boolean writeToWAL)
-      throws IOException {
+  public void delete(Map<byte[], List<KeyValue>> familyMap, UUID clusterId,
+      boolean writeToWAL) throws IOException {
     /* Run coprocessor pre hook outside of locks to avoid deadlock */
     if (coprocessorHost != null) {
       if (coprocessorHost.preDelete(familyMap, writeToWAL)) {
@@ -1484,7 +1484,7 @@ public class HRegion implements HeapSize { // , Writable{
         WALEdit walEdit = new WALEdit();
         addFamilyMapToWALEdit(familyMap, walEdit);
         this.log.append(regionInfo, this.htableDescriptor.getName(),
-            walEdit, now, this.htableDescriptor);
+            walEdit, clusterId, now, this.htableDescriptor);
       }
 
       // Now make changes to the memstore.
@@ -1559,7 +1559,7 @@ public class HRegion implements HeapSize { // , Writable{
       try {
         // All edits for the given row (across all column families) must happen atomically.
         // Coprocessor interception happens in put(Map,boolean)
-        put(put.getFamilyMap(), writeToWAL);
+        put(put.getFamilyMap(), put.getClusterId(), writeToWAL);
       } finally {
         if(lockid == null) releaseRowLock(lid);
       }
@@ -1643,23 +1643,17 @@ public class HRegion implements HeapSize { // , Writable{
       BatchOperationInProgress<Pair<Put, Integer>> batchOp) throws IOException {
     /* Run coprocessor pre hook outside of locks to avoid deadlock */
     if (coprocessorHost != null) {
-      List<Pair<Put, Integer>> ops =
-        new ArrayList<Pair<Put, Integer>>(batchOp.operations.length);
       for (int i = 0; i < batchOp.operations.length; i++) {
         Pair<Put, Integer> nextPair = batchOp.operations[i];
         Put put = nextPair.getFirst();
         Map<byte[], List<KeyValue>> familyMap = put.getFamilyMap();
         if (coprocessorHost.prePut(familyMap, put.getWriteToWAL())) {
           // pre hook says skip this Put
-          // adjust nextIndexToProcess if we skipped before it
-          if (batchOp.nextIndexToProcess > i) {
-            batchOp.nextIndexToProcess--;
-          }
-          continue;
+          // mark as success and skip below
+          batchOp.retCodeDetails[i] = new OperationStatus(
+              OperationStatusCode.SUCCESS);
         }
-        ops.add(nextPair);
       }
-      batchOp.operations = ops.toArray(new Pair[ops.size()]);
     }
 
     long now = EnvironmentEdgeManager.currentTimeMillis();
@@ -1688,6 +1682,13 @@ public class HRegion implements HeapSize { // , Writable{
         Map<byte[], List<KeyValue>> familyMap = put.getFamilyMap();
         // store the family map reference to allow for mutations
         familyMaps[lastIndexExclusive] = familyMap;
+
+        // skip anything that "ran" already
+        if (batchOp.retCodeDetails[lastIndexExclusive].getOperationStatusCode()
+            != OperationStatusCode.NOT_RUN) {
+          lastIndexExclusive++;
+          continue;
+        }
 
         // Check the families in the put. If bad, skip this one.
         try {
@@ -1754,8 +1755,9 @@ public class HRegion implements HeapSize { // , Writable{
       }
 
       // Append the edit to WAL
+      Put first = batchOp.operations[firstIndex].getFirst();
       this.log.append(regionInfo, this.htableDescriptor.getName(),
-          walEdit, now, this.htableDescriptor);
+          walEdit, first.getClusterId(), now, this.htableDescriptor);
 
       // ------------------------------------
       // STEP 4. Write back to memstore
@@ -1885,13 +1887,18 @@ public class HRegion implements HeapSize { // , Writable{
         }
         //If matches put the new put or delete the new delete
         if (matches) {
-          // All edits for the given row (across all column families) must happen atomically.
+          // All edits for the given row (across all column families) must
+          // happen atomically.
+          //
+          // Using default cluster id, as this can only happen in the
+          // originating cluster. A slave cluster receives the result as a Put
+          // or Delete
           if (isPut) {
-            put(((Put)w).getFamilyMap(), writeToWAL);
+            put(((Put)w).getFamilyMap(), HConstants.DEFAULT_CLUSTER_ID, writeToWAL);
           } else {
             Delete d = (Delete)w;
             prepareDelete(d);
-            delete(d.getFamilyMap(), writeToWAL);
+            delete(d.getFamilyMap(), HConstants.DEFAULT_CLUSTER_ID, writeToWAL);
           }
           return true;
         }
@@ -1982,7 +1989,7 @@ public class HRegion implements HeapSize { // , Writable{
     familyMap = new HashMap<byte[], List<KeyValue>>();
 
     familyMap.put(family, edits);
-    this.put(familyMap, true);
+    this.put(familyMap, HConstants.DEFAULT_CLUSTER_ID, true);
   }
 
   /**
@@ -1992,8 +1999,8 @@ public class HRegion implements HeapSize { // , Writable{
    * @param writeToWAL if true, then we should write to the log
    * @throws IOException
    */
-  private void put(Map<byte [], List<KeyValue>> familyMap, boolean writeToWAL)
-      throws IOException {
+  private void put(Map<byte[], List<KeyValue>> familyMap, UUID clusterId,
+      boolean writeToWAL) throws IOException {
     /* run pre put hook outside of lock to avoid deadlock */
     if (coprocessorHost != null) {
       if (coprocessorHost.prePut(familyMap, writeToWAL)) {
@@ -2018,7 +2025,7 @@ public class HRegion implements HeapSize { // , Writable{
         WALEdit walEdit = new WALEdit();
         addFamilyMapToWALEdit(familyMap, walEdit);
         this.log.append(regionInfo, this.htableDescriptor.getName(),
-            walEdit, now, this.htableDescriptor);
+            walEdit, clusterId, now, this.htableDescriptor);
       }
 
       long addedSize = applyFamilyMapToMemstore(familyMap);
@@ -3560,8 +3567,12 @@ public class HRegion implements HeapSize { // , Writable{
 
         // Actually write to WAL now
         if (writeToWAL) {
+          // Using default cluster id, as this can only happen in the orginating
+          // cluster. A slave cluster receives the final value (not the delta)
+          // as a Put.
           this.log.append(regionInfo, this.htableDescriptor.getName(),
-              walEdits, now, this.htableDescriptor);
+              walEdits, HConstants.DEFAULT_CLUSTER_ID, now,
+              this.htableDescriptor);
         }
 
         size = this.addAndGetGlobalMemstoreSize(size);
@@ -3618,36 +3629,40 @@ public class HRegion implements HeapSize { // , Writable{
         if (!results.isEmpty()) {
           KeyValue kv = results.get(0);
           if(kv.getValueLength() == 8){
-        	  byte [] buffer = kv.getBuffer();
-        	  int valueOffset = kv.getValueOffset();
-        	  result += Bytes.toLong(buffer, valueOffset, Bytes.SIZEOF_LONG);
+            byte [] buffer = kv.getBuffer();
+            int valueOffset = kv.getValueOffset();
+            result += Bytes.toLong(buffer, valueOffset, Bytes.SIZEOF_LONG);
           }
           else{
-        	  wrongLength = true;
+            wrongLength = true;
           }
         }
         if(!wrongLength){
-        	// build the KeyValue now:
-        	KeyValue newKv = new KeyValue(row, family,
+          // build the KeyValue now:
+          KeyValue newKv = new KeyValue(row, family,
             qualifier, EnvironmentEdgeManager.currentTimeMillis(),
             Bytes.toBytes(result));
 
-        	// now log it:
-        	if (writeToWAL) {
-        		long now = EnvironmentEdgeManager.currentTimeMillis();
-        		WALEdit walEdit = new WALEdit();
-        		walEdit.add(newKv);
-        		this.log.append(regionInfo, this.htableDescriptor.getName(),
-        				walEdit, now, this.htableDescriptor);
-        	}
+          // now log it:
+          if (writeToWAL) {
+            long now = EnvironmentEdgeManager.currentTimeMillis();
+            WALEdit walEdit = new WALEdit();
+            walEdit.add(newKv);
+            // Using default cluster id, as this can only happen in the
+            // orginating cluster. A slave cluster receives the final value (not
+            // the delta) as a Put.
+            this.log.append(regionInfo, this.htableDescriptor.getName(),
+                walEdit, HConstants.DEFAULT_CLUSTER_ID, now,
+                this.htableDescriptor);
+          }
 
-        	// Now request the ICV to the store, this will set the timestamp
-        	// appropriately depending on if there is a value in memcache or not.
-        	// returns the change in the size of the memstore from operation
-        	long size = store.updateColumnValue(row, family, qualifier, result);
+          // Now request the ICV to the store, this will set the timestamp
+          // appropriately depending on if there is a value in memcache or not.
+          // returns the change in the size of the memstore from operation
+          long size = store.updateColumnValue(row, family, qualifier, result);
 
-        	size = this.addAndGetGlobalMemstoreSize(size);
-        	flush = isFlushSize(size);
+          size = this.addAndGetGlobalMemstoreSize(size);
+          flush = isFlushSize(size);
         }
       } finally {
         this.updatesLock.readLock().unlock();

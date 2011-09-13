@@ -27,9 +27,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.client.RetriesExhaustedException;
 import org.apache.hadoop.hbase.io.HbaseObjectWritable;
+import org.apache.hadoop.hbase.monitoring.MonitoredRPCHandler;
 import org.apache.hadoop.hbase.security.HBasePolicyProvider;
 import org.apache.hadoop.hbase.security.HBaseSaslRpcServer;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenSecretManager;
+import org.apache.hadoop.hbase.util.Objects;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.metrics.util.MetricsTimeVaryingRate;
 import org.apache.hadoop.net.NetUtils;
@@ -363,7 +365,7 @@ public class SecureRpcEngine implements RpcEngine {
 
     @Override
     public Writable call(Class<? extends VersionedProtocol> protocol,
-        Writable param, long receivedTime)
+        Writable param, long receivedTime, MonitoredRPCHandler status)
     throws IOException {
       try {
         Invocation call = (Invocation)param;
@@ -372,6 +374,7 @@ public class SecureRpcEngine implements RpcEngine {
               "cause is a version mismatch between client and server.");
         }
         if (verbose) log("Call: " + call);
+
         Method method =
           protocol.getMethod(call.getMethodName(),
                                    call.getParameterClasses());
@@ -386,13 +389,16 @@ public class SecureRpcEngine implements RpcEngine {
         }
 
         long startTime = System.currentTimeMillis();
-        Object value = method.invoke(impl, call.getParameters());
+        Object[] params = call.getParameters();
+        Object value = method.invoke(impl, params);
         int processingTime = (int) (System.currentTimeMillis() - startTime);
         int qTime = (int) (startTime-receivedTime);
-        if (LOG.isDebugEnabled()) {
-          LOG.debug("Served: " + call.getMethodName() +
-            " queueTime= " + qTime +
-            " procesingTime= " + processingTime);
+        if (TRACELOG.isDebugEnabled()) {
+          TRACELOG.debug("Call #" + CurCall.get().id +
+              "; Served: " + protocol.getSimpleName()+"#"+call.getMethodName() +
+              " queueTime=" + qTime +
+              " processingTime=" + processingTime +
+              " contents=" + Objects.describeQuantity(params));
         }
         rpcMetrics.rpcQueueTime.inc(qTime);
         rpcMetrics.rpcProcessingTime.inc(processingTime);
@@ -400,7 +406,6 @@ public class SecureRpcEngine implements RpcEngine {
         if (verbose) log("Return: "+value);
 
         return new HbaseObjectWritable(method.getReturnType(), value);
-
       } catch (InvocationTargetException e) {
         Throwable target = e.getTargetException();
         if (target instanceof IOException) {

@@ -119,6 +119,7 @@ import org.apache.hadoop.hbase.regionserver.handler.OpenMetaHandler;
 import org.apache.hadoop.hbase.regionserver.handler.OpenRegionHandler;
 import org.apache.hadoop.hbase.regionserver.handler.OpenRootHandler;
 import org.apache.hadoop.hbase.regionserver.metrics.RegionServerMetrics;
+import org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.WALActionsListener;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
@@ -704,7 +705,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     // Interrupt catalog tracker here in case any regions being opened out in
     // handlers are stuck waiting on meta or root.
     if (this.catalogTracker != null) this.catalogTracker.stop();
-    if (this.fsOk) waitOnAllRegionsToClose();
+    if (this.fsOk) waitOnAllRegionsToClose(abortRequested);
 
     // Make sure the proxy is down.
     if (this.hbaseMaster != null) {
@@ -783,7 +784,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   /**
    * Wait on regions close.
    */
-  private void waitOnAllRegionsToClose() {
+  private void waitOnAllRegionsToClose(final boolean abort) {
     // Wait till all regions are closed before going out.
     int lastCount = -1;
     while (!isOnlineRegionsEmpty()) {
@@ -796,6 +797,16 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         // swamp the log.
         if (count < 10 && LOG.isDebugEnabled()) {
           LOG.debug(this.onlineRegions);
+        }
+      }
+      // Ensure all user regions have been sent a close. Use this to
+      // protect against the case where an open comes in after we start the
+      // iterator of onlineRegions to close all user regions.
+      for (Map.Entry<String, HRegion> e : this.onlineRegions.entrySet()) {
+        HRegionInfo hri = e.getValue().getRegionInfo();
+        if (!this.regionsInTransitionInRS.contains(hri.getEncodedNameAsBytes())) {
+          // Don't update zk with this close transition; pass false.
+          closeRegion(hri, abort, false);
         }
       }
       Threads.sleep(1000);
@@ -2331,6 +2342,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   @QosPriority(priority=HIGH_QOS)
   public RegionOpeningState openRegion(HRegionInfo region)
   throws IOException {
+    return openRegion(region, -1);
+  }
+  @Override
+  @QosPriority(priority = HIGH_QOS)
+  public RegionOpeningState openRegion(HRegionInfo region, int versionOfOfflineNode)
+      throws IOException {
     checkOpen();
     if (this.regionsInTransitionInRS.contains(region.getEncodedNameAsBytes())) {
       throw new RegionAlreadyInTransitionException("open", region.getEncodedName());
@@ -2345,12 +2362,16 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       region.getRegionNameAsString());
     this.regionsInTransitionInRS.add(region.getEncodedNameAsBytes());
     HTableDescriptor htd = this.tableDescriptors.get(region.getTableName());
+    // Need to pass the expected version in the constructor.
     if (region.isRootRegion()) {
-      this.service.submit(new OpenRootHandler(this, this, region, htd));
-    } else if(region.isMetaRegion()) {
-      this.service.submit(new OpenMetaHandler(this, this, region, htd));
+      this.service.submit(new OpenRootHandler(this, this, region, htd,
+          versionOfOfflineNode));
+    } else if (region.isMetaRegion()) {
+      this.service.submit(new OpenMetaHandler(this, this, region, htd,
+          versionOfOfflineNode));
     } else {
-      this.service.submit(new OpenRegionHandler(this, this, region, htd));
+      this.service.submit(new OpenRegionHandler(this, this, region, htd,
+          versionOfOfflineNode));
     }
     return RegionOpeningState.OPENED;
   }
@@ -3094,6 +3115,9 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     return c.getBlockCacheColumnFamilySummaries(this.conf);
   }
 
-
-
+  @Override
+  public byte[][] rollHLogWriter() throws IOException, FailedLogCloseException {
+    HLog wal = this.getWAL();
+    return wal.rollWriter(true);
+  }
 }

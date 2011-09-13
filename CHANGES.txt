@@ -239,6 +239,27 @@ Release 0.91.0 - Unreleased
    HBASE-4027  Off Heap Cache never creates Slabs (Li Pi)
    HBASE-4265  zookeeper.KeeperException$NodeExistsException if HMaster restarts
                while table is being disabled (Ming Ma)
+   HBASE-4338  Package build for rpm and deb are broken (Eric Yang)
+   HBASE-4309  slow query log metrics spewing warnings (Riley Patterson)
+   HBASE-4302  Only run Snappy compression tests if Snappy is available
+               (Alejandro Abdelnur via todd)
+   HBASE-4271  Clean up coprocessor handling of table operations
+               (Ming Ma via garyh)
+   HBASE-4341  HRS#closeAllRegions should take care of HRS#onlineRegions's
+               weak consistency (Jieshan Bean)
+   HBASE-4297  TableMapReduceUtil overwrites user supplied options
+               (Jan Lukavsky)
+   HBASE-4015  Refactor the TimeoutMonitor to make it less racy
+               (ramkrishna.s.vasudevan)
+   HBASE-4350  Fix a Bloom filter bug introduced by HFile v2 and
+               TestMultiColumnScanner that caught it (Mikhail Bautin)
+   HBASE-4007  distributed log splitting can get indefinitely stuck
+               (Prakash Khemani)
+   HBASE-4301  META migration from 0.90 to trunk fails (Subbu Iyer)
+   HBASE-4331  Bypassing default actions in prePut fails sometimes with
+               HTable client (Lars Hofhansl via garyh)
+   HBASE-4340  Hbase can't balance if ServerShutdownHandler encountered
+               exception (Jinchao Gao)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -444,6 +465,15 @@ Release 0.91.0 - Unreleased
    HBASE-4206  jenkins hash implementation uses longs unnecessarily
                (Ron Yang)
    HBASE-3842  Refactor Coprocessor Compaction API
+   HBASE-4312  Deploy new hbase logo
+   HBASE-4327  Compile HBase against hadoop 0.22 (Joep Rottinghuis)
+   HBASE-4339  Improve eclipse documentation and project file generation
+               (Eric Charles)
+   HBASE-4342  Update Thrift to 0.7.0 (Moaz Reyad)
+   HBASE-4260  Expose a command to manually trigger an HLog roll
+               (ramkrishna.s.vasudevan)
+   HBASE-4347  Remove duplicated code from Put, Delete, Get, Scan, MultiPut
+               (Lars Hofhansl)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -464,6 +494,8 @@ Release 0.91.0 - Unreleased
    HBASE-4315  RS requestsPerSecond counter seems to be off (subramanian raghunathan)
    HBASE-4289  Move spinlock to SingleSizeCache rather than the slab allocator
                (Li Pi)
+   HBASE-4296  Deprecate HTable[Interface].getRowOrBefore(...) (Lars Hofhansl)
+   HBASE-2195  Support cyclic replication (Lars Hofhansl)
 
   NEW FEATURES
    HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
@@ -508,6 +540,7 @@ Release 0.91.0 - Unreleased
                (Riley Patterson)
    HBASE-4292  Add a debugging dump servlet to the master and regionserver
                (todd)
+   HBASE-4057  Implement HBase version of "show processlist" (Riley Patterson)
 
 Release 0.90.5 - Unreleased
 
@@ -533,6 +566,10 @@ Release 0.90.5 - Unreleased
                re-assigns it but the RS warns 'already online on this server'
                (Gaojinchao)
    HBASE-4294  HLogSplitter sleeps with 1-second granularity (todd)
+   HBASE-4270  IOE ignored during flush-on-close causes dataloss
+   HBASE-4180  HBase should check the isSecurityEnabled flag before login
+   HBASE-4325  Improve error message when using STARTROW for meta scans
+               (Jonathan Hsieh)
 
   IMPROVEMENT
    HBASE-4205  Enhance HTable javadoc (Eric Charles)
@@ -543,6 +580,8 @@ Release 0.90.5 - Unreleased
                META/ROOT regions (todd)
    HBASE-4323  Add debug logging when AssignmentManager can't make a plan
                for a region (todd)
+   HBASE-4313  Refactor TestHBaseFsck to make adding individual hbck tests
+               easier (Jonathan Hsieh)
 
 Release 0.90.4 - August 10, 2011
 

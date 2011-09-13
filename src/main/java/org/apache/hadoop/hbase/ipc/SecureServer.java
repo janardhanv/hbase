@@ -758,15 +758,6 @@ public abstract class SecureServer extends HBaseServer {
   }
 
   /**
-   * Called for each call.
-   * @deprecated Use {@link #call(Class, org.apache.hadoop.io.Writable, long)} instead
-   */
-  @Deprecated
-  public Writable call(Writable param, long receiveTime) throws IOException {
-    return call(null, param, receiveTime);
-  }
-
-  /**
    * Authorize the incoming client connection.
    *
    * @param user client user

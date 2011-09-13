@@ -44,6 +44,7 @@ import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.io.hfile.BlockCacheColumnFamilySummary;
 import org.apache.hadoop.hbase.regionserver.RegionOpeningState;
+import org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.security.TokenInfo;
 import org.apache.hadoop.hbase.security.KerberosInfo;
@@ -337,7 +338,7 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
    * @param region
    *          region to open
    * @return RegionOpeningState 
-   *         OPENED - if region opened succesfully.
+   *         OPENED         - if region open request was successful.
    *         ALREADY_OPENED - if the region was already opened. 
    *         FAILED_OPENING - if region opening failed.
    *
@@ -345,6 +346,22 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
    */
   public RegionOpeningState openRegion(final HRegionInfo region) throws IOException;
 
+  /**
+   * Opens the specified region.
+   * @param region
+   *          region to open
+   * @param versionOfOfflineNode
+   *          the version of znode to compare when RS transitions the znode from
+   *          OFFLINE state.
+   * @return RegionOpeningState 
+   *         OPENED         - if region open request was successful.
+   *         ALREADY_OPENED - if the region was already opened. 
+   *         FAILED_OPENING - if region opening failed.
+   * @throws IOException
+   */
+  public RegionOpeningState openRegion(HRegionInfo region, int versionOfOfflineNode)
+      throws IOException;
+  
   /**
    * Opens the specified regions.
    * @param regions regions to open
@@ -518,4 +535,14 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
    * @throws IOException exception
    */
   public List<BlockCacheColumnFamilySummary> getBlockCacheColumnFamilySummaries() throws IOException;
+  /**
+   * Roll the log writer. That is, start writing log messages to a new file.
+   * 
+   * @throws IOException
+   * @throws FailedLogCloseException
+   * @return If lots of logs, flush the returned regions so next time through
+   * we can clean logs. Returns null if nothing to flush.  Names are actual
+   * region names as returned by {@link HRegionInfo#getEncodedName()} 
+   */
+  public byte[][] rollHLogWriter() throws IOException, FailedLogCloseException;
 }
