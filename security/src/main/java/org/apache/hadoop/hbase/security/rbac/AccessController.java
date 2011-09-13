@@ -63,6 +63,9 @@ public class AccessController extends BaseRegionObserver
     implements MasterObserver, AccessControllerProtocol {
   public static final Log LOG = LogFactory.getLog(AccessController.class);
 
+  private static final Log AUDITLOG =
+    LogFactory.getLog("SecurityLogger.org.apache.hadoop.hbase.security.rbac.AccessController");
+
   /**
    * Version number for AccessControllerProtocol
    */
@@ -179,27 +182,24 @@ public class AccessController extends BaseRegionObserver
     // this is a very common operation, so deal with it quickly.
     if ((hri.isRootRegion() || hri.isMetaRegion()) &&
         (permRequest == TablePermission.Action.READ)) {
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("All users are allowed to " + permRequest.toString() +
+      if (AUDITLOG.isDebugEnabled()) {
+        AUDITLOG.debug("All users are allowed to " + permRequest.toString() +
           " the table '" + hri.getTableNameAsString() + "'");
       }
       return true;
     }
 
     if (user == null) {
-      LOG.info("No user associated with request!  Permission denied!");
+      AUDITLOG.info("No user associated with request!  Permission denied!");
       return false;
     }
 
     // 2. The table owner has full privileges
     String owner = htd.getOwnerString();
-    if (owner == null) {
-      LOG.debug("Owner of '" + hri.getTableNameAsString() + " is (incorrectly) null.");
-    }
     if (user.getShortName().equals(owner)) {
       // owner of the table has full access
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("User '" + user.getShortName() + "' is owner: allowed to " +
+      if (AUDITLOG.isDebugEnabled()) {
+        AUDITLOG.debug("User '" + user.getShortName() + "' is owner: allowed to " +
           permRequest.toString() + " the table '" + hri.getTableNameAsString() +
           "'");
       }
@@ -263,8 +263,8 @@ public class AccessController extends BaseRegionObserver
 
   private void logDenied(User user, byte[] table, byte[] family,
       byte[] qualifier, Permission.Action perm) {
-    if (LOG.isDebugEnabled()) {
-      LOG.debug("User '" + user.getShortName() +
+    if (AUDITLOG.isDebugEnabled()) {
+      AUDITLOG.debug("User '" + user.getShortName() +
           "' is not allowed to have " + perm.toString() + " access to " +
           Bytes.toString(table) + "(" +
           family != null ? Bytes.toString(family) : "" +
