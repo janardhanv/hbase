@@ -1259,7 +1259,7 @@
         https://issues.apache.org/jira/secure/attachment/12459473/hdfs-895-branch-20-append.txt
         -->
         <!-- hadoop.version>0.20-append-r1057313</hadoop.version -->
-        <hadoop.version>0.20-security-append-SNAPSHOT</hadoop.version>
+        <hadoop.version>0.20.205.0-SNAPSHOT</hadoop.version>
         <zookeeper.version>3.4.0-security</zookeeper.version>
       </properties>
       <dependencies>
