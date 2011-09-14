@@ -108,6 +108,7 @@ public class HBaseSaslRpcClient {
   }
 
   private static void readStatus(DataInputStream inStream) throws IOException {
+    int id = inStream.readInt(); // read and discard dummy id
     int status = inStream.readInt(); // read status
     if (status != SaslStatus.SUCCESS.state) {
       throw new RemoteException(WritableUtils.readString(inStream),

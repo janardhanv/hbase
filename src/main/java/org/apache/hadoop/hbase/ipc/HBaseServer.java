@@ -999,8 +999,8 @@ public abstract class HBaseServer implements RpcServer {
     protected Socket socket;
     // Cache the remote host & port info so that even if the socket is
     // disconnected, we can say where it used to connect to.
-    private String hostAddress;
-    private int remotePort;
+    protected String hostAddress;
+    protected int remotePort;
     ConnectionHeader header = new ConnectionHeader();
     Class<? extends VersionedProtocol> protocol;
     protected User ticket = null;
@@ -1061,7 +1061,7 @@ public abstract class HBaseServer implements RpcServer {
     }
 
     /* Increment the outstanding RPC count */
-    private void incRpcCount() {
+    protected void incRpcCount() {
       rpcCount++;
     }
 

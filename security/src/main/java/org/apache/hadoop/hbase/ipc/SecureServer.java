@@ -86,15 +86,15 @@ public abstract class SecureServer extends HBaseServer {
 
   public static final Log LOG = LogFactory.getLog("org.apache.hadoop.ipc.SecureServer");
   private static final Log AUDITLOG =
-    LogFactory.getLog("SecurityLogger.org.apache.hadoop.ipc.HBaseServer");
+    LogFactory.getLog("SecurityLogger.org.apache.hadoop.ipc.SecureServer");
   private static final String AUTH_FAILED_FOR = "Auth failed for ";
   private static final String AUTH_SUCCESSFULL_FOR = "Auth successfull for ";
 
   protected SecretManager<TokenIdentifier> secretManager;
   protected ServiceAuthorizationManager authManager;
 
-  protected class Call extends HBaseServer.Call {
-    public Call(int id, Writable param, Connection connection,
+  protected class SecureCall extends HBaseServer.Call {
+    public SecureCall(int id, Writable param, Connection connection,
         Responder responder) {
       super(id, param, connection, responder);
     }
@@ -192,14 +192,8 @@ public abstract class SecureServer extends HBaseServer {
                                          //follows version is read.
     private ByteBuffer data;
     private ByteBuffer dataLengthBuffer;
-    protected final LinkedList<Call> responseQueue;
-    private volatile int rpcCount = 0; // number of outstanding rpcs
-    private long lastContact;
+    protected final LinkedList<SecureCall> responseQueue;
     private int dataLength;
-    // Cache the remote host & port info so that even if the socket is
-    // disconnected, we can say where it used to connect to.
-    private String hostAddress;
-    private int remotePort;
     private InetAddress addr;
 
     boolean useSasl;
@@ -215,42 +209,22 @@ public abstract class SecureServer extends HBaseServer {
 
     // Fake 'call' for failed authorization response
     private final int AUTHORIZATION_FAILED_CALLID = -1;
-    private final Call authFailedCall = 
-      new Call(AUTHORIZATION_FAILED_CALLID, null, this, null);
-    private ByteBufferOutputStream authFailedResponse =
-        new ByteBufferOutputStream(0);
     // Fake 'call' for SASL context setup
     private static final int SASL_CALLID = -33;
-    private final Call saslCall = new Call(SASL_CALLID, null, this, null);
-    private final ByteArrayOutputStream saslResponse = new ByteArrayOutputStream();
+    private final SecureCall saslCall = new SecureCall(SASL_CALLID, null, this, null);
 
     private boolean useWrap = false;
 
     public SecureConnection(SocketChannel channel, long lastContact) {
       super(channel, lastContact);
       this.channel = channel;
-      this.lastContact = lastContact;
       this.data = null;
       this.dataLengthBuffer = ByteBuffer.allocate(4);
       this.unwrappedData = null;
       this.unwrappedDataLengthBuffer = ByteBuffer.allocate(4);
       this.socket = channel.socket();
       this.addr = socket.getInetAddress();
-      if (addr == null) {
-        this.hostAddress = "*Unknown*";
-      } else {
-        this.hostAddress = addr.getHostAddress();
-      }
-      this.remotePort = socket.getPort();
-      this.responseQueue = new LinkedList<Call>();
-      if (socketSendBufferSize != 0) {
-        try {
-          socket.setSendBufferSize(socketSendBufferSize);
-        } catch (IOException e) {
-          LOG.warn("Connection: unable to set socket send buffer size to " +
-                   socketSendBufferSize);
-        }
-      }
+      this.responseQueue = new LinkedList<SecureCall>();
     }
 
     @Override
@@ -264,33 +238,6 @@ public abstract class SecureServer extends HBaseServer {
 
     public InetAddress getHostInetAddress() {
       return addr;
-    }
-
-    public void setLastContact(long lastContact) {
-      this.lastContact = lastContact;
-    }
-
-    public long getLastContact() {
-      return lastContact;
-    }
-
-    /* Return true if the connection has no outstanding rpc */
-    private boolean isIdle() {
-      return rpcCount == 0;
-    }
-
-    /* Decrement the outstanding RPC count */
-    protected void decRpcCount() {
-      rpcCount--;
-    }
-
-    /* Increment the outstanding RPC count */
-    private void incRpcCount() {
-      rpcCount++;
-    }
-
-    protected boolean timedOut(long currentTime) {
-      return isIdle() && currentTime - lastContact > maxIdleTime;
     }
 
     private User getAuthorizedUgi(String authorizedId)
@@ -414,16 +361,8 @@ public abstract class SecureServer extends HBaseServer {
 
     private void doSaslReply(SaslStatus status, Writable rv,
         String errorClass, String error) throws IOException {
-      saslResponse.reset();
-      DataOutputStream out = new DataOutputStream(saslResponse);
-      out.writeInt(status.state); // write status
-      if (status == SaslStatus.SUCCESS) {
-        rv.write(out);
-      } else {
-        WritableUtils.writeString(out, errorClass);
-        WritableUtils.writeString(out, error);
-      }
-      saslCall.setResponse(rv, errorClass, error);
+      saslCall.setResponse(rv, errorClass, error,
+          status == SaslStatus.SUCCESS ? Status.SUCCESS : Status.ERROR);
       saslCall.responder = responder;
       saslCall.sendResponseIfReady();
     }
@@ -478,7 +417,7 @@ public abstract class SecureServer extends HBaseServer {
           if (isSecurityEnabled && authMethod == AuthMethod.SIMPLE) {
             AccessControlException ae = new AccessControlException(
                 "Authentication is required");
-            Call failedCall = new Call(AUTHORIZATION_FAILED_CALLID, null, this,
+            SecureCall failedCall = new SecureCall(AUTHORIZATION_FAILED_CALLID, null, this,
                 null);
             failedCall.setResponse(null, ae.getClass().getName(),
                 ae.getMessage(), Status.FATAL);
@@ -659,7 +598,7 @@ public abstract class SecureServer extends HBaseServer {
       Writable param = ReflectionUtils.newInstance(paramClass, conf);           // read param
       param.readFields(dis);
 
-      Call call = new Call(id, param, this, responder);
+      SecureCall call = new SecureCall(id, param, this, responder);
 
       if (priorityCallQueue != null && getQosLevel(param) > highPriorityLevel) {
         priorityCallQueue.put(call);
@@ -686,7 +625,7 @@ public abstract class SecureServer extends HBaseServer {
       } catch (AuthorizationException ae) {
         LOG.debug("Connection authorization failed: "+ae.getMessage(), ae);
         rpcMetrics.authorizationFailures.inc();
-        Call failedCall = new Call(AUTHORIZATION_FAILED_CALLID, null, this,
+        SecureCall failedCall = new SecureCall(AUTHORIZATION_FAILED_CALLID, null, this,
             null);
         failedCall.setResponse(null, ae.getClass().getName(), ae.getMessage(),
             Status.FATAL);
