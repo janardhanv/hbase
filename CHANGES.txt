@@ -260,6 +260,8 @@ Release 0.91.0 - Unreleased
                HTable client (Lars Hofhansl via garyh)
    HBASE-4340  Hbase can't balance if ServerShutdownHandler encountered
                exception (Jinchao Gao)
+   HBASE-4394  Add support for seeking hints to FilterList
+   HBASE-4406  TestOpenRegionHandler failing after HBASE-4287 (todd)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -474,6 +476,11 @@ Release 0.91.0 - Unreleased
                (ramkrishna.s.vasudevan)
    HBASE-4347  Remove duplicated code from Put, Delete, Get, Scan, MultiPut
                (Lars Hofhansl)
+   HBASE-4359  Show dead RegionServer names in the HMaster info page
+               (Harsh J)
+   HBASE-4287  If region opening fails, change region in transition into
+               a FAILED_OPEN state so that it can be retried quickly. (todd)
+   HBASE-4381  Refactor split decisions into a split policy class. (todd)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -570,6 +577,8 @@ Release 0.90.5 - Unreleased
    HBASE-4180  HBase should check the isSecurityEnabled flag before login
    HBASE-4325  Improve error message when using STARTROW for meta scans
                (Jonathan Hsieh)
+   HBASE-4238  CatalogJanitor can clear a daughter that split before
+               processing its parent
 
   IMPROVEMENT
    HBASE-4205  Enhance HTable javadoc (Eric Charles)
@@ -582,6 +591,12 @@ Release 0.90.5 - Unreleased
                for a region (todd)
    HBASE-4313  Refactor TestHBaseFsck to make adding individual hbck tests
                easier (Jonathan Hsieh)
+   HBASE-4272. Add -metaonly flag to hbck feature to only inspect and try
+               to repair META and ROOT. (todd)
+   HBASE-4321. Add a more comprehensive region split calculator for future use
+               in hbck. (Jonathan Hsieh)
+   HBASE-4384  Hard to tell what causes failure in CloseRegionHandler#getCurrentVersion
+               (Harsh J)
 
 Release 0.90.4 - August 10, 2011
 

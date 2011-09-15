@@ -258,7 +258,7 @@ public class HRegion implements HeapSize { // , Writable{
   private final ReentrantReadWriteLock updatesLock =
     new ReentrantReadWriteLock();
   private boolean splitRequest;
-  private byte[] splitPoint = null;
+  private byte[] explicitSplitPoint = null;
 
   private final ReadWriteConsistencyControl rwcc =
       new ReadWriteConsistencyControl();
@@ -271,6 +271,7 @@ public class HRegion implements HeapSize { // , Writable{
    */
   public final static String REGIONINFO_FILE = ".regioninfo";
   private HTableDescriptor htableDescriptor = null;
+  private RegionSplitPolicy splitPolicy;
 
   /**
    * Should only be used for testing purposes
@@ -420,6 +421,10 @@ public class HRegion implements HeapSize { // , Writable{
     this.writestate.setReadOnly(this.htableDescriptor.isReadOnly());
 
     this.writestate.compacting = 0;
+    
+    // Initialize split policy
+    this.splitPolicy = RegionSplitPolicy.create(this, conf);
+    
     this.lastFlushTime = EnvironmentEdgeManager.currentTimeMillis();
     // Use maximum of log sequenceid or that which was found in stores
     // (particularly if no recovered edits, seqid will be -1).
@@ -1286,7 +1291,7 @@ public class HRegion implements HeapSize { // , Writable{
     }
     // look across all the HStores for this region and determine what the
     // closest key is across all column families, since the data may be sparse
-    checkRow(row);
+    checkRow(row, "getClosestRowBefore");
     startRegionOperation();
     this.readRequestsCount.increment();
     try {
@@ -2405,10 +2410,10 @@ public class HRegion implements HeapSize { // , Writable{
   //////////////////////////////////////////////////////////////////////////////
 
   /** Make sure this is a valid row for the HRegion */
-  private void checkRow(final byte [] row) throws IOException {
+  private void checkRow(final byte [] row, String op) throws IOException {
     if(!rowIsInRange(regionInfo, row)) {
       throw new WrongRegionException("Requested row out of range for " +
-          "HRegion " + this + ", startKey='" +
+          op + "on HRegion " + this + ", startKey='" +
           Bytes.toStringBinary(regionInfo.getStartKey()) + "', getEndKey()='" +
           Bytes.toStringBinary(regionInfo.getEndKey()) + "', row='" +
           Bytes.toStringBinary(row) + "'");
@@ -2456,7 +2461,7 @@ public class HRegion implements HeapSize { // , Writable{
    */
   private Integer internalObtainRowLock(final byte[] row, boolean waitForLock)
       throws IOException {
-    checkRow(row);
+    checkRow(row, "row lock");
     startRegionOperation();
     try {
       HashedBytes rowKey = new HashedBytes(row);
@@ -3504,7 +3509,7 @@ public class HRegion implements HeapSize { // , Writable{
   throws IOException {
     // TODO: Use RWCC to make this set of increments atomic to reads
     byte [] row = increment.getRow();
-    checkRow(row);
+    checkRow(row, "increment");
     TimeRange tr = increment.getTimeRange();
     boolean flush = false;
     WALEdit walEdits = null;
@@ -3605,7 +3610,7 @@ public class HRegion implements HeapSize { // , Writable{
   public long incrementColumnValue(byte [] row, byte [] family,
       byte [] qualifier, long amount, boolean writeToWAL)
   throws IOException {
-    checkRow(row);
+    checkRow(row, "increment");
     boolean flush = false;
     boolean wrongLength = false;
     // Lock row
@@ -3699,7 +3704,7 @@ public class HRegion implements HeapSize { // , Writable{
   public static final long FIXED_OVERHEAD = ClassSize.align(
       ClassSize.OBJECT +
       ClassSize.ARRAY +
-      27 * ClassSize.REFERENCE + Bytes.SIZEOF_INT +
+      28 * ClassSize.REFERENCE + Bytes.SIZEOF_INT +
       (4 * Bytes.SIZEOF_LONG) +
       Bytes.SIZEOF_BOOLEAN);
 
@@ -3891,8 +3896,8 @@ public class HRegion implements HeapSize { // , Writable{
     return this.splitRequest;
   }
 
-  byte[] getSplitPoint() {
-    return this.splitPoint;
+  byte[] getExplicitSplitPoint() {
+    return this.explicitSplitPoint;
   }
 
   void forceSplit(byte[] sp) {
@@ -3900,7 +3905,7 @@ public class HRegion implements HeapSize { // , Writable{
     //        therefore, no reason to clear this value
     this.splitRequest = true;
     if (sp != null) {
-      this.splitPoint = sp;
+      this.explicitSplitPoint = sp;
     }
   }
 
@@ -3922,20 +3927,33 @@ public class HRegion implements HeapSize { // , Writable{
    * is based on the size of the store.
    */
   public byte[] checkSplit() {
-    if (this.splitPoint != null) {
-      return this.splitPoint;
-    }
-    byte[] splitPointFromLargestStore = null;
-    long largestStoreSize = 0;
-    for (Store s : stores.values()) {
-      byte[] splitPoint = s.checkSplit();
-      long storeSize = s.getSize();
-      if (splitPoint != null && largestStoreSize < storeSize) {
-        splitPointFromLargestStore = splitPoint;
-        largestStoreSize = storeSize;
+    // Can't split META
+    if (getRegionInfo().isMetaRegion()) {
+      if (shouldForceSplit()) {
+        LOG.warn("Cannot split meta regions in HBase 0.20 and above");
       }
+      return null;
     }
-    return splitPointFromLargestStore;
+
+    if (this.explicitSplitPoint != null) {
+      return this.explicitSplitPoint;
+    }
+    
+    if (!splitPolicy.shouldSplit()) {
+      return null;
+    }
+    
+    byte[] ret = splitPolicy.getSplitPoint();
+    
+    if (ret != null) {
+      try {
+        checkRow(ret, "calculated split");
+      } catch (IOException e) {
+        LOG.error("Ignoring invalid split", e);
+        return null;
+      }
+    }        
+    return ret;
   }
 
   /**

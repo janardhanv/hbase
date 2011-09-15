@@ -204,12 +204,6 @@ public final class HConstants {
   /** Configuration key storing the cluster ID */
   public static final String CLUSTER_ID = "hbase.cluster.id";
 
-  /**
-   * Attribute used in Puts and Gets to indicate the originating
-   * cluster.
-   */
-  public static final String CLUSTER_ID_ATTR = "_c.id_";
-
   // Always store the location of the root table's HRegion.
   // This HRegion is never split.
 
@@ -497,7 +491,10 @@ public final class HConstants {
   public static final String HBASE_MASTER_LOGCLEANER_PLUGINS =
       "hbase.master.logcleaner.plugins";
 
-   /*
+  public static final String HBASE_REGION_SPLIT_POLICY_KEY =
+    "hbase.regionserver.region.split.policy";
+
+  /*
     * Minimum percentage of free heap necessary for a successful cluster startup.
     */
   public static final float HBASE_CLUSTER_MINIMUM_MEMORY_THRESHOLD = 0.2f;
