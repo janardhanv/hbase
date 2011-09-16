@@ -393,8 +393,7 @@ public class TestWALReplay {
     // Set down maximum recovery so we dfsclient doesn't linger retrying something
     // long gone.
     HBaseTestingUtility.setMaxRecoveryErrorCount(wal.getOutputStream(), 1);
-
-    // Make a new fs for the splitter and run as a new user so we can take
+    // Make a new conf and a new fs for the splitter to run on so we can take
     // over old wal.
     final Configuration newConf = HBaseConfiguration.create(this.conf);
     User user = HBaseTestingUtility.getDifferentUser(newConf,

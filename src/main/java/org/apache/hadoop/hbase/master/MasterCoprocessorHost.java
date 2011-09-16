@@ -1,5 +1,5 @@
 /*
- * Copyright 2011 The Apache Software Foundation
+ * Copyright 2010 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -61,7 +61,6 @@ public class MasterCoprocessorHost
   private MasterServices masterServices;
 
   MasterCoprocessorHost(final MasterServices services, final Configuration conf) {
-    super(conf);
     this.masterServices = services;
     loadSystemCoprocessors(conf, MASTER_COPROCESSOR_CONF_KEY);
   }

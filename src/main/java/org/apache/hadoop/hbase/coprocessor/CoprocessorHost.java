@@ -69,8 +69,7 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
   protected String pathPrefix;
   protected volatile int loadSequence;
 
-  public CoprocessorHost(Configuration conf) {
-    this.conf = conf;
+  public CoprocessorHost() {
     pathPrefix = UUID.randomUUID().toString();
   }
 
@@ -488,8 +487,6 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
     private int seq;
     private Configuration conf;
 
-    protected Configuration envConf;
-
     /**
      * Constructor
      * @param impl the coprocessor instance
@@ -499,7 +496,6 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
         final int seq, final Configuration conf) {
       this.impl = impl;
       this.priority = priority;
-      this.envConf = conf;
       this.state = Coprocessor.State.INSTALLED;
       this.seq = seq;
       this.conf = conf;
@@ -589,11 +585,6 @@ public abstract class CoprocessorHost<E extends CoprocessorEnvironment> {
     @Override
     public HTableInterface getTable(byte[] tableName) throws IOException {
       return new HTableWrapper(tableName);
-    }
-
-    @Override
-    public Configuration getConf() {
-      return envConf;
     }
   }
 

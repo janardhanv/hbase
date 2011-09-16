@@ -28,15 +28,15 @@ import java.net.ConnectException;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.*;
-import org.apache.hadoop.hbase.catalog.MetaReader.Visitor;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Put;
-import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
-import org.apache.hadoop.hbase.master.MasterServices;
 import org.apache.hadoop.hbase.migration.HRegionInfo090x;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
+import org.apache.hadoop.hbase.master.MasterServices;
+import org.apache.hadoop.hbase.client.Result;
+import org.apache.hadoop.hbase.catalog.MetaReader.Visitor;
 
 /**
  * Writes region and assignment information to <code>.META.</code>.
@@ -385,10 +385,8 @@ public class MetaEditor {
 
   private static Put addRegionInfo(final Put p, final HRegionInfo hri)
   throws IOException {
-
     p.add(HConstants.CATALOG_FAMILY, HConstants.REGIONINFO_QUALIFIER,
         Writables.getBytes(hri));
-
     return p;
   }
 

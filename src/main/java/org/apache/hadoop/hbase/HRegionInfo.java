@@ -159,6 +159,7 @@ public class HRegionInfo extends VersionedWritable implements WritableComparable
 
   // Current TableName
   private byte[] tableName = null;
+  private String tableNameAsString = null;
 
   private void setHashCode() {
     int result = Arrays.hashCode(this.regionName);

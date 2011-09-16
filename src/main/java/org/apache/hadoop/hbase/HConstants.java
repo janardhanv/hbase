@@ -331,9 +331,6 @@ public final class HConstants {
   public static final String VERSIONS = "VERSIONS";
   public static final String IN_MEMORY = "IN_MEMORY";
 
-  // for access control implementation.
-  public static final String OWNER = "OWNER";
-
   /**
    * This is a retry backoff multiplier table similar to the BSD TCP syn
    * backoff table, a bit more aggressive than simple exponential backoff.

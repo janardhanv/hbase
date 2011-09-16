@@ -159,12 +159,6 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
    */
   public HTableDescriptor() {
     super();
-    try {
-      setOwner(User.getCurrent());
-    }
-    catch (IOException e) {
-      //..
-    }
   }
 
   /**
@@ -205,7 +199,6 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
     super();
     this.name = desc.name.clone();
     this.nameAsString = Bytes.toString(this.name);
-
     setMetaFlags(this.name);
     for (HColumnDescriptor c: desc.families.values()) {
       this.families.put(c.getName(), new HColumnDescriptor(c));
@@ -515,7 +508,6 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
   public String toString() {
     StringBuilder s = new StringBuilder();
     s.append('{');
-
     s.append(HConstants.NAME);
     s.append(" => '");
     s.append(Bytes.toString(name));
@@ -873,7 +865,7 @@ public class HTableDescriptor implements WritableComparable<HTableDescriptor> {
             10, // Ten is arbitrary number.  Keep versions to help debugging.
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
             HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
-            HConstants.REPLICATION_SCOPE_LOCAL) });
+            HConstants.REPLICATION_SCOPE_LOCAL)});
 
 
   public void setOwner(User owner) {

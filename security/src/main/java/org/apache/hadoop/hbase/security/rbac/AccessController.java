@@ -124,7 +124,8 @@ public class AccessController extends BaseRegionObserver
     for (String tableName: tableSet) {
       try {
         ListMultimap<String,TablePermission> perms =
-          AccessControlLists.getTablePermissions(regionEnv.getConf(), Bytes.toBytes(tableName));
+          AccessControlLists.getTablePermissions(regionEnv.getConfiguration(),
+              Bytes.toBytes(tableName));
         byte[] serialized = AccessControlLists.writePermissionsAsBytes(
             perms, e.getRegion().getConf());
         this.authManager.getZKPermissionWatcher().writeToZookeeper(tableName,
@@ -145,7 +146,8 @@ public class AccessController extends BaseRegionObserver
 
       try {
         ListMultimap<String,TablePermission> perms =
-          AccessControlLists.getTablePermissions(regionEnv.getConf(), table);
+          AccessControlLists.getTablePermissions(regionEnv.getConfiguration(),
+              table);
         byte[] serialized = AccessControlLists.writePermissionsAsBytes(perms,
             e.getRegion().getConf());
         this.authManager.getZKPermissionWatcher().writeToZookeeper(tableName,
@@ -401,7 +403,7 @@ public class AccessController extends BaseRegionObserver
       MasterCoprocessorEnvironment e = (MasterCoprocessorEnvironment)env;
       this.authManager = TableAuthManager.get(
           e.getMasterServices().getZooKeeper(),
-          e.getConf());
+          e.getConfiguration());
     }
 
     // if running at region
@@ -813,7 +815,7 @@ public class AccessController extends BaseRegionObserver
 
       requirePermission(Permission.Action.ADMIN);
 
-      AccessControlLists.addTablePermission(regionEnv.getConf(),
+      AccessControlLists.addTablePermission(regionEnv.getConfiguration(),
           permission.getTable(), Bytes.toString(user), permission);
       LOG.info("Grant permission successfully.");
     } else {
@@ -835,7 +837,7 @@ public class AccessController extends BaseRegionObserver
 
       requirePermission(Permission.Action.ADMIN);
 
-      AccessControlLists.removeTablePermission(regionEnv.getConf(),
+      AccessControlLists.removeTablePermission(regionEnv.getConfiguration(),
           permission.getTable(), Bytes.toString(user), permission);
       LOG.info("Revoke permission successfully.");
     } else {
@@ -854,7 +856,7 @@ public class AccessController extends BaseRegionObserver
       requirePermission(Permission.Action.ADMIN);
 
       List<UserPermission> perms = AccessControlLists.getUserPermissions
-          (regionEnv.getConf(), tableName);
+          (regionEnv.getConfiguration(), tableName);
       return perms;
     } else {
       throw new CoprocessorException(AccessController.class, "This method " +

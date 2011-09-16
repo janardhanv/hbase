@@ -397,7 +397,7 @@ public class HConnectionManager {
           username = currentUser.getName();
         }
       } catch (IOException ioe) {
-        LOG.warn("Error obtaining curr ent user, skipping username in HConnectionKey",
+        LOG.warn("Error obtaining current user, skipping username in HConnectionKey",
             ioe);
       }
     }

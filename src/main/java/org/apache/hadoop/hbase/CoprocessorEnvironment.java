@@ -49,9 +49,4 @@ public interface CoprocessorEnvironment {
    * @throws IOException
    */
   public HTableInterface getTable(byte[] tableName) throws IOException;
-
-  /**
-   * @return the current configuration
-   */
-  public Configuration getConf();
 }

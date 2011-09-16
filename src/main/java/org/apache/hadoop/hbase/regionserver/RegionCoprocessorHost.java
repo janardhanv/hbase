@@ -109,7 +109,6 @@ public class RegionCoprocessorHost
    */
   public RegionCoprocessorHost(final HRegion region,
       final RegionServerServices rsServices, final Configuration conf) {
-    super(conf);
     this.rsServices = rsServices;
     this.region = region;
     this.pathPrefix = this.region.getRegionNameAsString().replace(',', '_');
