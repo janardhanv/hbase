@@ -43,7 +43,7 @@ public class TestSlabCache {
   static final int CACHE_SIZE = 1000000;
   static final int NUM_BLOCKS = 101;
   static final int BLOCK_SIZE = CACHE_SIZE / NUM_BLOCKS;
-  static final int NUM_THREADS = 1000;
+  static final int NUM_THREADS = 50;
   static final int NUM_QUERIES = 10000;
   SlabCache cache;
 
@@ -83,6 +83,11 @@ public class TestSlabCache {
   }
 
   @Test
+  public void testCacheMultiThreadedEviction() throws Exception {
+    CacheTestUtils.hammerEviction(cache, BLOCK_SIZE, 10, NUM_QUERIES);
+  }
+
+  @Test
   /*Just checks if ranges overlap*/
   public void testStatsArithmetic(){
     SlabStats test = cache.requestStats;
@@ -91,5 +96,10 @@ public class TestSlabCache {
           " lower " + test.getLowerBound(i + 1),
           test.getUpperBound(i) <= test.getLowerBound(i + 1));
     }
+  }
+
+  @Test
+  public void testHeapSizeChanges(){
+    CacheTestUtils.testHeapSizeChanges(cache, BLOCK_SIZE);
   }
 }

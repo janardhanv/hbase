@@ -499,12 +499,12 @@ public class AccessController extends BaseRegionObserver
 
   @Override
   public void preAssign(ObserverContext<MasterCoprocessorEnvironment> c,
-      HRegionInfo regionInfo, boolean force) throws IOException {
+      HRegionInfo regionInfo) throws IOException {
     requirePermission(Permission.Action.ADMIN);
   }
   @Override
   public void postAssign(ObserverContext<MasterCoprocessorEnvironment> c,
-      HRegionInfo regionInfo, boolean force) throws IOException {}
+      HRegionInfo regionInfo) throws IOException {}
 
   @Override
   public void preUnassign(ObserverContext<MasterCoprocessorEnvironment> c,

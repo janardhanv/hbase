@@ -43,7 +43,6 @@ import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.Stoppable;
@@ -96,7 +95,7 @@ public class ReplicationSource extends Thread
   // Should we stop everything?
   private Stoppable stopper;
   // List of chosen sinks (region servers)
-  private List<HServerAddress> currentPeers;
+  private List<ServerName> currentPeers;
   // How long should we sleep for each retry
   private long sleepForRetries;
   // Max size in bytes of entriesArray
@@ -173,7 +172,7 @@ public class ReplicationSource extends Thread
     this.conn = HConnectionManager.getConnection(conf);
     this.zkHelper = manager.getRepZkWrapper();
     this.ratio = this.conf.getFloat("replication.source.ratio", 0.1f);
-    this.currentPeers = new ArrayList<HServerAddress>();
+    this.currentPeers = new ArrayList<ServerName>();
     this.random = new Random();
     this.replicating = replicating;
     this.manager = manager;
@@ -215,19 +214,18 @@ public class ReplicationSource extends Thread
     this.currentPeers.clear();
     List<ServerName> addresses =
         this.zkHelper.getSlavesAddresses(peerId);
-    Set<HServerAddress> setOfAddr = new HashSet<HServerAddress>();
+    Set<ServerName> setOfAddr = new HashSet<ServerName>();
     int nbPeers = (int) (Math.ceil(addresses.size() * ratio));
     LOG.info("Getting " + nbPeers +
         " rs from peer cluster # " + peerId);
     for (int i = 0; i < nbPeers; i++) {
-      HServerAddress address;
+      ServerName sn;
       // Make sure we get one address that we don't already have
       do {
-        ServerName sn = addresses.get(this.random.nextInt(addresses.size()));
-        address = new HServerAddress(sn.getHostname(), sn.getPort());
-      } while (setOfAddr.contains(address));
-      LOG.info("Choosing peer " + address);
-      setOfAddr.add(address);
+        sn = addresses.get(this.random.nextInt(addresses.size()));
+      } while (setOfAddr.contains(sn));
+      LOG.info("Choosing peer " + sn);
+      setOfAddr.add(sn);
     }
     this.currentPeers.addAll(setOfAddr);
   }
@@ -242,7 +240,7 @@ public class ReplicationSource extends Thread
   public void run() {
     connectToPeers();
     // We were stopped while looping to connect to sinks, just abort
-    if (this.stopper.isStopped()) {
+    if (!this.isActive()) {
       return;
     }
     // delay this until we are in an asynchronous thread
@@ -267,7 +265,7 @@ public class ReplicationSource extends Thread
     }
     int sleepMultiplier = 1;
     // Loop until we close down
-    while (!stopper.isStopped() && this.running) {
+    while (isActive()) {
       // Sleep until replication is enabled again
       if (!this.replicating.get() || !this.sourceEnabled.get()) {
         if (sleepForRetries("Replication is disabled", sleepMultiplier)) {
@@ -350,7 +348,7 @@ public class ReplicationSource extends Thread
       // If we didn't get anything to replicate, or if we hit a IOE,
       // wait a bit and retry.
       // But if we need to stop, don't bother sleeping
-      if (!stopper.isStopped() && (gotIOE || currentNbEntries == 0)) {
+      if (this.isActive() && (gotIOE || currentNbEntries == 0)) {
         this.manager.logPositionAndCleanOldLogs(this.currentPath,
             this.peerClusterZnode, this.position, queueRecovered);
         if (sleepForRetries("Nothing to replicate", sleepMultiplier)) {
@@ -430,7 +428,8 @@ public class ReplicationSource extends Thread
 
   private void connectToPeers() {
     // Connect to peer cluster first, unless we have to stop
-    while (!this.stopper.isStopped() && this.currentPeers.size() == 0) {
+    while (this.isActive() && this.currentPeers.size() == 0) {
+
       try {
         chooseSinks();
         Thread.sleep(this.sleepForRetries);
@@ -588,7 +587,7 @@ public class ReplicationSource extends Thread
       LOG.warn("Was given 0 edits to ship");
       return;
     }
-    while (!this.stopper.isStopped()) {
+    while (this.isActive()) {
       try {
         HRegionInterface rrs = getRS();
         LOG.debug("Replicating " + currentNbEntries);
@@ -615,6 +614,7 @@ public class ReplicationSource extends Thread
         }
         try {
           boolean down;
+          // Spin while the slave is down and we're not asked to shutdown/close
           do {
             down = isSlaveDown();
             if (down) {
@@ -624,7 +624,7 @@ public class ReplicationSource extends Thread
                 chooseSinks();
               }
             }
-          } while (!this.stopper.isStopped() && down);
+          } while (this.isActive() && down );
         } catch (InterruptedException e) {
           LOG.debug("Interrupted while trying to contact the peer cluster");
         } catch (KeeperException e) {
@@ -661,7 +661,8 @@ public class ReplicationSource extends Thread
     Thread.UncaughtExceptionHandler handler =
         new Thread.UncaughtExceptionHandler() {
           public void uncaughtException(final Thread t, final Throwable e) {
-            terminate("Uncaught exception during runtime", new Exception(e));
+            LOG.error("Unexpected exception in ReplicationSource," +
+              " currentPath=" + currentPath, e);
           }
         };
     Threads.setDaemonThreadRunning(
@@ -694,9 +695,9 @@ public class ReplicationSource extends Thread
     if (this.currentPeers.size() == 0) {
       throw new IOException(this.peerClusterZnode + " has 0 region servers");
     }
-    HServerAddress address =
+    ServerName address =
         currentPeers.get(random.nextInt(this.currentPeers.size()));
-    return this.conn.getHRegionConnection(address);
+    return this.conn.getHRegionConnection(address.getHostname(), address.getPort());
   }
 
   /**
@@ -742,6 +743,10 @@ public class ReplicationSource extends Thread
 
   public void setSourceEnabled(boolean status) {
     this.sourceEnabled.set(status);
+  }
+
+  private boolean isActive() {
+    return !this.stopper.isStopped() && this.running;
   }
 
   /**

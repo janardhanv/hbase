@@ -348,7 +348,7 @@ public class TestAccessController {
     PrivilegedExceptionAction action = new PrivilegedExceptionAction() {
       public Object run() throws Exception {
         ACCESS_CONTROLLER.preAssign(ObserverContext.createAndPrepare(CP_ENV, null),
-            firstRegion.getKey(), false);
+            firstRegion.getKey());
         return null;
       }
     };

@@ -24,11 +24,16 @@ import java.util.List;
 
 import org.apache.hadoop.hbase.ClusterStatus;
 import org.apache.hadoop.hbase.HColumnDescriptor;
+import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.security.TokenInfo;
 import org.apache.hadoop.hbase.security.KerberosInfo;
 import org.apache.hadoop.hbase.util.Pair;
+import org.apache.hadoop.hbase.coprocessor.ObserverContext;
+import org.apache.hadoop.hbase.ipc.VersionedProtocol;
+
+
 
 /**
  * Clients interact with the HMasterInterface to gain access to meta-level
@@ -184,10 +189,20 @@ public interface HMasterInterface extends VersionedProtocol {
    * found.
    * @param force If true, will force the assignment.
    * @throws IOException
+   * @deprecated The <code>force</code> is unused.Use {@link #assign(byte[])}
    */
   public void assign(final byte [] regionName, final boolean force)
   throws IOException;
 
+  /**
+   * Assign a region to a server chosen at random.
+   * 
+   * @param regionName
+   *          Region to assign. Will use existing RegionPlan if one found.
+   * @throws IOException
+   */
+  public void assign(final byte[] regionName) throws IOException;
+  
   /**
    * Unassign a region from current hosting regionserver.  Region will then be
    * assigned to a regionserver chosen at random.  Region could be reassigned
@@ -197,7 +212,7 @@ public interface HMasterInterface extends VersionedProtocol {
    * if one found.
    * @param force If true, force unassign (Will remove region from
    * regions-in-transition too if present as well as from assigned regions --
-   * radical!).
+   * radical!.If results in double assignment use hbck -fix to resolve.
    * @throws IOException
    */
   public void unassign(final byte [] regionName, final boolean force)

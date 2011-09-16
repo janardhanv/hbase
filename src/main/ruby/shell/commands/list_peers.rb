@@ -1,5 +1,5 @@
 #
-# Copyright 2010 The Apache Software Foundation
+# Copyright The Apache Software Foundation
 #
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
@@ -20,19 +20,26 @@
 
 module Shell
   module Commands
-    class Assign < Command
+    class ListPeers< Command
       def help
         return <<-EOF
-Assign a region.Use with caution.If region already assigned,
-this command will just go ahead and reassign
-the region anyways. For experts only.
+List all replication peer clusters.
+
+  hbase> list_peers
 EOF
       end
 
-      def command(region_name)
-        format_simple_command do
-          admin.assign(region_name)
+      def command()
+        now = Time.now
+        peers = replication_admin.list_peers
+
+        formatter.header(["PEER ID", "CLUSTER KEY"])
+
+        peers.entrySet().each do |e|
+          formatter.row([ e.key, e.value ])
         end
+
+        formatter.footer(now)
       end
     end
   end

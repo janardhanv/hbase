@@ -235,7 +235,6 @@ Release 0.91.0 - Unreleased
    HBASE-4315  RPC logging too verbose (todd)
    HBASE-4273  java.lang.NullPointerException when a table is being disabled and
                HMaster restarts (Ming Ma)
-   HBASE-4310  SlabCache metrics bugfix (Li Pi)
    HBASE-4027  Off Heap Cache never creates Slabs (Li Pi)
    HBASE-4265  zookeeper.KeeperException$NodeExistsException if HMaster restarts
                while table is being disabled (Ming Ma)
@@ -262,6 +261,20 @@ Release 0.91.0 - Unreleased
                exception (Jinchao Gao)
    HBASE-4394  Add support for seeking hints to FilterList
    HBASE-4406  TestOpenRegionHandler failing after HBASE-4287 (todd)
+   HBASE-4330  Fix races in slab cache (Li Pi & Todd)
+   HBASE-4383  SlabCache reports negative heap sizes (Li Pi)
+   HBASE-4351  If from Admin we try to unassign a region forcefully,
+               though a valid region name is given the master is not able
+               to identify the region to unassign (Ramkrishna)
+   HBASE-4363  [replication] ReplicationSource won't close if failing
+               to contact the sink (JD and Lars Hofhansl)
+   HBASE-4390  [replication] ReplicationSource's UncaughtExceptionHandler
+               shouldn't join
+   HBASE-4395  EnableTableHandler races with itself
+   HBASE-4414  Region splits by size not being triggered
+   HBASE-4322  HBASE-4322 [hbck] Update checkIntegrity/checkRegionChain
+               to present more accurate region split problem 
+               (Jon Hseih)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -481,6 +494,7 @@ Release 0.91.0 - Unreleased
    HBASE-4287  If region opening fails, change region in transition into
                a FAILED_OPEN state so that it can be retried quickly. (todd)
    HBASE-4381  Refactor split decisions into a split policy class. (todd)
+   HBASE-4373  HBaseAdmin.assign() does not use force flag (Ramkrishna)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -503,6 +517,7 @@ Release 0.91.0 - Unreleased
                (Li Pi)
    HBASE-4296  Deprecate HTable[Interface].getRowOrBefore(...) (Lars Hofhansl)
    HBASE-2195  Support cyclic replication (Lars Hofhansl)
+   HBASE-2196  Support more than one slave cluster (Lars Hofhansl)
 
   NEW FEATURES
    HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
