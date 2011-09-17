@@ -495,7 +495,7 @@ public class AccessController extends BaseRegionObserver
   @Override
   public void postMove(ObserverContext<MasterCoprocessorEnvironment> c,
       HRegionInfo region, ServerName srcServer, ServerName destServer)
-    throws UnknownRegionException {}
+    throws IOException {}
 
   @Override
   public void preAssign(ObserverContext<MasterCoprocessorEnvironment> c,

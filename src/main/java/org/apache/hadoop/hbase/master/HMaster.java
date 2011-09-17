@@ -937,10 +937,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
         if (this.cpHost != null) {
           this.cpHost.postMove(p.getFirst(), p.getSecond(), dest);
         }
-      } catch (UnknownRegionException ure) {
-        throw ure;
       } catch (IOException ioe) {
-        LOG.error("move() aborted by IOException", ioe);
+        UnknownRegionException ure = new UnknownRegionException(
+            Bytes.toStringBinary(encodedRegionName));
+        ure.initCause(ioe);
+        throw ure;
       }
     }
   }

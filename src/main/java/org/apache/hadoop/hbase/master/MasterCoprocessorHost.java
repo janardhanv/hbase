@@ -319,7 +319,7 @@ public class MasterCoprocessorHost
   }
 
   void postMove(final HRegionInfo region, final ServerName srcServer, final ServerName destServer)
-      throws UnknownRegionException {
+      throws IOException {
     ObserverContext<MasterCoprocessorEnvironment> ctx = null;
     for (MasterEnvironment env: coprocessors) {
       if (env.getInstance() instanceof MasterObserver) {
