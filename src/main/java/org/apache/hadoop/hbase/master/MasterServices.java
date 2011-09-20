@@ -65,8 +65,6 @@ public interface MasterServices extends Server {
    * @param desc The table definition
    * @param splitKeys Starting row keys for the initial table regions.  If null
    *     a single region is created.
-   * @param sync If true, waits for all initial regions to be assigned before
-   *     returning
    */
   public void createTable(HTableDescriptor desc, byte [][] splitKeys)
       throws IOException;

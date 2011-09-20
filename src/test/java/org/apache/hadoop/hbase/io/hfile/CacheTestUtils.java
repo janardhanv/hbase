@@ -76,7 +76,7 @@ public class CacheTestUtils {
             HFileBlockPair ourBlock = blocksToTest.poll();
             // if we run out of blocks to test, then we should stop the tests.
             if (ourBlock == null) {
-              ctx.stop();
+              ctx.setStopFlag(true);
               return;
             }
             toBeTested.cacheBlock(ourBlock.blockName, ourBlock.block);
@@ -174,6 +174,7 @@ public class CacheTestUtils {
         }
       };
 
+      t.setDaemon(true);
       ctx.addThread(t);
     }
 
@@ -217,6 +218,7 @@ public class CacheTestUtils {
         }
       };
 
+      t.setDaemon(true);
       ctx.addThread(t);
     }
 

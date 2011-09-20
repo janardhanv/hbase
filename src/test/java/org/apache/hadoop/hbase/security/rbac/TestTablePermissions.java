@@ -59,6 +59,11 @@ public class TestTablePermissions {
       LOG.info(why, e);
       abort.set(true);
     }
+
+    @Override
+    public boolean isAborted() {
+      return abort.get();
+    }
   };
 
   private static byte[] TEST_TABLE = Bytes.toBytes("perms_test");

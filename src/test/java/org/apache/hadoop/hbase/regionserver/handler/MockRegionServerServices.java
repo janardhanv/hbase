@@ -26,7 +26,6 @@ import java.util.Set;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
-import org.apache.hadoop.hbase.ipc.HBaseRpcMetrics;
 import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.regionserver.CompactionRequestor;
 import org.apache.hadoop.hbase.regionserver.FlushRequester;
@@ -72,11 +71,6 @@ class MockRegionServerServices implements RegionServerServices {
 
   @Override
   public HLog getWAL() {
-    return null;
-  }
-
-  @Override
-  public HBaseRpcMetrics getRpcMetrics() {
     return null;
   }
 
@@ -136,6 +130,12 @@ class MockRegionServerServices implements RegionServerServices {
 
   @Override
   public boolean isStopped() {
+    return false;
+  }
+
+  @Override
+  public boolean isAborted() {
+    // TODO Auto-generated method stub
     return false;
   }
 }

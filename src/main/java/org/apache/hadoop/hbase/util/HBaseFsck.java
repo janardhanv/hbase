@@ -365,6 +365,11 @@ public class HBaseFsck {
           LOG.error(why, e);
           System.exit(1);
         }
+        @Override
+        public boolean isAborted(){
+          return false;
+        }
+        
       });
     rootRegionTracker.start();
     ServerName sn = null;
@@ -674,9 +679,31 @@ public class HBaseFsck {
         }
         prevKey = key;
       }
+      if (details) {
+        // do full region split map dump
+        dump(sc.getSplits(), regions);
+      }
       return errors.getErrorList().size() == originalErrorsCount;
     }
 
+    /**
+     * This dumps data in a visually reasonable way for visual debugging
+     * 
+     * @param splits
+     * @param regions
+     */
+    void dump(TreeSet<byte[]> splits, Multimap<byte[], HbckInfo> regions) {
+      // we display this way because the last end key should be displayed as well.
+      for (byte[] k : splits) {
+        System.out.print(Bytes.toString(k) + ":\t");
+        for (HbckInfo r : regions.get(k)) {
+          System.out.print("[ "+ r.toString() + ", " 
+              + Bytes.toString(r.getEndKey())+ "]\t");
+        }
+        System.out.println();
+      }
+    }
+    
   }
 
   /**

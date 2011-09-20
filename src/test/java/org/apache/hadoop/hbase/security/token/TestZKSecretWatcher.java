@@ -55,6 +55,10 @@ public class TestZKSecretWatcher {
       LOG.info("Aborting: "+reason, e);
       abort = true;
     }
+
+    public boolean isAborted() {
+      return abort;
+    }
   }
 
   @BeforeClass

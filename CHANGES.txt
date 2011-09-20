@@ -19,6 +19,9 @@ Release 0.91.0 - Unreleased
    HBASE-4233  Update protobuf dependency to 2.4.0a (todd)
    HBASE-4299  Update to Avro 1.5.3 and use Avro Maven plugin to generate
                Avro classes. (Alejandro Abdelnur)
+   HBASE-4369  Deprecate HConnection#getZookeeperWatcher in prep for HBASE-1762
+   HBASE-4247  Add isAborted method to the Abortable interface
+               (Akash Ashok)
 
   BUG FIXES
    HBASE-3280  YouAreDeadException being swallowed in HRS getMaster
@@ -281,6 +284,10 @@ Release 0.91.0 - Unreleased
                possible performance improvement (nkeywal)
    HBASE-4420  MasterObserver preMove() and postMove() should throw
                IOException instead of UnknownRegionException
+   HBASE-4419  Resolve build warning messages (Praveen Patibandia)
+   HBASE-4428  Two methods in CacheTestUtils don't call setDaemon() on the threads
+   HBASE-4400  .META. getting stuck if RS hosting it is dead and znode state is in
+               RS_ZK_REGION_OPENED (Ramkrishna)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -501,6 +508,12 @@ Release 0.91.0 - Unreleased
                a FAILED_OPEN state so that it can be retried quickly. (todd)
    HBASE-4381  Refactor split decisions into a split policy class. (todd)
    HBASE-4373  HBaseAdmin.assign() does not use force flag (Ramkrishna)
+   HBASE-4425  Provide access to RpcServer instance from RegionServerServices
+   HBASE-4411  When copying tables/CFs, allow CF names to be changed
+               (David Revell)
+   HBASE-4424  Provide coprocessors access to createTable() via 
+               MasterServices
+   HBASE-4432  Enable/Disable off heap cache with config (Li Pi)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -524,6 +537,7 @@ Release 0.91.0 - Unreleased
    HBASE-4296  Deprecate HTable[Interface].getRowOrBefore(...) (Lars Hofhansl)
    HBASE-2195  Support cyclic replication (Lars Hofhansl)
    HBASE-2196  Support more than one slave cluster (Lars Hofhansl)
+   HBASE-4429  Provide synchronous balanceSwitch()
 
   NEW FEATURES
    HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
@@ -618,6 +632,8 @@ Release 0.90.5 - Unreleased
                in hbck. (Jonathan Hsieh)
    HBASE-4384  Hard to tell what causes failure in CloseRegionHandler#getCurrentVersion
                (Harsh J)
+   HBASE-4375  [hbck] Add region coverage visualization to hbck
+               (Jonathan Hsieh)
 
 Release 0.90.4 - August 10, 2011
 
