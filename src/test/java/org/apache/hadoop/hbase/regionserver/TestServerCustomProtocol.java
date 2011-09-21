@@ -52,7 +52,6 @@ public class TestServerCustomProtocol {
     public int getPingCount();
     public int incrementCount(int diff);
     public String hello(String name);
-    public int hello2(int name);
   }
 
   /* Test protocol implementation */
@@ -91,10 +90,6 @@ public class TestServerCustomProtocol {
     public long getProtocolVersion(String s, long l) throws IOException {
       return VERSION;
     }
-    
-    public int hello2(int a) {
-      return a;
-    }
   }
 
   private static final byte[] TEST_TABLE = Bytes.toBytes("test");
@@ -119,9 +114,9 @@ public class TestServerCustomProtocol {
         new byte[][]{ HConstants.EMPTY_BYTE_ARRAY,
             ROW_B, ROW_C});
 
-    // TODO: sleep here is an ugly hack to allow region transitions to finish
-    Thread.sleep(10000); // 5s is not enough time
-
+    // TODO: use a test coprocessor for registration (once merged with CP code)
+    // sleep here is an ugly hack to allow region transitions to finish
+    Thread.sleep(5000);
     for (JVMClusterUtil.RegionServerThread t :
       cluster.getRegionServerThreads()) {
       for (HRegionInfo r : t.getRegionServer().getOnlineRegions()) {

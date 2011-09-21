@@ -834,9 +834,8 @@ public abstract class HBaseServer implements RpcServer {
     // for a long time.
     //
     private void doPurge(Call call, long now) throws IOException {
-      LinkedList<Call> responseQueue = call.connection.responseQueue;
-      synchronized (responseQueue) {
-        Iterator<Call> iter = responseQueue.listIterator(0);
+      synchronized (call.connection.responseQueue) {
+        Iterator<Call> iter = call.connection.responseQueue.listIterator(0);
         while (iter.hasNext()) {
           Call nextCall = iter.next();
           if (now > nextCall.timestamp + PURGE_INTERVAL) {
@@ -1230,13 +1229,9 @@ public abstract class HBaseServer implements RpcServer {
               throw new ServerNotRunningYetException("Server is not running yet");
 
             if (LOG.isDebugEnabled()) {
-              if (call.connection.ticket == null) {
-                LOG.debug(getName() + ": has NULL principal, call #" + call.id
-                    + " from " + call.connection);
-              }
-              else {
-                LOG.debug("Executing call as "+call.connection.ticket.getName());
-              }
+              User remoteUser = call.connection.ticket;
+              LOG.debug(getName() + ": call #" + call.id + " executing as "
+                  + remoteUser == null ? "NULL principal" : remoteUser.getName());
             }
 
             RequestContext.set(call.connection.ticket, getRemoteIp(),
@@ -1249,7 +1244,7 @@ public abstract class HBaseServer implements RpcServer {
             errorClass = e.getClass().getName();
             error = StringUtils.stringifyException(e);
           } finally {
-            // Must always clears the request context to avoid leaking
+            // Must always clear the request context to avoid leaking
             // credentials between requests.
             RequestContext.clear();
           }
@@ -1362,6 +1357,10 @@ public abstract class HBaseServer implements RpcServer {
     responder = new Responder();
   }
 
+  /**
+   * Subclasses of HBaseServer can override this to provide their own
+   * Connection implementations.
+   */
   protected Connection getConnection(SocketChannel channel, long time) {
     return new Connection(channel, time);
   }
@@ -1530,7 +1529,7 @@ public abstract class HBaseServer implements RpcServer {
            channel.write(buffer) : channelIO(null, channel, buffer);
     if (count > 0) {
       rpcMetrics.sentBytes.inc(count);
-  }
+    }
     return count;
   }
 

@@ -76,6 +76,11 @@ public class HBaseRPC {
     super();
   }                                  // no public ctor
 
+  /**
+   * Configuration key for the {@link RpcEngine} implementation to load to
+   * handle connection protocols.  Handlers for individual protocols can be
+   * configured using {@code "hbase.rpc.engine." + protocol.class.name}.
+   */
   public static final String RPC_ENGINE_PROP = "hbase.rpc.engine";
 
   // cache of RpcEngines by protocol
