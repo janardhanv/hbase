@@ -37,7 +37,7 @@ EOF
 
       def command(user, rights, table_name, family=nil, qualifier=nil)
         format_simple_command do
-          admin.grant(user, rights, table_name, family, qualifier)
+          security_admin.grant(user, rights, table_name, family, qualifier)
         end
       end
     end

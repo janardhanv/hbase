@@ -37,7 +37,7 @@ EOF
         now = Time.now
         formatter.header(["User", "Table,Family,Qualifier:Permission"])
 
-        count = admin.user_permission(table) do |user, permission|
+        count = security_admin.user_permission(table) do |user, permission|
           formatter.row([ user, permission])
         end
 
