@@ -31,8 +31,9 @@ import java.io.IOException;
 
 /**
  * Represents an authorization for access for the given actions, optionally
- * restricted to the given column family, over the given table.  If the family
- * property is <code>null</code>, it implies full table access.
+ * restricted to the given column family or column qualifier, over the
+ * given table.  If the family property is <code>null</code>, it implies
+ * full table access.
  */
 public class TablePermission extends Permission {
   private static Log LOG = LogFactory.getLog(TablePermission.class);
@@ -47,7 +48,8 @@ public class TablePermission extends Permission {
   }
 
   /**
-   * Constructor
+   * Create a new permission for the given table and (optionally) column family,
+   * allowing the given actions.
    * @param table the table
    * @param family the family, can be null if a global permission on the table
    * @param assigned the list of allowed actions
@@ -57,7 +59,8 @@ public class TablePermission extends Permission {
   }
 
   /**
-   * Constructor
+   * Creates a new permission for the given table, restricted to the given
+   * column family and qualifer, allowing the assigned actions to be performed.
    * @param table the table
    * @param family the family, can be null if a global permission on the table
    * @param assigned the list of allowed actions
@@ -71,7 +74,8 @@ public class TablePermission extends Permission {
   }
 
   /**
-   * Constructor
+   * Creates a new permission for the given table, family and column qualifier,
+   * allowing the actions matching the provided byte codes to be performed.
    * @param table the table
    * @param family the family, can be null if a global permission on the table
    * @param actionCodes the list of allowed action codes
@@ -100,10 +104,14 @@ public class TablePermission extends Permission {
    * Checks that a given table operation is authorized by this permission
    * instance.
    *
-   * @param table
-   * @param family
-   * @param action
-   * @return
+   * @param table the table where the operation is being performed
+   * @param family the column family to which the operation is restricted,
+   *   if <code>null</code> implies "all"
+   * @param qualifier the column qualifier to which the action is restricted,
+   *   if <code>null</code> implies "all"
+   * @param action the action being requested
+   * @return <code>true</code> if the action within the given scope is allowed
+   *   by this permission, <code>false</code>
    */
   public boolean implies(byte[] table, byte[] family, byte[] qualifier,
       Action action) {
@@ -127,6 +135,15 @@ public class TablePermission extends Permission {
     return super.implies(action);
   }
 
+  /**
+   * Checks if this permission grants access to perform the given action on
+   * the given table and key value.
+   * @param table the table on which the operation is being performed
+   * @param kv the KeyValue on which the operation is being requested
+   * @param action the action requested
+   * @return <code>true</code> if the action is allowed over the given scope
+   *   by this permission, otherwise <code>false</code>
+   */
   public boolean implies(byte[] table, KeyValue kv, Action action) {
     if (!Bytes.equals(this.table, table)) {
       return false;
@@ -174,11 +191,12 @@ public class TablePermission extends Permission {
 
   /**
    * Returns if the given permission matches the given qualifier.
-   * @param table
-   * @param family
-   * @param qualifier
-   * @param action
-   * @return
+   * @param table the table name to match
+   * @param family the column family to match
+   * @param qualifier the qualifier name to match
+   * @param action the action requested
+   * @return <code>true</code> if the table, family and qualifier match,
+   *   otherwise <code>false</code>
    */
   public boolean matchesFamilyQualifier(byte[] table, byte[] family, byte[] qualifier,
                                 Action action) {

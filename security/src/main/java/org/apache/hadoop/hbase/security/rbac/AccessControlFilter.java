@@ -31,18 +31,21 @@ import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.security.UserGroupInformation;
 
 /**
+ * <strong>NOTE: for internal use only by AccessController implementation</strong>
+ *
+ * <p>
  * TODO: this implementation might suck performance wise.
  * Calling TableAuthManager.authorize() per KeyValue imposes a fair amount of
  * overhead.  A more optimized solution might look at the qualifiers where
  * permissions are actually granted and explicitly limit the scan to those.
- *
- * We should probably aim to use this _only_ when access to the requested
- * column families is not granted at the column family levels.  If table or
- * column family access succeeds, then there is no need to impose the overhead
- * of this filter.
- *
+ * </p>
+ * <p>
+ * We should aim to use this _only_ when access to the requested column families
+ * is not granted at the column family levels.  If table or column family
+ * access succeeds, then there is no need to impose the overhead of this filter.
+ * </p>
  */
-public class AccessControlFilter extends FilterBase {
+class AccessControlFilter extends FilterBase {
 
   private TableAuthManager authManager;
   private byte[] table;

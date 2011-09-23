@@ -29,9 +29,8 @@ import java.io.DataOutput;
 import java.io.IOException;
 
 /**
- * Represents an authorization for access for the given table, column family
- * plus qualifier, over the given user.
- * It's more for display purpose.
+ * Represents an authorization for access over the given table, column family
+ * plus qualifier, for the given user.
  */
 public class UserPermission extends TablePermission {
   private static Log LOG = LogFactory.getLog(UserPermission.class);
@@ -44,10 +43,11 @@ public class UserPermission extends TablePermission {
   }
 
   /**
-   * Constructor
+   * Creates a new instance for the given user, table and column family.
    * @param user the user
    * @param table the table
-   * @param family the family, can be null if a global permission on the user
+   * @param family the family, can be null if action is allowed over the entire
+   *   table
    * @param assigned the list of allowed actions
    */
   public UserPermission(byte[] user, byte[] table, byte[] family,
@@ -57,10 +57,14 @@ public class UserPermission extends TablePermission {
   }
 
   /**
-   * Constructor
+   * Creates a new permission for the given user, table, column family and
+   * column qualifier.
    * @param user the user
    * @param table the table
-   * @param family the family, can be null if a global permission on the user
+   * @param family the family, can be null if action is allowed over the entire
+   *   table
+   * @param qualifier the column qualifier, can be null if action is allowed
+   *   over the entire column family
    * @param assigned the list of allowed actions
    */
   public UserPermission(byte[] user, byte[] table, byte[] family,
@@ -70,9 +74,14 @@ public class UserPermission extends TablePermission {
   }
 
   /**
-   * Constructor
+   * Creates a new instance for the given user, table, column family and
+   * qualifier, matching the actions with the given codes.
    * @param user the user
-   * @param family the family, can be null if a global permission on the user
+   * @param table the table
+   * @param family the family, can be null if action is allowed over the entire
+   *   table
+   * @param qualifier the column qualifier, can be null if action is allowed
+   *   over the entire column family
    * @param actionCodes the list of allowed action codes
    */
   public UserPermission(byte[] user, byte[] table, byte[] family,

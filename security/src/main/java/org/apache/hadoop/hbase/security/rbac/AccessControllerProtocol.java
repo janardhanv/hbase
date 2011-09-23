@@ -20,25 +20,53 @@
 
 package org.apache.hadoop.hbase.security.rbac;
 
-import com.google.common.collect.Multimap;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
-import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
-import org.apache.hadoop.security.token.Token;
 
 import java.io.IOException;
-import java.util.Map;
 import java.util.List;
 
 /**
- * Coprocessor Endpoint protocol defined for access control of security.
+ * A custom protocol defined for maintaining and querying access control lists.
  */
 public interface AccessControllerProtocol extends CoprocessorProtocol {
+  /**
+   * Grants the given user or group the privilege to perform the given actions
+   * over the specified scope contained in {@link TablePermission}
+   * @param user the user name, or, if prefixed with "@", group name receiving
+   * the grant
+   * @param permission the details of the provided permissions
+   * @return <code>true</code> for success
+   * @throws IOException if the grant could not be applied
+   */
   public boolean grant(byte[] user, TablePermission permission)
       throws IOException;
 
+  /**
+   * Revokes a previously grant privileges from the given user or group.
+   * Note that the provided {@link TablePermission} details must exactly match
+   * a stored grant.  For example, if user "bob" has been granted "READ" access
+   * to table "data", over column family and qualifer "info:colA", then the
+   * table, column family and column qualifier must all be specified.
+   * Attempting to revoke permissions over just the "data" table will have
+   * no effect.
+   * @param user the user name, or, if prefixed with "@", group name whose
+   * privileges are being revoked
+   * @param permission the details of the previously granted permission to revoke
+   * @return <code>true</code> in the case of success
+   * @throws IOException if the revocation could not be performed
+   */
   public boolean revoke(byte[] user, TablePermission permission)
       throws IOException;
 
+  /**
+   * Queries the permissions currently stored for the given table, returning
+   * a list of currently granted permissions, along with the user or group
+   * each is associated with.
+   * @param tableName the table of the permission grants to return
+   * @return a list of the currently granted permissions, with associated user
+   * or group names
+   * @throws IOException if there is an error querying the permissions
+   */
   public List<UserPermission> getUserPermissions(byte[] tableName)
       throws IOException;
 }

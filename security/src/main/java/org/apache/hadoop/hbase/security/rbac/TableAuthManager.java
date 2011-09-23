@@ -168,7 +168,7 @@ public class TableAuthManager {
    * @param action
    * @return
    */
-  public boolean authorize(List<Permission> perms, Permission.Action action) {
+  private boolean authorize(List<Permission> perms, Permission.Action action) {
     if (perms != null) {
       for (Permission p : perms) {
         if (p.implies(action)) {
@@ -209,12 +209,12 @@ public class TableAuthManager {
     return false;
   }
 
-  public boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
+  private boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
       Permission.Action action) {
     return authorize(perms, table, family, null, action);
   }
 
-  public boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
+  private boolean authorize(List<TablePermission> perms, byte[] table, byte[] family,
       byte[] qualifier, Permission.Action action) {
     if (perms != null) {
       for (TablePermission p : perms) {
@@ -249,7 +249,7 @@ public class TableAuthManager {
     return false;
   }
 
-  public boolean authorize(List<TablePermission> perms, byte[] table, KeyValue kv,
+  private boolean authorize(List<TablePermission> perms, byte[] table, KeyValue kv,
       TablePermission.Action action) {
     if (perms != null) {
       for (TablePermission p : perms) {

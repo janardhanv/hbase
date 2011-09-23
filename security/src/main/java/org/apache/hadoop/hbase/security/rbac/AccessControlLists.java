@@ -54,6 +54,29 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.*;
 
+/**
+ * Maintains lists of permission grants to users and groups to allow for
+ * authorization checks by {@link AccessController}.
+ *
+ * <p>
+ * Access control lists are stored in an "internal" metadata table named
+ * {@code _acl_}. Each table's permission grants are stored as a separate row,
+ * keyed by the table name. KeyValues for permissions assignments are stored
+ * in one of the formats:
+ * <pre>
+ * Key                      Desc
+ * --------                 --------
+ * user                     table level permissions for a user [R=read, W=write]
+ * @group                   table level permissions for a group
+ * user,family              column family level permissions for a user
+ * @group,family            column family level permissions for a group
+ * user,family,qualifier    column qualifier level permissions for a user
+ * @group,family,qualifier  column qualifier level permissions for a group
+ * </pre>
+ * All values are encoded as byte arrays containing the codes from the
+ * {@link org.apache.hadoop.hbase.security.rbac.TablePermission.Action} enum.
+ * </p>
+ */
 public class AccessControlLists {
   /** Internal storage table for access control lists */
   public static final String ACL_TABLE_NAME_STR = "_acl_";
@@ -82,8 +105,8 @@ public class AccessControlLists {
   private static Log LOG = LogFactory.getLog(AccessControlLists.class);
 
   /**
-   * Check for existence of .acl. table and create it if it does not exist
-   * @param conf Configuration instance to use for operations
+   * Check for existence of {@code _acl_} table and create it if it does not exist
+   * @param master reference to HMaster
    */
   static void init(MasterServices master) throws IOException {
     if (!MetaReader.tableExists(master.getCatalogTracker(), ACL_TABLE_NAME_STR)) {
@@ -91,6 +114,14 @@ public class AccessControlLists {
     }
   }
 
+  /**
+   * Stores a new table permission grant in the access control lists table.
+   * @param conf the configuration
+   * @param tableName the table to which access is being granted
+   * @param username the user or group being granted the permission
+   * @param perm the details of the permission being granted
+   * @throws IOException in the case of an error accessing the metadata table
+   */
   static void addTablePermission(Configuration conf,
       byte[] tableName, String username, TablePermission perm)
     throws IOException {
@@ -132,6 +163,21 @@ public class AccessControlLists {
     }
   }
 
+  /**
+   * Removes a previously granted permission from the stored access control
+   * lists.  The {@link TablePermission} being removed must exactly match what
+   * is stored -- no wildcard matching is attempted.  Ie, if user "bob" has
+   * been granted "READ" access to the "data" table, but only to column family
+   * plus qualifier "info:colA", then trying to call this method with only
+   * user "bob" and the table name "data" (but without specifying the
+   * column qualifier "info:colA") will have no effect.
+   *
+   * @param conf the configuration
+   * @param tableName the table of the current permission grant
+   * @param userName the user or group currently granted the permission
+   * @param perm the details of the permission to be revoked
+   * @throws IOException if there is an error accessing the metadata table
+   */
   static void removeTablePermission(Configuration conf,
       byte[] tableName, String userName, TablePermission perm)
     throws IOException {
@@ -166,10 +212,22 @@ public class AccessControlLists {
     }
   }
 
+  /**
+   * Returns {@code true} if the given region is part of the {@code _acl_}
+   * metadata table.
+   */
   static boolean isAclRegion(HRegion region) {
     return Bytes.equals(ACL_TABLE_NAME, region.getTableDesc().getName());
   }
 
+  /**
+   * Loads all of the permission grants stored in a region of the {@code _acl_}
+   * table.
+   *
+   * @param aclRegion
+   * @return
+   * @throws IOException
+   */
   static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
       HRegion aclRegion)
     throws IOException {
@@ -225,12 +283,8 @@ public class AccessControlLists {
   }
 
   /**
-   * Load all permissions from the region server holding .acl., primarily
-   * intended for testing purposes.
-   *
-   * @param tracker
-   * @return
-   * @throws IOException
+   * Load all permissions from the region server holding {@code _acl_},
+   * primarily intended for testing purposes.
    */
   static Map<byte[],ListMultimap<String,TablePermission>> loadAll(
       Configuration conf) throws IOException {
@@ -313,6 +367,10 @@ public class AccessControlLists {
     return perms;
   }
 
+  /**
+   * Returns the currently granted permissions for a given table as a list of
+   * user plus associated permissions.
+   */
   static List<UserPermission> getUserPermissions(
       Configuration conf, byte[] tableName)
   throws IOException {
@@ -426,11 +484,6 @@ public class AccessControlLists {
   /**
    * Reads a set of permissions as {@link org.apache.hadoop.io.Writable} instances
    * from the input stream.
-   * 
-   * @param in
-   * @param conf
-   * @return
-   * @throws IOException
    */
   public static <T extends Permission> ListMultimap<String,T> readPermissions(
       DataInput in, Configuration conf) throws IOException {
@@ -446,10 +499,19 @@ public class AccessControlLists {
     return perms;
   }
 
+  /**
+   * Returns whether or not the given name should be interpreted as a group
+   * principal.  Currently this simply checks if the name starts with the
+   * special group prefix character ("@").
+   */
   public static boolean isGroupPrincipal(String name) {
     return name != null && name.startsWith(GROUP_PREFIX);
   }
 
+  /**
+   * Returns the actual name for a group principal (stripped of the
+   * group prefix).
+   */
   public static String getGroupName(String aclKey) {
     if (!isGroupPrincipal(aclKey)) {
       return aclKey;
