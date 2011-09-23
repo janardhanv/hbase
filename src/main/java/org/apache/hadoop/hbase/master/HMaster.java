@@ -940,14 +940,6 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     if (!isMasterRunning()) {
       throw new MasterNotRunningException();
     }
-    User owner = RequestContext.getRequestUser();
-    if (owner == null) {
-      owner = User.getCurrent();
-    }
-    if (hTableDescriptor.getOwnerString() == null ||
-        hTableDescriptor.getOwnerString().equals("")) {
-      hTableDescriptor.setOwner(owner);
-    }
 
     HRegionInfo [] newRegions = getHRegionInfos(hTableDescriptor, splitKeys);
     if (cpHost != null) {

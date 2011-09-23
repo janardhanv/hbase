@@ -90,7 +90,6 @@ import org.apache.hadoop.hbase.io.hfile.BlockCache;
 import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
-import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.monitoring.TaskMonitor;
 import org.apache.hadoop.hbase.regionserver.compactions.CompactionRequest;
@@ -1443,8 +1442,7 @@ public class HRegion implements HeapSize { // , Writable{
 
   protected RegionScanner instantiateRegionScanner(Scan scan,
       List<KeyValueScanner> additionalScanners) throws IOException {
-    return new RegionScannerImpl(scan, additionalScanners,
-        RequestContext.getRequestUserName());
+    return new RegionScannerImpl(scan, additionalScanners);
   }
 
   /*
@@ -2837,16 +2835,12 @@ public class HRegion implements HeapSize { // , Writable{
     private int isScan;
     private boolean filterClosed = false;
     private long readPt;
-    private String owner;
 
     public HRegionInfo getRegionInfo() {
       return regionInfo;
     }
-    RegionScannerImpl(Scan scan, List<KeyValueScanner> additionalScanners,
-        String owner)
-    throws IOException {
+    RegionScannerImpl(Scan scan, List<KeyValueScanner> additionalScanners) throws IOException {
       //DebugPrint.println("HRegionScanner.<init>");
-      this.owner = owner;
       this.filter = scan.getFilter();
       this.batch = scan.getBatch();
       if (Bytes.equals(scan.getStopRow(), HConstants.EMPTY_END_ROW)) {
@@ -2874,15 +2868,7 @@ public class HRegion implements HeapSize { // , Writable{
     }
 
     RegionScannerImpl(Scan scan) throws IOException {
-      this(scan, null, RequestContext.getRequestUserName());
-    }
-
-    /**
-     * Return the username who created the scanner
-     * @return
-     */
-    public String getOwner() {
-      return owner;
+      this(scan, null);
     }
 
     /**

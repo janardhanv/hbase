@@ -425,7 +425,18 @@ public class AccessController extends BaseRegionObserver
   public void preCreateTable(ObserverContext<MasterCoprocessorEnvironment> c,
       HTableDescriptor desc, HRegionInfo[] regions) throws IOException {
     requirePermission(Permission.Action.CREATE);
+
+    // default the table owner if not specified
+    User owner = RequestContext.getRequestUser();
+    if (owner == null) {
+      owner = User.getCurrent();
+    }
+    if (desc.getOwnerString() == null ||
+        desc.getOwnerString().equals("")) {
+      desc.setOwner(owner);
+    }
   }
+
   @Override
   public void postCreateTable(ObserverContext<MasterCoprocessorEnvironment> c,
       HTableDescriptor desc, HRegionInfo[] regions) throws IOException {}
