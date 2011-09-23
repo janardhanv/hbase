@@ -34,7 +34,6 @@ module Hbase
       zk = @zk_wrapper.getRecoverableZooKeeper().getZooKeeper()
       @zk_main = org.apache.zookeeper.ZooKeeperMain.new(zk)
       @formatter = formatter
-      @meta = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.HConstants::META_TABLE_NAME)
     end
 
     #----------------------------------------------------------------------------------------------
@@ -172,8 +171,6 @@ module Hbase
       # Fail if no column families defined
       raise(ArgumentError, "Table must have at least one column family") if args.empty?
 
-      # Start defining the table. Note that the owner will be set using User.getCurrent()
-      # in the HTableDescriptor constructor.
       # Start defining the table
       htd = org.apache.hadoop.hbase.HTableDescriptor.new(table_name)
       splits = nil
@@ -357,12 +354,12 @@ module Hbase
             if htd.hasFamily(column_name.to_java_bytes)
               @admin.modifyColumn(table_name, column_name, descriptor)
             else
-            @admin.addColumn(table_name, descriptor)
-            if wait == true
-              puts "Updating all regions with the new schema..."
-              alter_status(table_name)
+              @admin.addColumn(table_name, descriptor)
+              if wait == true
+                puts "Updating all regions with the new schema..."
+                alter_status(table_name)
+              end
             end
-          end
           end
           next
         end
