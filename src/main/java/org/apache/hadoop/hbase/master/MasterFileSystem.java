@@ -46,7 +46,6 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.HLogSplitter;
 import org.apache.hadoop.hbase.regionserver.wal.OrphanHLogAfterSplitException;
-import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
@@ -346,25 +345,20 @@ public class MasterFileSystem {
   throws IOException {
     LOG.info("BOOTSTRAP: creating ROOT and first META regions");
     try {
-      setCurrentAsOwnerForRoot();
-      setCurrentAsOwnerForMeta();
-
       // Bootstrapping, make sure blockcache is off.  Else, one will be
       // created here in bootstap and it'll need to be cleaned up.  Better to
       // not make it in first place.  Turn off block caching for bootstrap.
       // Enable after.
-      setInfoFamilyCachingForRoot(false);
-      setInfoFamilyCachingForMeta(false);
       HRegionInfo rootHRI = new HRegionInfo(HRegionInfo.ROOT_REGIONINFO);
+      setInfoFamilyCachingForRoot(false);
+      HRegionInfo metaHRI = new HRegionInfo(HRegionInfo.FIRST_META_REGIONINFO);
+      setInfoFamilyCachingForMeta(false);
       HRegion root = HRegion.createHRegion(rootHRI, rd, c,
           HTableDescriptor.ROOT_TABLEDESC);
-      HRegionInfo metaHRI = new HRegionInfo(HRegionInfo.FIRST_META_REGIONINFO);
       HRegion meta = HRegion.createHRegion(metaHRI, rd, c,
           HTableDescriptor.META_TABLEDESC);
-
       setInfoFamilyCachingForRoot(true);
       setInfoFamilyCachingForMeta(true);
-
       // Add first region from the META table to the ROOT region.
       HRegion.addRegionToMETA(root, meta);
       root.close();
@@ -378,11 +372,6 @@ public class MasterFileSystem {
     }
   }
 
-  private static void setCurrentAsOwnerForRoot() throws IOException {
-    HTableDescriptor.ROOT_TABLEDESC.setOwner(
-        User.getCurrent());
-  }
-
   private static void setInfoFamilyCachingForRoot(final boolean b) {
     for (HColumnDescriptor hcd:
         HTableDescriptor.ROOT_TABLEDESC.getColumnFamilies()) {
@@ -391,11 +380,6 @@ public class MasterFileSystem {
          hcd.setInMemory(b);
      }
     }
-  }
-
-  private static void setCurrentAsOwnerForMeta() throws IOException {
-    HTableDescriptor.META_TABLEDESC.setOwner(
-        User.getCurrent());
   }
 
   private static void setInfoFamilyCachingForMeta(final boolean b) {
