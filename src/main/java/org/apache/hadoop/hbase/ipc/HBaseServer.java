@@ -1231,7 +1231,7 @@ public abstract class HBaseServer implements RpcServer {
             if (LOG.isDebugEnabled()) {
               User remoteUser = call.connection.ticket;
               LOG.debug(getName() + ": call #" + call.id + " executing as "
-                  + remoteUser == null ? "NULL principal" : remoteUser.getName());
+                  + (remoteUser == null ? "NULL principal" : remoteUser.getName()));
             }
 
             RequestContext.set(call.connection.ticket, getRemoteIp(),

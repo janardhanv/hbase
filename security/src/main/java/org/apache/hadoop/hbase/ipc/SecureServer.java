@@ -217,6 +217,7 @@ public abstract class SecureServer extends HBaseServer {
 
     public SecureConnection(SocketChannel channel, long lastContact) {
       super(channel, lastContact);
+      this.header = new SecureConnectionHeader();
       this.channel = channel;
       this.data = null;
       this.dataLengthBuffer = ByteBuffer.allocate(4);
@@ -660,7 +661,8 @@ public abstract class SecureServer extends HBaseServer {
                   int priorityHandlerCount, Configuration conf, String serverName,
                   int highPriorityLevel)
     throws IOException {
-    super(bindAddress, port, paramClass, handlerCount, priorityHandlerCount, conf, serverName, highPriorityLevel);
+    super(bindAddress, port, paramClass, handlerCount, priorityHandlerCount,
+        conf, serverName, highPriorityLevel);
     this.authorize =
       conf.getBoolean(HADOOP_SECURITY_AUTHORIZATION, false);
     this.isSecurityEnabled = UserGroupInformation.isSecurityEnabled();
