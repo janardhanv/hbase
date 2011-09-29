@@ -20,12 +20,12 @@
 package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
+import java.util.Map;
 
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.ipc.RpcServer;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.zookeeper.KeeperException;
-import java.util.Set;
 
 /**
  * Services provided by {@link HRegionServer}
@@ -74,7 +74,8 @@ public interface RegionServerServices extends OnlineRegions {
 
   /**
    * Get the regions that are currently being opened or closed in the RS
-   * @return set of regions in transition in this RS
+   * @return map of regions in transition in this RS
    */
-  public Set<byte[]> getRegionsInTransitionInRS();
+  public Map<byte[], Boolean> getRegionsInTransitionInRS();
+  
 }

@@ -1,5 +1,5 @@
-/**
- * Copyright 2010 The Apache Software Foundation
+/*
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,14 +21,33 @@ package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
 
-/**
- * This exception is thrown when a region server is asked to open or close
- * a region but it's already processing it
- */
-public class RegionAlreadyInTransitionException extends IOException {
+import org.apache.hadoop.hbase.Server;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 
-  public RegionAlreadyInTransitionException(String s) {
-    super(s);
-  }
-  
+/**
+ * Gateway to Cluster Replication.  
+ * Used by {@link org.apache.hadoop.hbase.regionserver.HRegionServer}.
+ * One such application is a cross-datacenter
+ * replication service that can keep two hbase clusters in sync.
+ */
+public interface ReplicationService {
+
+  /**
+   * Initializes the replication service object.
+   * @throws IOException
+   */
+  public void initialize(Server rs, FileSystem fs, Path logdir,
+                         Path oldLogDir) throws IOException;
+
+  /**
+   * Start replication services.
+   * @throws IOException
+   */
+  public void startReplicationService() throws IOException;
+
+  /**
+   * Stops replication service.
+   */
+  public void stopReplicationService();
 }

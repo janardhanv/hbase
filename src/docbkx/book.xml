@@ -1236,20 +1236,141 @@ HTable table2 = new HTable(conf2, "myTable");</programlisting>
            see the <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/HTable.html#batch%28java.util.List%29">batch</link> methods on HTable.
 	   </para>
 	   </section>
-	   <section xml:id="client.filter"><title>Filters</title>
-           <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/Get.html">Get</link> and <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/Scan.html">Scan</link> instances can be
-           optionally configured with <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/Filter.html">filters</link> which are applied on the RegionServer. 
-    	   </para>
-		</section>
 	   <section xml:id="client.external"><title>External Clients</title>
            <para>Information on non-Java clients and custom protocols is covered in <xref linkend="external_apis" />
            </para>
 		</section>
 	</section>
+	
+    <section xml:id="client.filter"><title>Client Filters</title>
+      <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/Get.html">Get</link> and <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/client/Scan.html">Scan</link> instances can be
+       optionally configured with <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/Filter.html">filters</link> which are applied on the RegionServer. 
+      </para>
+      <para>Filters can be confusing because there are many different types, and it is best to approach them by understanding the groups
+      of Filter functionality.
+      </para>
+      <section xml:id="client.filter.structural"><title>Structural</title>
+        <para>Structural Filters contain other Filters.</para>
+        <section xml:id="client.filter.structural.fl"><title>FilterList</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/FilterList.html">FilterList</link>
+          represents a list of Filters with a relationship of <code>FilterList.Operator.MUST_PASS_ALL</code> or 
+          <code>FilterList.Operator.MUST_PASS_ONE</code> between the Filters.  The following example shows an 'or' between two 
+          Filters (checking for either 'my value' or 'my other value' on the same attribute).
+<programlisting>
+FilterList list = new FilterList(FilterList.Operator.MUST_PASS_ONE);
+SingleColumnValueFilter filter1 = new SingleColumnValueFilter(
+	cf,
+	column,
+	CompareOp.EQUAL,
+	Bytes.toBytes("my value")
+	);
+list.add(filter1);
+SingleColumnValueFilter filter2 = new SingleColumnValueFilter(
+	cf,
+	column,
+	CompareOp.EQUAL,
+	Bytes.toBytes("my other value")
+	);
+list.add(filter2);
+scan.setFilter(list);
+</programlisting>
+          </para>
+        </section>
+      </section>
+      <section xml:id="client.filter.cv"><title>Column Value</title>
+        <section xml:id="client.filter.cv.scvf"><title>SingleColumnValueFilter</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/SingleColumnValueFilter.html">SingleColumnValueFilter</link>
+          can be used to test column values for equivalence (<code><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/CompareFilter.CompareOp.html">CompareOp.EQUAL</link>
+          </code>), inequality (<code>CompareOp.NOT_EQUAL</code>), or ranges
+          (e.g., <code>CompareOp.GREATER</code>).  The folowing is example of testing equivalence a column to a String value "my value"...
+<programlisting>
+SingleColumnValueFilter filter = new SingleColumnValueFilter(
+	cf,
+	column,
+	CompareOp.EQUAL,
+	Bytes.toBytes("my value")
+	);
+scan.setFilter(filter);
+</programlisting>
+          </para>
+        </section>
+      </section>
+      <section xml:id="client.filter.cvp"><title>Column Value Comparators</title>
+        <para>There are several Comparator classes in the Filter package that deserve special mention.
+        These Comparators are used in concert with other Filters, such as  <xref linkend="client.filter.cv.scvf" />.
+        </para>
+        <section xml:id="client.filter.cvp.rcs"><title>RegexStringComparator</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/RegexStringComparator.html">RegexStringComparator</link>
+          supports regular expressions for value comparisons. 
+<programlisting>
+RegexStringComparator comp = new RegexStringComparator("my.");   // any value that starts with 'my'
+SingleColumnValueFilter filter = new SingleColumnValueFilter(
+	cf,
+	column,
+	CompareOp.EQUAL,
+	comp
+	);
+scan.setFilter(filter);
+</programlisting>
+          See the Oracle JavaDoc for <link xlink:href="http://download.oracle.com/javase/6/docs/api/java/util/regex/Pattern.html">supported RegEx patterns in Java</link>. 
+          </para>
+        </section>
+        <section xml:id="client.filter.cvp.rcs"><title>SubstringComparator</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/SubstringComparator.html">SubstringComparator</link>
+          can be used to determine if a given substring exists in a value.  The comparison is case-insensitive.
+          </para>
+<programlisting>
+SubstringComparator comp = new SubstringComparator("y val");   // looking for 'my value'
+SingleColumnValueFilter filter = new SingleColumnValueFilter(
+	cf,
+	column,
+	CompareOp.EQUAL,
+	comp
+	);
+scan.setFilter(filter);
+</programlisting>
+        </section>
+        <section xml:id="client.filter.cvp.bfp"><title>BinaryPrefixComparator</title>
+          <para>See <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/BinaryPrefixComparator.html">BinaryPrefixComparator</link>.</para>
+        </section>
+        <section xml:id="client.filter.cvp.bc"><title>BinaryComparator</title>
+          <para>See <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/BinaryComparator.html">BinaryComparator</link>.</para>
+        </section>
+      </section>
+      <section xml:id="client.filter.kvm"><title>KeyValue Metadata</title>
+        <para>As HBase stores data internally as KeyValue pairs, KeyValue Metadata Filters evaluate the existence of keys (i.e., ColumnFamily:Column qualifiers)
+        for a row, as opposed to values the previous section.
+        </para>
+        <section xml:id="client.filter.kvm.ff"><title>FamilyFilter</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/FamilyFilter.html">FamilyFilter</link> can be used
+          to filter on the ColumnFamily.  It is generally a better idea to select ColumnFamilies in the Scan than to do it with a Filter.</para>
+        </section>
+        <section xml:id="client.filter.kvm.qf"><title>QualifierFilter</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/QualifierFilter.html">QualifierFilter</link> can be used
+          to filter based on Column (aka Qualifier) name.
+          </para>
+        </section>
+        <section xml:id="client.filter.kvm.cpf"><title>ColumnPrefixFilter</title>
+          <para><link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/ColumnPrefixFilter.html">ColumnPrefixFilter</link> can be used
+          to filter based on the lead portion of Column (aka Qualifier) names.
+          </para>
+        </section>
+      </section>
+      <section xml:id="client.filter.row"><title>RowKey</title>
+        <section xml:id="client.filter.row.rf"><title>RowFilter</title>
+          <para>It is generally a better idea to use the startRow/stopRow methods on Scan for row selection, however 
+          <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/RowFilter.html">RowFilter</link> can also be used.</para>
+        </section>
+      </section>
+      <section xml:id="client.filter.utility"><title>Utility</title>
+        <section xml:id="client.filter.utility.fkof"><title>FirstKeyOnlyFilter</title>
+          <para>This is primarily used for rowcount jobs.  
+          See <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/filter/FirstKeyOnlyFilter.html">FirstKeyOnlyFilter</link>.</para>
+        </section>
+      </section>
+	</section>  <!--  client.filter -->
  
-    <section xml:id="daemons">
-     <title>Daemons</title>
-     <section xml:id="master"><title>Master</title>
+    <section xml:id="master"><title>Master</title>
        <para><code>HMaster</code> is the implementation of the Master Server.  The Master server
        is responsible for monitoring all RegionServer instances in the cluster, and is
        the interface for all metadata changes.
@@ -1275,13 +1396,15 @@ HTable table2 = new HTable(conf2, "myTable");</programlisting>
        </section>
        <section xml:id="master.processes"><title>Processes</title>
          <para>The Master runs several background threads:
-           <itemizedlist>
-             <listitem><code>LoadBalancer</code> periodically reassign regions in the cluster.
-             </listitem>
-             <listitem><code>CatalogJanitor</code> periodically checks and cleans up the .META. table. 
-             </listitem>
-           </itemizedlist>
          </para>
+         <section xml:id="master.processes.loadbalancer"><title>LoadBalancer</title>
+           <para>Periodically, and when there are not any regions in transition,
+             a load balancer will run and move regions around to balance cluster load.
+             See <xref linkend="balancer_config" /> for configuring this property.</para>
+         </section>
+         <section xml:id="master.processes.catalog"><title>CatalogJanitor</title>
+           <para>Periodically checks and cleans up the .META. table.  See <xref linkend="arch.catalog.meta" /> for more information on META.</para>
+         </section>
        </section>
 
      </section>
@@ -1302,24 +1425,102 @@ HTable table2 = new HTable(conf2, "myTable");</programlisting>
        </section>
        <section xml:id="regionserver.arch.processes"><title>Processes</title>
          <para>The RegionServer runs a variety of background threads:</para>
-         <itemizedlist>
-            <listitem><code>CompactSplitThread</code> checks for splits and handle minor compactions.
-            </listitem>
-            <listitem><code>MajorCompactionChecker</code> checks for major compactions.
-            </listitem>
-            <listitem><code>MemStoreFlusher</code> periodically flushes in-memory writes in the MemStore to StoreFiles.
-            </listitem>
-            <listitem><code>LogRoller</code> periodically checks the RegionServer's HLog.
-            </listitem>
-         </itemizedlist>        
+         <section xml:id="regionserver.arch.processes.compactsplit"><title>CompactSplitThread</title>
+           <para>Checks for splits and handle minor compactions.</para>
+         </section>
+         <section xml:id="regionserver.arch.processes.majorcompact"><title>MajorCompactionChecker</title>
+           <para>Checks for major compactions.</para>
+         </section>
+         <section xml:id="regionserver.arch.processes.memstore"><title>MemStoreFlusher</title>
+           <para>Periodically flushes in-memory writes in the MemStore to StoreFiles.</para>
+         </section>
+         <section xml:id="regionserver.arch.processes.log"><title>LogRoller</title>
+           <para>Periodically checks the RegionServer's HLog.</para>
+         </section>
        </section>
 
+     <section xml:id="block.cache">
+       <title>Block Cache</title>
+       <para>The Block Cache contains three levels of block priority to allow for scan-resistance and in-memory ColumnFamilies.  A block is added with an in-memory
+       flag if the containing ColumnFamily is defined in-memory, otherwise a block becomes a single access priority.  Once a block is accessed again, it changes to multiple access. 
+       This is used to prevent scans from thrashing the cache, adding a least-frequently-used element to the eviction algorithm.  Blocks from in-memory ColumnFamilies
+       are the last to be evicted.
+       </para>
+       <para>
+        For more information, see the <link xlink:href="http://hbase.apache.org/xref/org/apache/hadoop/hbase/io/hfile/LruBlockCache.html">LruBlockCache source</link>
+        </para>
      </section>
-    </section>
+
+      <section xml:id="wal">
+       <title >Write Ahead Log (WAL)</title>
+
+       <section xml:id="purpose.wal">
+         <title>Purpose</title>
+
+        <para>Each RegionServer adds updates (Puts, Deletes) to its write-ahead log (WAL)
+            first, and then to the <xref linkend="store.memstore"/> for the affected <xref linkend="store" />.  
+        This ensures that HBase has durable writes. Without WAL, there is the possibility of data loss in the case of a RegionServer failure 
+        before each MemStore is flushed and new StoreFiles are written.  <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/regionserver/wal/HLog.html">HLog</link> 
+        is the HBase WAL implementation, and there is one HLog instance per RegionServer.
+       </para>The WAL is in HDFS in <filename>/hbase/.logs/</filename> with subdirectories per region.
+       <para>
+        For more general information about the concept of write ahead logs, see the Wikipedia
+        <link xlink:href="http://en.wikipedia.org/wiki/Write-ahead_logging">Write-Ahead Log</link> article.
+       </para>
+       </section>
+       <section xml:id="wal_flush">
+        <title>WAL Flushing</title>
+          <para>TODO (describe).
+          </para>
+        </section>
+
+        <section xml:id="wal_splitting">
+         <title>WAL Splitting</title>
+
+        <section><title>How edits are recovered from a crashed RegionServer</title>
+         <para>When a RegionServer crashes, it will lose its ephemeral lease in
+         ZooKeeper...TODO</para>
+		 </section>
+         <section>
+         <title><varname>hbase.hlog.split.skip.errors</varname></title>
+
+        <para>When set to <constant>true</constant>, the default, any error
+        encountered splitting will be logged, the problematic WAL will be
+        moved into the <filename>.corrupt</filename> directory under the hbase
+        <varname>rootdir</varname>, and processing will continue. If set to
+        <constant>false</constant>, the exception will be propagated and the
+        split logged as failed.<footnote>
+            <para>See <link
+            xlink:href="https://issues.apache.org/jira/browse/HBASE-2958">HBASE-2958
+            When hbase.hlog.split.skip.errors is set to false, we fail the
+            split but thats it</link>. We need to do more than just fail split
+            if this flag is set.</para>
+          </footnote></para>
+      </section>
+
+      <section>
+        <title>How EOFExceptions are treated when splitting a crashed
+        RegionServers' WALs</title>
+
+        <para>If we get an EOF while splitting logs, we proceed with the split
+        even when <varname>hbase.hlog.split.skip.errors</varname> ==
+        <constant>false</constant>. An EOF while reading the last log in the
+        set of files to split is near-guaranteed since the RegionServer likely
+        crashed mid-write of a record. But we'll continue even if we got an
+        EOF reading other than the last file in the set.<footnote>
+            <para>For background, see <link
+            xlink:href="https://issues.apache.org/jira/browse/HBASE-2643">HBASE-2643
+            Figure how to deal with eof splitting logs</link></para>
+          </footnote></para>
+      </section>
+     </section>
+     </section>
+
+    </section>  <!--  regionserver -->
 
     <section xml:id="regions.arch">
     <title>Regions</title>
-    <para>This chapter is all about Regions.</para>
+    <para>This section is all about Regions.</para>
     <note>
         <para>Regions are comprised of a Store per Column Family.
         </para>
@@ -1379,14 +1580,13 @@ HTable table2 = new HTable(conf2, "myTable");</programlisting>
         splits (and for why you might do this)</para>
       </section>
 
-      <section>
-        <title>Region Load Balancer</title>
+      <section xml:id="regions.arch.balancer">
+        <title>Region Load Balancing</title>
 
         <para>
-        Periodically, and when there are not any regions in transition,
-        a load balancer will run and move regions around to balance cluster load.
-        The period at which it runs can be configured.
+        Regions can be periodically moved by the <xref linkend="master.processes.loadbalancer" />.
         </para>
+       
       </section>
 
       <section xml:id="store">
@@ -1499,83 +1699,6 @@ HTable table2 = new HTable(conf2, "myTable");</programlisting>
      </section>   
      </section>   <!--  bloom  -->  
      
-  <section xml:id="block.cache">
-     <title>Block Cache</title>
-      <para>The Block Cache contains three levels of block priority to allow for scan-resistance and in-memory ColumnFamilies.  A block is added with an in-memory
-      flag if the containing ColumnFamily is defined in-memory, otherwise a block becomes a single access priority.  Once a block is accessed again, it changes to multiple access. 
-      This is used to prevent scans from thrashing the cache, adding a least-frequently-used element to the eviction algorithm.  Blocks from in-memory ColumnFamilies
-      are the last to be evicted.
-      </para>
-      <para>
-       For more information, see the <link xlink:href="http://hbase.apache.org/xref/org/apache/hadoop/hbase/io/hfile/LruBlockCache.html">LruBlockCache source</link>
-       </para>
-  </section>
-
-  </section>
-      <section xml:id="wal">
-       <title >Write Ahead Log (WAL)</title>
-
-       <section xml:id="purpose.wal">
-         <title>Purpose</title>
-
-        <para>Each RegionServer adds updates (Puts, Deletes) to its write-ahead log (WAL)
-            first, and then to the <xref linkend="store.memstore"/> for the affected <xref linkend="store" />.  
-        This ensures that HBase has durable writes. Without WAL, there is the possibility of data loss in the case of a RegionServer failure 
-        before each MemStore is flushed and new StoreFiles are written.  <link xlink:href="http://hbase.apache.org/apidocs/org/apache/hadoop/hbase/regionserver/wal/HLog.html">HLog</link> 
-        is the HBase WAL implementation, and there is one HLog instance per RegionServer.
-       </para>The WAL is in HDFS in <filename>/hbase/.logs/</filename> with subdirectories per region.
-       <para>
-        For more general information about the concept of write ahead logs, see the Wikipedia
-        <link xlink:href="http://en.wikipedia.org/wiki/Write-ahead_logging">Write-Ahead Log</link> article.
-       </para>
-       </section>
-       <section xml:id="wal_flush">
-        <title>WAL Flushing</title>
-          <para>TODO (describe).
-          </para>
-        </section>
-
-        <section xml:id="wal_splitting">
-         <title>WAL Splitting</title>
-
-        <section><title>How edits are recovered from a crashed RegionServer</title>
-         <para>When a RegionServer crashes, it will lose its ephemeral lease in
-         ZooKeeper...TODO</para>
-		 </section>
-         <section>
-         <title><varname>hbase.hlog.split.skip.errors</varname></title>
-
-        <para>When set to <constant>true</constant>, the default, any error
-        encountered splitting will be logged, the problematic WAL will be
-        moved into the <filename>.corrupt</filename> directory under the hbase
-        <varname>rootdir</varname>, and processing will continue. If set to
-        <constant>false</constant>, the exception will be propagated and the
-        split logged as failed.<footnote>
-            <para>See <link
-            xlink:href="https://issues.apache.org/jira/browse/HBASE-2958">HBASE-2958
-            When hbase.hlog.split.skip.errors is set to false, we fail the
-            split but thats it</link>. We need to do more than just fail split
-            if this flag is set.</para>
-          </footnote></para>
-      </section>
-
-      <section>
-        <title>How EOFExceptions are treated when splitting a crashed
-        RegionServers' WALs</title>
-
-        <para>If we get an EOF while splitting logs, we proceed with the split
-        even when <varname>hbase.hlog.split.skip.errors</varname> ==
-        <constant>false</constant>. An EOF while reading the last log in the
-        set of files to split is near-guaranteed since the RegionServer likely
-        crashed mid-write of a record. But we'll continue even if we got an
-        EOF reading other than the last file in the set.<footnote>
-            <para>For background, see <link
-            xlink:href="https://issues.apache.org/jira/browse/HBASE-2643">HBASE-2643
-            Figure how to deal with eof splitting logs</link></para>
-          </footnote></para>
-      </section>
-    </section>
-
     </section>
   </chapter>
   

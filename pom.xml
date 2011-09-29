@@ -16,7 +16,7 @@
   <groupId>org.apache.hbase</groupId>
   <artifactId>hbase</artifactId>
   <packaging>jar</packaging>
-  <version>0.91.0-security-SNAPSHOT</version>
+  <version>${hbase.version}</version>
   <name>HBase</name>
   <description>
     HBase is the &amp;lt;a href="http://hadoop.apache.org"&amp;rt;Hadoop&lt;/a&amp;rt; database. Use it when you need
@@ -176,6 +176,14 @@
       <organization>Cloudera</organization>
       <organizationUrl>http://www.cloudera.com</organizationUrl>
     </developer>
+    <developer>
+      <id>ramkrishna</id>
+      <name>Ramkrishna S Vasudevan</name>
+      <email>ramkrishna@apache.org</email>
+      <timezone>+5</timezone>
+      <organization>Huawei</organization>
+      <organizationUrl>http://www.huawei.com</organizationUrl>
+    </developer>
   </developers>
 
   <repositories>
@@ -261,6 +269,39 @@
             <argLine>-enableassertions -Xmx1400m</argLine>
             <redirectTestOutputToFile>true</redirectTestOutputToFile>
           </configuration>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-failsafe-plugin</artifactId>
+          <version>2.9</version>
+          <configuration>
+            <includes>
+              <include>${integrationtest.include}</include>
+            </includes>
+            <excludes>
+              <exlude>${unittest.include}</exlude>
+              <exclude>**/*$*</exclude>
+              <exclude>${test.exclude.pattern}</exclude>
+            </excludes>
+            <environmentVariables>
+              <LD_LIBRARY_PATH>${env.LD_LIBRARY_PATH}:${project.build.directory}/nativelib</LD_LIBRARY_PATH>
+              <DYLD_LIBRARY_PATH>${env.DYLD_LIBRARY_PATH}:${project.build.directory}/nativelib</DYLD_LIBRARY_PATH>
+            </environmentVariables>
+          </configuration>
+          <executions>
+            <execution>
+              <id>integration-test</id>
+              <goals>
+                <goal>integration-test</goal>
+              </goals>
+            </execution>
+            <execution>
+              <id>verify</id>
+              <goals>
+                <goal>verify</goal>
+              </goals>
+            </execution>
+          </executions>
         </plugin>
         <plugin>
           <artifactId>maven-clean-plugin</artifactId>
@@ -473,9 +514,10 @@
         <configuration>
           <forkMode>always</forkMode>
           <includes>
-            <include>**/Test*.java</include>
+            <include>${unittest.include}</include>
           </includes>
           <excludes>
+            <exclude>${integrationtest.include}</exclude>
             <exclude>**/*$*</exclude>
             <exclude>${test.exclude.pattern}</exclude>
           </excludes>
@@ -484,6 +526,11 @@
             <DYLD_LIBRARY_PATH>${env.DYLD_LIBRARY_PATH}:${project.build.directory}/nativelib</DYLD_LIBRARY_PATH>
           </environmentVariables>
         </configuration>
+      </plugin>
+      <!--  Run integration tests with mvn verify --> 
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
       </plugin>
       <plugin>
         <artifactId>maven-antrun-plugin</artifactId>
@@ -654,6 +701,9 @@
   <properties>
     <compileSource>1.6</compileSource>
 
+    <!--HBase Version-->
+    <hbase.version>0.93-SNAPSHOT</hbase.version>
+
     <!-- Dependencies -->
     <avro.version>1.5.3</avro.version>
     <commons-cli.version>1.2</commons-cli.version>
@@ -693,6 +743,11 @@
     <!-- For flaky tests exclusion -->
     <test.exclude></test.exclude>
     <test.exclude.pattern>**/${test.exclude}.java</test.exclude.pattern>
+    
+    <!-- Test inclusion patterns -->
+    <unittest.include>**/Test*.java</unittest.include>
+    <integrationtest.include>**/IntegrationTest*.java</integrationtest.include>
+    
   </properties>
 
   <!-- Sorted by groups of dependencies then groupId and artifactId -->
@@ -1596,6 +1651,25 @@
         <groupId>org.apache.rat</groupId>
         <artifactId>apache-rat-plugin</artifactId>
         <version>0.6</version>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-report-plugin</artifactId>
+        <version>2.9</version>
+        <reportSets>
+          <reportSet>
+            <id>integration-tests</id>
+            <reports>
+              <report>report-only</report>
+            </reports>
+            <configuration>
+              <outputName>failsafe-report</outputName>
+              <reportsDirectories>
+                <reportsDirectory>${project.build.directory}/failsafe-reports</reportsDirectory>
+              </reportsDirectories>
+            </configuration>
+          </reportSet>
+        </reportSets>
       </plugin>
     </plugins>
   </reporting>

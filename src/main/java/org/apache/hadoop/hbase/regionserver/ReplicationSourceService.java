@@ -1,5 +1,5 @@
-/**
- * Copyright 2010 The Apache Software Foundation
+/*
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,14 +21,18 @@ package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
 
-/**
- * This exception is thrown when a region server is asked to open or close
- * a region but it's already processing it
- */
-public class RegionAlreadyInTransitionException extends IOException {
+import org.apache.hadoop.hbase.regionserver.wal.WALActionsListener;
 
-  public RegionAlreadyInTransitionException(String s) {
-    super(s);
-  }
-  
+/**
+ * A source for a replication stream has to expose this service.
+ * This service allows an application to hook into the
+ * regionserver and watch for new transactions.
+ */
+public interface ReplicationSourceService extends ReplicationService {
+
+  /**
+   * Returns a WALObserver for the service. This is needed to 
+   * observe log rolls and log archival events.
+   */
+  public WALActionsListener getWALActionsListener();
 }

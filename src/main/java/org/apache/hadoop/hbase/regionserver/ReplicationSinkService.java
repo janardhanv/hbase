@@ -1,5 +1,5 @@
-/**
- * Copyright 2010 The Apache Software Foundation
+/*
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -21,14 +21,19 @@ package org.apache.hadoop.hbase.regionserver;
 
 import java.io.IOException;
 
-/**
- * This exception is thrown when a region server is asked to open or close
- * a region but it's already processing it
- */
-public class RegionAlreadyInTransitionException extends IOException {
+import org.apache.hadoop.hbase.regionserver.wal.HLog;
 
-  public RegionAlreadyInTransitionException(String s) {
-    super(s);
-  }
-  
+/**
+ * A sink for a replication stream has to expose this service.
+ * This service allows an application to hook into the
+ * regionserver and behave as a replication sink.
+ */
+public interface ReplicationSinkService extends ReplicationService {
+
+ /**
+   * Carry on the list of log entries down to the sink
+   * @param entries list of entries to replicate
+   * @throws IOException
+   */
+  public void replicateLogEntries(HLog.Entry[] entries) throws IOException;
 }

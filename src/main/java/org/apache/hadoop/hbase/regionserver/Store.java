@@ -40,7 +40,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.RemoteExceptionHandler;
 import org.apache.hadoop.hbase.client.Scan;
@@ -118,6 +117,7 @@ public class Store implements HeapSize {
   private final String storeNameStr;
   private final boolean inMemory;
   private CompactionProgress progress;
+  private final int compactionKVMax;
 
   /*
    * List of store files inside this store. This is an immutable list that
@@ -197,8 +197,6 @@ public class Store implements HeapSize {
 
     // Check if this is in-memory store
     this.inMemory = family.isInMemory();
-    long maxFileSize = 0L;
-    HTableDescriptor hTableDescriptor = region.getTableDesc();
     this.blockingStoreFileCount =
       conf.getInt("hbase.hstore.blockingStoreFiles", 7);
 
@@ -210,6 +208,7 @@ public class Store implements HeapSize {
     this.maxCompactSize
       = conf.getLong("hbase.hstore.compaction.max.size", Long.MAX_VALUE);
     this.compactRatio = conf.getFloat("hbase.hstore.compaction.ratio", 1.2F);
+    this.compactionKVMax = conf.getInt("hbase.hstore.compaction.kv.max", 10);
 
     if (Store.closeCheckInterval == 0) {
       Store.closeCheckInterval = conf.getInt(
@@ -497,7 +496,9 @@ public class Store implements HeapSize {
         writer.setTimeRangeTracker(snapshotTimeRangeTracker);
         try {
           List<KeyValue> kvs = new ArrayList<KeyValue>();
-          while (scanner.next(kvs)) {
+          boolean hasMore;
+          do {
+            hasMore = scanner.next(kvs);
             if (!kvs.isEmpty()) {
               for (KeyValue kv : kvs) {
                 writer.append(kv);
@@ -505,7 +506,7 @@ public class Store implements HeapSize {
               }
               kvs.clear();
             }
-          }
+          } while (hasMore);
         } finally {
           // Write out the log sequence number that corresponds to this output
           // hfile.  The hfile is current up to and including logCacheFlushId.
@@ -1146,7 +1147,8 @@ public class Store implements HeapSize {
         // since scanner.next() can return 'false' but still be delivering data,
         // we have to use a do/while loop.
         ArrayList<KeyValue> kvs = new ArrayList<KeyValue>();
-        while (scanner.next(kvs)) {
+        // Limit to "hbase.hstore.compaction.kv.max" (default 10) to avoid OOME
+        while (scanner.next(kvs,this.compactionKVMax)) {
           if (writer == null && !kvs.isEmpty()) {
             writer = createWriterInTmp(maxKeyCount,
               this.compactionCompression);

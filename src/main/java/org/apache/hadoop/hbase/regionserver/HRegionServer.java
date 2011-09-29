@@ -43,7 +43,7 @@ import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
@@ -54,6 +54,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.Chore;
+import org.apache.hadoop.util.ReflectionUtils;
 import org.apache.hadoop.hbase.ClockOutOfSyncException;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
@@ -92,6 +93,7 @@ import org.apache.hadoop.hbase.client.Row;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.client.coprocessor.Exec;
 import org.apache.hadoop.hbase.client.coprocessor.ExecResult;
+import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
 import org.apache.hadoop.hbase.executor.ExecutorService;
 import org.apache.hadoop.hbase.executor.ExecutorService.ExecutorType;
 import org.apache.hadoop.hbase.filter.BinaryComparator;
@@ -100,7 +102,6 @@ import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
 import org.apache.hadoop.hbase.io.hfile.BlockCacheColumnFamilySummary;
 import org.apache.hadoop.hbase.io.hfile.CacheStats;
-import org.apache.hadoop.hbase.io.hfile.LruBlockCache;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.HBaseRPCErrorHandler;
@@ -156,6 +157,7 @@ import com.google.common.collect.Lists;
  */
 public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     Runnable, RegionServerServices {
+
   public static final Log LOG = LogFactory.getLog(HRegionServer.class);
 
   // Set when a report to the master comes back with a message asking us to
@@ -183,8 +185,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   private Path rootDir;
   private final Random rand = new Random();
 
-  private final Set<byte[]> regionsInTransitionInRS =
-      new ConcurrentSkipListSet<byte[]>(Bytes.BYTES_COMPARATOR);
+  //RegionName vs current action in progress
+  //true - if open region action in progress
+  //false - if close region action in progress
+  private final ConcurrentSkipListMap<byte[], Boolean> regionsInTransitionInRS =
+      new ConcurrentSkipListMap<byte[], Boolean>(Bytes.BYTES_COMPARATOR);
 
   /**
    * Map of regions currently being served by this region server. Key is the
@@ -282,7 +287,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   private ExecutorService service;
 
   // Replication services. If no replication, this handler will be null.
-  private Replication replicationHandler;
+  private ReplicationSourceService replicationSourceHandler;
+  private ReplicationSinkService replicationSinkHandler;
 
   private final RegionServerAccounting regionServerAccounting;
 
@@ -306,6 +312,13 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * Go here to get table descriptors.
    */
   private TableDescriptors tableDescriptors;
+
+  /*
+   * Strings to be used in forming the exception message for
+   * RegionsAlreadyInTransitionException.
+   */
+  private static final String OPEN = "OPEN";
+  private static final String CLOSE = "CLOSE";
 
   /**
    * Starts a HRegionServer at the default location
@@ -561,7 +574,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       LOG.error(errorMsg);
       abort(errorMsg);
     }
-    while (tracker.blockUntilAvailable(this.msgInterval) == null) {
+    while (tracker.blockUntilAvailable(this.msgInterval, false) == null) {
       if (this.stopped) {
         throw new IOException("Received the shutdown message while waiting.");
       }
@@ -608,7 +621,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
     try {
       // Try and register with the Master; tell it we are here.  Break if
-      // server is stopped or the clusterup flag is down of hdfs went wacky.
+      // server is stopped or the clusterup flag is down or hdfs went wacky.
       while (keepLooping()) {
         MapWritable w = reportForDuty();
         if (w == null) {
@@ -705,7 +718,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     // Interrupt catalog tracker here in case any regions being opened out in
     // handlers are stuck waiting on meta or root.
     if (this.catalogTracker != null) this.catalogTracker.stop();
-    if (this.fsOk) waitOnAllRegionsToClose(abortRequested);
+    if (this.fsOk) {
+      waitOnAllRegionsToClose(abortRequested);
+      LOG.info("stopping server " + this.serverNameFromMasterPOV +
+        "; all regions closed.");
+    }
 
     // Make sure the proxy is down.
     if (this.hbaseMaster != null) {
@@ -719,6 +736,9 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       LOG.warn("Failed deleting my ephemeral node", e);
     }
     this.zooKeeper.close();
+    LOG.info("stopping server " + this.serverNameFromMasterPOV +
+      "; zookeeper connection closed.");
+
     if (!killed) {
       join();
     }
@@ -804,7 +824,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       // iterator of onlineRegions to close all user regions.
       for (Map.Entry<String, HRegion> e : this.onlineRegions.entrySet()) {
         HRegionInfo hri = e.getValue().getRegionInfo();
-        if (!this.regionsInTransitionInRS.contains(hri.getEncodedNameAsBytes())) {
+        if (!this.regionsInTransitionInRS.containsKey(hri.getEncodedNameAsBytes())) {
           // Don't update zk with this close transition; pass false.
           closeRegion(hri, abort, false);
         }
@@ -1160,12 +1180,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
     // Instantiate replication manager if replication enabled.  Pass it the
     // log directories.
-    try {
-      this.replicationHandler = Replication.isReplication(this.conf)?
-        new Replication(this, this.fs, logdir, oldLogDir): null;
-    } catch (KeeperException e) {
-      throw new IOException("Failed replication handler create", e);
-    }
+    createNewReplicationInstance(conf, this, this.fs, logdir, oldLogDir);
     return instantiateHLog(logdir, oldLogDir);
   }
 
@@ -1192,9 +1207,10 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     // Log roller.
     this.hlogRoller = new LogRoller(this, this);
     listeners.add(this.hlogRoller);
-    if (this.replicationHandler != null) {
+    if (this.replicationSourceHandler != null &&
+        this.replicationSourceHandler.getWALActionsListener() != null) {
       // Replication handler is an implementation of WALActionsListener.
-      listeners.add(this.replicationHandler);
+      listeners.add(this.replicationSourceHandler.getWALActionsListener());
     }
     return listeners;
   }
@@ -1342,8 +1358,13 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     // that port is occupied. Adjust serverInfo if this is the case.
     this.webuiport = putUpWebUI();
 
-    if (this.replicationHandler != null) {
-      this.replicationHandler.startReplicationServices();
+    if (this.replicationSourceHandler == this.replicationSinkHandler &&
+        this.replicationSourceHandler != null) {
+      this.replicationSourceHandler.startReplicationService();
+    } else if (this.replicationSourceHandler != null) {
+      this.replicationSourceHandler.startReplicationService();
+    } else if (this.replicationSinkHandler != null) {
+      this.replicationSinkHandler.startReplicationService();
     }
 
     // Start Server.  This service is like leases in that it internally runs
@@ -1497,6 +1518,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     }
     this.abortRequested = true;
     this.reservedSpace.clear();
+    // HBASE-4014: show list of coprocessors that were loaded to help debug
+    // regionserver crashes.Note that we're implicitly using
+    // java.util.HashSet's toString() method to print the coprocessor names.
+    LOG.fatal("RegionServer abort: loaded coprocessors are: " +
+        CoprocessorHost.getLoadedCoprocessors());
     if (this.metrics != null) {
       LOG.info("Dump of metrics: " + this.metrics);
     }
@@ -1548,9 +1574,30 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       this.compactSplitThread.join();
     }
     if (this.service != null) this.service.shutdown();
-    if (this.replicationHandler != null) {
-      this.replicationHandler.join();
+    if (this.replicationSourceHandler != null &&
+        this.replicationSourceHandler == this.replicationSinkHandler) {
+      this.replicationSourceHandler.stopReplicationService();
+    } else if (this.replicationSourceHandler != null) {
+      this.replicationSourceHandler.stopReplicationService();
+    } else if (this.replicationSinkHandler != null) {
+      this.replicationSinkHandler.stopReplicationService();
     }
+  }
+
+  /**
+   * @return Return the object that implements the replication
+   * source service.
+   */
+  ReplicationSourceService getReplicationSourceService() {
+    return replicationSourceHandler;
+  }
+
+  /**
+   * @return Return the object that implements the replication
+   * sink service.
+   */
+  ReplicationSinkService getReplicationSinkService() {
+    return replicationSinkHandler;
   }
 
   /**
@@ -2353,9 +2400,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   public RegionOpeningState openRegion(HRegionInfo region, int versionOfOfflineNode)
       throws IOException {
     checkOpen();
-    if (this.regionsInTransitionInRS.contains(region.getEncodedNameAsBytes())) {
-      throw new RegionAlreadyInTransitionException("open", region.getEncodedName());
-    }
+    checkIfRegionInTransition(region, OPEN);
     HRegion onlineRegion = this.getFromOnlineRegions(region.getEncodedName());
     if (null != onlineRegion) {
       LOG.warn("Attempted open of " + region.getEncodedName()
@@ -2364,7 +2409,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     }
     LOG.info("Received request to open region: " +
       region.getRegionNameAsString());
-    this.regionsInTransitionInRS.add(region.getEncodedNameAsBytes());
+    this.regionsInTransitionInRS.putIfAbsent(region.getEncodedNameAsBytes(),
+        true);
     HTableDescriptor htd = this.tableDescriptors.get(region.getTableName());
     // Need to pass the expected version in the constructor.
     if (region.isRootRegion()) {
@@ -2378,6 +2424,19 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
           versionOfOfflineNode));
     }
     return RegionOpeningState.OPENED;
+  }
+  
+  private void checkIfRegionInTransition(HRegionInfo region,
+      String currentAction) throws RegionAlreadyInTransitionException {
+    byte[] encodedName = region.getEncodedNameAsBytes();
+    if (this.regionsInTransitionInRS.containsKey(encodedName)) {
+      boolean openAction = this.regionsInTransitionInRS.get(encodedName);
+      // The below exception message will be used in master.
+      throw new RegionAlreadyInTransitionException("Received:" + currentAction + 
+        " for the region:" + region.getRegionNameAsString() +
+        " ,which we are already trying to " + 
+        (openAction ? OPEN : CLOSE)+ ".");
+    }
   }
 
   @Override
@@ -2409,9 +2468,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       throw new NotServingRegionException("Received close for "
         + region.getRegionNameAsString() + " but we are not serving it");
     }
-    if (this.regionsInTransitionInRS.contains(region.getEncodedNameAsBytes())) {
-      throw new RegionAlreadyInTransitionException("close", region.getEncodedName());
-    }
+    checkIfRegionInTransition(region, CLOSE);
     return closeRegion(region, false, zk);
   }
   
@@ -2431,12 +2488,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    */
   protected boolean closeRegion(HRegionInfo region, final boolean abort,
       final boolean zk) {
-    if (this.regionsInTransitionInRS.contains(region.getEncodedNameAsBytes())) {
+    if (this.regionsInTransitionInRS.containsKey(region.getEncodedNameAsBytes())) {
       LOG.warn("Received close for region we are already opening or closing; " +
           region.getEncodedName());
       return false;
     }
-    this.regionsInTransitionInRS.add(region.getEncodedNameAsBytes());
+    this.regionsInTransitionInRS.putIfAbsent(region.getEncodedNameAsBytes(), false);
     CloseRegionHandler crh = null;
     if (region.isRootRegion()) {
       crh = new CloseRootHandler(this, this, region, abort, zk);
@@ -3032,7 +3089,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
 
-  public Set<byte[]> getRegionsInTransitionInRS() {
+  public ConcurrentSkipListMap<byte[], Boolean> getRegionsInTransitionInRS() {
     return this.regionsInTransitionInRS;
   }
   
@@ -3043,6 +3100,63 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   //
   // Main program and support routines
   //
+
+  /**
+   * Load the replication service objects, if any
+   */
+  static private void createNewReplicationInstance(Configuration conf,
+    HRegionServer server, FileSystem fs, Path logDir, Path oldLogDir) throws IOException{
+
+    // If replication is not enabled, then return immediately.
+    if (!conf.getBoolean(HConstants.REPLICATION_ENABLE_KEY, false)) {
+      return;
+    }
+
+    // read in the name of the source replication class from the config file.
+    String sourceClassname = conf.get(HConstants.REPLICATION_SOURCE_SERVICE_CLASSNAME,
+                               HConstants.REPLICATION_SERVICE_CLASSNAME_DEFAULT);
+    
+    // read in the name of the sink replication class from the config file.
+    String sinkClassname = conf.get(HConstants.REPLICATION_SINK_SERVICE_CLASSNAME,
+                             HConstants.REPLICATION_SERVICE_CLASSNAME_DEFAULT);
+
+    // If both the sink and the source class names are the same, then instantiate
+    // only one object.
+    if (sourceClassname.equals(sinkClassname)) {
+      server.replicationSourceHandler = (ReplicationSourceService)
+                                         newReplicationInstance(sourceClassname,
+                                         conf, server, fs, logDir, oldLogDir);
+      server.replicationSinkHandler = (ReplicationSinkService)
+                                         server.replicationSourceHandler;
+    }
+    else {
+      server.replicationSourceHandler = (ReplicationSourceService)
+                                         newReplicationInstance(sourceClassname,
+                                         conf, server, fs, logDir, oldLogDir);
+      server.replicationSinkHandler = (ReplicationSinkService)
+                                         newReplicationInstance(sinkClassname,
+                                         conf, server, fs, logDir, oldLogDir);
+    }
+  }
+
+  static private ReplicationService newReplicationInstance(String classname,
+    Configuration conf, HRegionServer server, FileSystem fs, Path logDir, 
+    Path oldLogDir) throws IOException{
+
+    Class<?> clazz = null;
+    try {
+      ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+      clazz = Class.forName(classname, true, classLoader);
+    } catch (java.lang.ClassNotFoundException nfe) {
+      throw new IOException("Cound not find class for " + classname);
+    }
+
+    // create an instance of the replication object.
+    ReplicationService service = (ReplicationService)
+                              ReflectionUtils.newInstance(clazz, conf);
+    service.initialize(server, fs, logDir, oldLogDir);
+    return service;
+  }
 
   /**
    * @param hrs
@@ -3093,11 +3207,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  @QosPriority(priority=HIGH_QOS)
   public void replicateLogEntries(final HLog.Entry[] entries)
   throws IOException {
     checkOpen();
-    if (this.replicationHandler == null) return;
-    this.replicationHandler.replicateLogEntries(entries);
+    if (this.replicationSinkHandler == null) return;
+    this.replicationSinkHandler.replicateLogEntries(entries);
   }
 
   /**

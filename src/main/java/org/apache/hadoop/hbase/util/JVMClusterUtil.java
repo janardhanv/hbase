@@ -152,7 +152,7 @@ public class JVMClusterUtil {
       server = hmc.getConstructor(Configuration.class).newInstance(c);
     } catch (InvocationTargetException ite) {
       Throwable target = ite.getTargetException();
-      throw new RuntimeException("Failed construction of RegionServer: " +
+      throw new RuntimeException("Failed construction of Master: " +
         hmc.toString() + ((target.getCause() != null)?
           target.getCause().getMessage(): ""), target);
     } catch (Exception e) {
@@ -218,9 +218,10 @@ public class JVMClusterUtil {
     }
     // regionServerThreads can never be null because they are initialized when
     // the class is constructed.
-      for(Thread t: regionservers) {
+      for(RegionServerThread t: regionservers) {
         if (t.isAlive()) {
           try {
+            t.getRegionServer().stop("Shutdown requested");
             t.join();
           } catch (InterruptedException e) {
             // continue

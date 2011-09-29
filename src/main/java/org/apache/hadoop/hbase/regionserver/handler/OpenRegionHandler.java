@@ -134,7 +134,8 @@ public class OpenRegionHandler extends EventHandler {
       }
 
       // Done!  Successful region open
-      LOG.debug("Opened " + name);
+      LOG.debug("Opened " + name + " on server:" +
+        this.server.getServerName());
     } finally {
       this.rsServices.getRegionsInTransitionInRS().
           remove(this.regionInfo.getEncodedNameAsBytes());
@@ -169,13 +170,14 @@ public class OpenRegionHandler extends EventHandler {
     // regions-in-transition timeout period.
     long period = Math.max(1, assignmentTimeout/ 3);
     long lastUpdate = now;
+    boolean tickleOpening = true;
     while (!signaller.get() && t.isAlive() && !this.server.isStopped() &&
         !this.rsServices.isStopping() && (endTime > now)) {
       long elapsed = now - lastUpdate;
       if (elapsed > period) {
         // Only tickle OPENING if postOpenDeployTasks is taking some time.
         lastUpdate = now;
-        tickleOpening("post_open_deploy");
+        tickleOpening = tickleOpening("post_open_deploy");
       }
       synchronized (signaller) {
         try {
@@ -204,8 +206,9 @@ public class OpenRegionHandler extends EventHandler {
     }
 
     // Was there an exception opening the region?  This should trigger on
-    // InterruptedException too.  If so, we failed.
-    return !Thread.interrupted() && t.getException() == null;
+    // InterruptedException too.  If so, we failed.  Even if tickle opening fails
+    // then it is a failure.
+    return ((!Thread.interrupted() && t.getException() == null) && tickleOpening);
   }
 
   /**
@@ -271,8 +274,11 @@ public class OpenRegionHandler extends EventHandler {
         LOG.warn("Completed the OPEN of region " + name +
           " but when transitioning from " +
           " OPENING to OPENED got a version mismatch, someone else clashed " +
-          "so now unassigning -- closing region");
+          "so now unassigning -- closing region on server: " +
+          this.server.getServerName());
       } else {
+        LOG.debug("region transitioned to opened in zookeeper: " +
+          r.getRegionInfo() + ", server: " + this.server.getServerName());
         result = true;
       }
     } catch (KeeperException e) {

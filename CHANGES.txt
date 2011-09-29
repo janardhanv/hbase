@@ -1,6 +1,19 @@
 HBase Change Log
+Release 0.93.0 - Unreleased
+  IMPROVEMENT
+   HBASE-4132  Extend the WALActionsListener API to accomodate log archival
+               (dhruba borthakur)
+   HBASE-4461  Expose getRowOrBefore via Thrift (jgray)
+   HBASE-4433  avoid extra next (potentially a seek) if done with column/row
+               (kannan via jgray)
+   HBASE-4131  Make the Replication Service pluggable via a standard
+               interface definition (dhruba via jgray)
 
-Release 0.91.0 - Unreleased
+  BUG FIXES
+   HBASE-4488  Store could miss rows during flush (Lars H via jgray)
+
+
+Release 0.92.0 - Unreleased
   INCOMPATIBLE CHANGES
    HBASE-2002  Coprocessors: Client side support; Support RPC interface
                changes at runtime (Gary Helmling via Andrew Purtell)
@@ -288,6 +301,24 @@ Release 0.91.0 - Unreleased
    HBASE-4428  Two methods in CacheTestUtils don't call setDaemon() on the threads
    HBASE-4400  .META. getting stuck if RS hosting it is dead and znode state is in
                RS_ZK_REGION_OPENED (Ramkrishna)
+   HBASE-3421  Very wide rows -- 30M plus -- cause us OOME (Nate Putnam)
+   HBASE-4153  Handle RegionAlreadyInTransitionException in AssignmentManager
+               (Ramkrishna)
+   HBASE-4452  Possibility of RS opening a region though tickleOpening fails due to
+               znode version mismatch (Ramkrishna)
+   HBASE-4446  Rolling restart RSs scenario, regions could stay in OPENING state
+               (Ming Ma)
+   HBASE-4468  Wrong resource name in an error massage: webapps instead of
+               hbase-webapps (nkeywal)
+   HBASE-4472  MiniHBaseCluster.shutdown() doesn't work if no active master
+   HBASE-4455  Rolling restart RSs scenario, -ROOT-, .META. regions are lost in
+               AssignmentManager (Ming Ma)
+
+  TESTS
+   HBASE-4450  test for number of blocks read: to serve as baseline for expected
+               blocks read and for catching regressions (Kannan)
+   HBASE-4492  TestRollingRestart fails intermittently (Ted Yu and Ram)
+   HBASE-4512  JVMClusterUtil throwing wrong exception when master thread cannot be created (Ram)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -514,6 +545,16 @@ Release 0.91.0 - Unreleased
    HBASE-4424  Provide coprocessors access to createTable() via 
                MasterServices
    HBASE-4432  Enable/Disable off heap cache with config (Li Pi)
+   HBASE-4434  seek optimization: don't do eager HFile Scanner
+               next() unless the next KV is needed
+               (Kannan Muthukkaruppan)
+   HBASE-4280  [replication] ReplicationSink can deadlock itself via handlers
+   HBASE-4014  Coprocessors: Flag the presence of coprocessors in logged
+               exceptions (Eugene Koontz)
+   HBASE-4449  LoadIncrementalHFiles should be able to handle CFs with blooms
+               (David Revell)
+   HBASE-4454  Add failsafe plugin to build and rename integration tests
+               (Jesse Yates)
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -614,6 +655,13 @@ Release 0.90.5 - Unreleased
                (Jonathan Hsieh)
    HBASE-4238  CatalogJanitor can clear a daughter that split before
                processing its parent
+   HBASE-4445  Not passing --config when checking if distributed mode or not
+   HBASE-4453  TestReplication failing up on builds.a.o because already
+               running zk with new format root servername
+   HBASE-4387  Error while syncing: DFSOutputStream is closed
+               (Lars Hofhansl)
+   HBASE-4295  rowcounter does not return the correct number of rows in
+               certain circumstances (David Revell)
 
   IMPROVEMENT
    HBASE-4205  Enhance HTable javadoc (Eric Charles)
