@@ -30,6 +30,7 @@ import org.apache.hadoop.hbase.security.TokenInfo;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenIdentifier;
 import org.apache.hadoop.hbase.security.token.AuthenticationTokenSelector;
+import org.apache.hadoop.hbase.util.PoolMap;
 import org.apache.hadoop.io.*;
 import org.apache.hadoop.ipc.RemoteException;
 import org.apache.hadoop.net.NetUtils;
@@ -50,6 +51,7 @@ import java.util.Iterator;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Random;
+import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -74,42 +76,21 @@ public class SecureClient extends HBaseClient {
         new AuthenticationTokenSelector());
   }
 
-  protected final Hashtable<ConnectionId, Connection> connections =
-    new Hashtable<ConnectionId, Connection>();
-
-  protected int counter;                            // counter for call ids
-  protected final AtomicBoolean running = new AtomicBoolean(true); // if client runs
-
   /** Thread that reads responses and notifies callers.  Each connection owns a
    * socket connected to a remote address.  Calls are multiplexed through this
    * socket: responses may be delivered out of order. */
-  private class Connection extends Thread {
+  protected class SecureConnection extends Connection {
     private InetSocketAddress server;             // server ip:port
     private String serverPrincipal;  // server's krb5 principal name
     private SecureConnectionHeader header;              // connection header
-    private final ConnectionId remoteId;                // connection id
     private AuthMethod authMethod; // authentication method
     private boolean useSasl;
     private Token<? extends TokenIdentifier> token;
     private HBaseSaslRpcClient saslRpcClient;
 
-    private Socket socket = null;                 // connected socket
-    private DataInputStream in;
-    private DataOutputStream out;
-
-    // currently active calls
-    private final Hashtable<Integer, Call> calls = new Hashtable<Integer, Call>();
-    private final AtomicLong lastActivity = new AtomicLong();// last I/O activity time
-    protected final AtomicBoolean shouldCloseConnection = new AtomicBoolean();  // indicate if the connection is closed
-    private IOException closeException; // close reason
-
-    public Connection(ConnectionId remoteId) throws IOException {
-      this.remoteId = remoteId;
+    public SecureConnection(ConnectionId remoteId) throws IOException {
+      super(remoteId);
       this.server = remoteId.getAddress();
-      if (server.isUnresolved()) {
-        throw new UnknownHostException("unknown host: " +
-                                       remoteId.getAddress().getHostName());
-      }
 
       User ticket = remoteId.getTicket();
       Class<?> protocol = remoteId.getProtocol();
@@ -156,87 +137,6 @@ public class SecureClient extends HBaseClient {
       if (LOG.isDebugEnabled())
         LOG.debug("Use " + authMethod + " authentication for protocol "
             + protocol.getSimpleName());
-
-      this.setName("IPC Client (" + socketFactory.hashCode() +") connection to " +
-        remoteId.getAddress().toString() +
-        ((ticket==null)?" from an unknown user": (" from " + ticket.getName())));
-      this.setDaemon(true);
-    }
-
-    /** Update lastActivity with the current time. */
-    private void touch() {
-      lastActivity.set(System.currentTimeMillis());
-    }
-
-    /**
-     * Add a call to this connection's call queue and notify
-     * a listener; synchronized.
-     * Returns false if called during shutdown.
-     * @param call to add
-     * @return true if the call was added.
-     */
-    protected synchronized boolean addCall(Call call) {
-      if (shouldCloseConnection.get())
-        return false;
-      calls.put(call.id, call);
-      notify();
-      return true;
-    }
-
-    /** This class sends a ping to the remote side when timeout on
-     * reading. If no failure is detected, it retries until at least
-     * a byte is read.
-     */
-    private class PingInputStream extends FilterInputStream {
-      /* constructor */
-      protected PingInputStream(InputStream in) {
-        super(in);
-      }
-
-      /* Process timeout exception
-       * if the connection is not going to be closed, send a ping.
-       * otherwise, throw the timeout exception.
-       */
-      private void handleTimeout(SocketTimeoutException e) throws IOException {
-        if (shouldCloseConnection.get() || !running.get() ||
-            remoteId.rpcTimeout > 0) {
-          throw e;
-        }
-        sendPing();
-      }
-
-      /** Read a byte from the stream.
-       * Send a ping if timeout on read. Retries if no failure is detected
-       * until a byte is read.
-       * @throws java.io.IOException for any IO problem other than socket timeout
-       */
-      @Override
-      public int read() throws IOException {
-        do {
-          try {
-            return super.read();
-          } catch (SocketTimeoutException e) {
-            handleTimeout(e);
-          }
-        } while (true);
-      }
-
-      /** Read bytes into a buffer starting from offset <code>off</code>
-       * Send a ping if timeout on read. Retries if no failure is detected
-       * until a byte is read.
-       *
-       * @return the total number of bytes read; -1 if the connection is closed.
-       */
-      @Override
-      public int read(byte[] buf, int off, int len) throws IOException {
-        do {
-          try {
-            return super.read(buf, off, len);
-          } catch (SocketTimeoutException e) {
-            handleTimeout(e);
-          }
-        } while (true);
-      }
     }
 
     private synchronized void disposeSasl() {
@@ -271,32 +171,6 @@ public class SecureClient extends HBaseClient {
         throws IOException {
       saslRpcClient = new HBaseSaslRpcClient(authMethod, token, serverPrincipal);
       return saslRpcClient.saslConnect(in2, out2);
-    }
-
-    private synchronized void setupConnection() throws IOException {
-      short ioFailures = 0;
-      short timeoutFailures = 0;
-      while (true) {
-        try {
-          this.socket = socketFactory.createSocket();
-          this.socket.setTcpNoDelay(tcpNoDelay);
-          this.socket.setKeepAlive(tcpKeepAlive);
-          // connection time out is 20s
-          NetUtils.connect(this.socket, remoteId.getAddress(), 20000);
-          if (remoteId.rpcTimeout > 0) {
-            pingInterval = remoteId.rpcTimeout; // overwrite pingInterval
-          }
-          this.socket.setSoTimeout(pingInterval);
-          return;
-        } catch (SocketTimeoutException toe) {
-          /* The max number of retries is 45,
-           * which amounts to 20s*45 = 15 minutes retries.
-           */
-          handleConnectionFailure(timeoutFailures++, maxRetries, toe);
-        } catch (IOException ie) {
-          handleConnectionFailure(ioFailures++, maxRetries, ie);
-        }
-      }
     }
 
     /**
@@ -352,11 +226,8 @@ public class SecureClient extends HBaseClient {
         }
       });
     }
-    /** Connect to the server and set up the I/O streams. It then sends
-     * a header to the server and starts
-     * the connection thread that waits for responses.
-     * @throws java.io.IOException e
-     */
+
+    @Override
 	  protected synchronized void setupIOstreams() throws IOException, InterruptedException {
       if (socket != null || shouldCloseConnection.get()) {
         return;
@@ -434,54 +305,6 @@ public class SecureClient extends HBaseClient {
       }
     }
 
-    private void closeConnection() {
-      // close the current connection
-      if (socket != null) {
-        try {
-          socket.close();
-        } catch (IOException e) {
-          LOG.warn("Not able to close a socket", e);
-        }
-	  }
-      // set socket to null so that the next call to setupIOstreams
-      // can start the process of connect all over again.
-      socket = null;
-    }
-
-    /* Handle connection failures
-     *
-     * If the current number of retries is equal to the max number of retries,
-     * stop retrying and throw the exception; Otherwise backoff N seconds and
-     * try connecting again.
-     *
-     * This Method is only called from inside setupIOstreams(), which is
-     * synchronized. Hence the sleep is synchronized; the locks will be retained.
-     *
-     * @param curRetries current number of retries
-     * @param maxRetries max number of retries allowed
-     * @param ioe failure reason
-     * @throws IOException if max number of retries is reached
-     */
-    private void handleConnectionFailure(
-        int curRetries, int maxRetries, IOException ioe) throws IOException {
-
-      closeConnection();
-
-      // throw the exception if the maximum number of retries is reached
-      if (curRetries >= maxRetries) {
-        throw ioe;
-      }
-
-      // otherwise back off and retry
-      try {
-        Thread.sleep(failureSleep);
-      } catch (InterruptedException ignored) {}
-
-      LOG.info("Retrying connect to server: " + server +
-        " after sleeping " + failureSleep + "ms. Already tried " + curRetries +
-        " time(s).");
-    }
-
     /* Write the RPC header */
     private void writeRpcHeader(OutputStream outStream) throws IOException {
       DataOutputStream out = new DataOutputStream(new BufferedOutputStream(outStream));
@@ -492,7 +315,8 @@ public class SecureClient extends HBaseClient {
       out.flush();
     }
 
-    /* Write the protocol header for each connection
+    /**
+     * Write the protocol header for each connection
      * Out is not synchronized because only the first thread does this.
      */
     private void writeHeader() throws IOException {
@@ -506,119 +330,8 @@ public class SecureClient extends HBaseClient {
       out.write(buf.getData(), 0, bufLen);
     }
 
-    /* wait till someone signals us to start reading RPC response or
-     * it is idle too long, it is marked as to be closed,
-     * or the client is marked as not running.
-     *
-     * Return true if it is time to read a response; false otherwise.
-     */
-    @SuppressWarnings({"ThrowableInstanceNeverThrown"})
-    private synchronized boolean waitForWork() {
-      if (calls.isEmpty() && !shouldCloseConnection.get()  && running.get())  {
-        long timeout = maxIdleTime-
-              (System.currentTimeMillis()-lastActivity.get());
-        if (timeout>0) {
-          try {
-            wait(timeout);
-          } catch (InterruptedException ignored) {}
-        }
-      }
-
-      if (!calls.isEmpty() && !shouldCloseConnection.get() && running.get()) {
-        return true;
-      } else if (shouldCloseConnection.get()) {
-        return false;
-      } else if (calls.isEmpty()) { // idle connection closed or stopped
-        markClosed(null);
-        return false;
-      } else { // get stopped but there are still pending requests
-        markClosed((IOException)new IOException().initCause(
-            new InterruptedException()));
-        return false;
-      }
-    }
-
-    public InetSocketAddress getRemoteAddress() {
-      return server;
-    }
-
-    /* Send a ping to the server if the time elapsed
-     * since last I/O activity is equal to or greater than the ping interval
-     */
-    protected synchronized void sendPing() throws IOException {
-      long curTime = System.currentTimeMillis();
-      if ( curTime - lastActivity.get() >= pingInterval) {
-        lastActivity.set(curTime);
-        //noinspection SynchronizeOnNonFinalField
-        synchronized (this.out) {
-          out.writeInt(PING_CALL_ID);
-          out.flush();
-        }
-      }
-    }
-
     @Override
-    public void run() {
-      if (LOG.isDebugEnabled())
-        LOG.debug(getName() + ": starting, having connections "
-            + connections.size());
-
-      try {
-        while (waitForWork()) {//wait here for work - read or close connection
-          receiveResponse();
-        }
-      } catch (Throwable t) {
-        LOG.warn("Unexpected exception receiving call responses", t);
-        markClosed(new IOException("Unexpected exception receiving call responses", t));
-      }
-
-      close();
-
-      if (LOG.isDebugEnabled())
-        LOG.debug(getName() + ": stopped, remaining connections "
-            + connections.size());
-    }
-
-    /** Initiates a call by sending the parameter to the remote server.
-     * Note: this is not called from the Connection thread, but by other
-     * threads.
-     */
-    protected void sendParam(Call call) {
-      if (shouldCloseConnection.get()) {
-        return;
-      }
-
-      DataOutputBuffer d=null;
-      try {
-        //noinspection SynchronizeOnNonFinalField
-        synchronized (this.out) { // FindBugs IS2_INCONSISTENT_SYNC
-          if (LOG.isDebugEnabled())
-            LOG.debug(getName() + " sending #" + call.id);
-
-          //for serializing the
-          //data to be written
-          d = new DataOutputBuffer();
-          d.writeInt(call.id);
-          call.param.write(d);
-          byte[] data = d.getData();
-          int dataLength = d.getLength();
-          out.writeInt(dataLength);      //first put the data length
-          out.write(data, 0, dataLength);//write the data
-          out.flush();
-        }
-      } catch(IOException e) {
-        markClosed(e);
-      } finally {
-        //the buffer is just an in-memory buffer, but it is still polite to
-        // close early
-        IOUtils.closeStream(d);
-      }
-    }
-
-    /* Receive a response.
-     * Because only one receiver, so no synchronization on in.
-     */
-    private void receiveResponse() {
+    protected void receiveResponse() {
       if (shouldCloseConnection.get()) {
         return;
       }
@@ -630,7 +343,7 @@ public class SecureClient extends HBaseClient {
         if (LOG.isDebugEnabled())
           LOG.debug(getName() + " got value #" + id);
 
-        Call call = calls.get(id);
+        Call call = calls.remove(id);
 
         int state = in.readInt();     // read call status
         if (LOG.isDebugEnabled()) {
@@ -643,43 +356,34 @@ public class SecureClient extends HBaseClient {
             LOG.debug("call #"+id+", response is:\n"+value.toString());
           }
           call.setValue(value);
-          calls.remove(id);
         } else if (state == Status.ERROR.state) {
           call.setException(new RemoteException(WritableUtils.readString(in),
                                                 WritableUtils.readString(in)));
-          calls.remove(id);
         } else if (state == Status.FATAL.state) {
           // Close the connection
-          calls.remove(id);
           markClosed(new RemoteException(WritableUtils.readString(in),
                                          WritableUtils.readString(in)));
         }
-      } catch (SocketTimeoutException ste) {
-        if (remoteId.rpcTimeout > 0) {
+      } catch (IOException e) {
+        if (e instanceof SocketTimeoutException && remoteId.rpcTimeout > 0) {
           // Clean up open calls but don't treat this as a fatal condition,
           // since we expect certain responses to not make it by the specified
           // {@link ConnectionId#rpcTimeout}.
-          closeException = ste;
-          cleanupCalls();
+          closeException = e;
         } else {
           // Since the server did not respond within the default ping interval
           // time, treat this as a fatal condition and close this connection
-          markClosed(ste);
+          markClosed(e);
         }
-      } catch (IOException e) {
-        markClosed(e);
-      }
-    }
-
-    private synchronized void markClosed(IOException e) {
-      if (shouldCloseConnection.compareAndSet(false, true)) {
-        closeException = e;
-        notifyAll();
+      } finally {
+        if (remoteId.rpcTimeout > 0) {
+          cleanupCalls(remoteId.rpcTimeout);
+        }
       }
     }
 
     /** Close the connection. */
-    private synchronized void close() {
+    protected synchronized void close() {
       if (!shouldCloseConnection.get()) {
         LOG.error("The connection is not in the closed state");
         return;
@@ -721,16 +425,6 @@ public class SecureClient extends HBaseClient {
       if (LOG.isDebugEnabled())
         LOG.debug(getName() + ": closed");
     }
-
-    /* Cleanup all calls and mark them as done */
-    private void cleanupCalls() {
-      Iterator<Entry<Integer, Call>> itor = calls.entrySet().iterator() ;
-      while (itor.hasNext()) {
-        Call c = itor.next().getValue();
-        c.setException(closeException); // local exception
-        itor.remove();
-      }
-    }
   }
 
   /**
@@ -754,9 +448,8 @@ public class SecureClient extends HBaseClient {
     this(valueClass, conf, NetUtils.getDefaultSocketFactory(conf));
   }
 
-  /** Get a connection from the pool, or create a new one and add it to the
-   * pool.  Connections to a given host/port are reused. */
-  private Connection getConnection(InetSocketAddress addr,
+  @Override
+  protected SecureConnection getConnection(InetSocketAddress addr,
                                    Class<? extends VersionedProtocol> protocol,
                                    User ticket,
                                    int rpcTimeout,
@@ -766,7 +459,7 @@ public class SecureClient extends HBaseClient {
       // the client is stopped
       throw new IOException("The client is stopped");
     }
-    Connection connection;
+    SecureConnection connection;
     /* we could avoid this allocation for each RPC by having a
      * connectionsId object and with set() method. We need to manage the
      * refs for keys in HashMap properly. For now its ok.
@@ -774,9 +467,9 @@ public class SecureClient extends HBaseClient {
     ConnectionId remoteId = new ConnectionId(addr, protocol, ticket, rpcTimeout);
     do {
       synchronized (connections) {
-        connection = connections.get(remoteId);
+        connection = (SecureConnection)connections.get(remoteId);
         if (connection == null) {
-          connection = new Connection(remoteId);
+          connection = new SecureConnection(remoteId);
           connections.put(remoteId, connection);
         }
       }
@@ -789,46 +482,4 @@ public class SecureClient extends HBaseClient {
     connection.setupIOstreams();
     return connection;
   }
-
-  /** Make a call, passing <code>param</code>, to the IPC server running at
-   * <code>address</code> which is servicing the <code>protocol</code> protocol,
-   * with the <code>ticket</code> credentials, returning the value.
-   * Throws exceptions if there are network problems or if the remote code
-   * threw an exception. */
-  public Writable call(Writable param, InetSocketAddress addr,
-                       Class<? extends VersionedProtocol> protocol,
-                       User ticket, int rpcTimeout)
-      throws InterruptedException, IOException {
-    Call call = new Call(param);
-    Connection connection = getConnection(addr, protocol, ticket, rpcTimeout, call);
-    connection.sendParam(call);                 // send the parameter
-    boolean interrupted = false;
-    //noinspection SynchronizationOnLocalVariableOrMethodParameter
-    synchronized (call) {
-      while (!call.done) {
-        try {
-          call.wait();                           // wait for the result
-        } catch (InterruptedException ignored) {
-          // save the fact that we were interrupted
-          interrupted = true;
-        }
-      }
-
-      if (interrupted) {
-        // set the interrupt flag now that we are done waiting
-        Thread.currentThread().interrupt();
-      }
-
-      if (call.error != null) {
-        if (call.error instanceof RemoteException) {
-          call.error.fillInStackTrace();
-          throw call.error;
-        }
-        // local exception
-        throw wrapException(addr, call.error);
-      }
-      return call.value;
-    }
-  }
-
 }
