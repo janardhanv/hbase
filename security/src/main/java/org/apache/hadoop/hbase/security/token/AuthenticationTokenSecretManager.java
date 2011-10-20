@@ -22,6 +22,7 @@ import javax.crypto.SecretKey;
 import java.io.IOException;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.google.common.collect.Maps;
@@ -68,7 +69,8 @@ public class AuthenticationTokenSecretManager
   private LeaderElector leaderElector;
   private ClusterId clusterId;
 
-  private Map<Integer,AuthenticationKey> allKeys = Maps.newHashMap();
+  private Map<Integer,AuthenticationKey> allKeys =
+      new ConcurrentHashMap<Integer, AuthenticationKey>();
   private AuthenticationKey currentKey;
 
   private int idSeq;

@@ -88,7 +88,7 @@ public abstract class SecureServer extends HBaseServer {
   private static final Log AUDITLOG =
     LogFactory.getLog("SecurityLogger.org.apache.hadoop.ipc.SecureServer");
   private static final String AUTH_FAILED_FOR = "Auth failed for ";
-  private static final String AUTH_SUCCESSFULL_FOR = "Auth successfull for ";
+  private static final String AUTH_SUCCESSFULL_FOR = "Auth successful for ";
 
   protected SecretManager<TokenIdentifier> secretManager;
   protected ServiceAuthorizationManager authManager;
@@ -335,14 +335,14 @@ public abstract class SecureServer extends HBaseServer {
               null);
         }
         if (saslServer.isComplete()) {
-          LOG.info("SASL server context established. Negotiated QoP is "
+          LOG.debug("SASL server context established. Negotiated QoP is "
               + saslServer.getNegotiatedProperty(Sasl.QOP));
           String qop = (String) saslServer.getNegotiatedProperty(Sasl.QOP);
           useWrap = qop != null && !"auth".equalsIgnoreCase(qop);
           ticket = getAuthorizedUgi(saslServer.getAuthorizationID());
-          LOG.info("SASL server successfully authenticated client: " + ticket);
+          LOG.debug("SASL server successfully authenticated client: " + ticket);
           rpcMetrics.authenticationSuccesses.inc();
-          AUDITLOG.info(AUTH_SUCCESSFULL_FOR + ticket);
+          AUDITLOG.trace(AUTH_SUCCESSFULL_FOR + ticket);
           saslContextEstablished = true;
         }
       } else {

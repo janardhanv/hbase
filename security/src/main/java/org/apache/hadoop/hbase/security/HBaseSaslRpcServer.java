@@ -77,7 +77,7 @@ public class HBaseSaslRpcServer {
 
   public static void init(Configuration conf) {
     QualityOfProtection saslQOP = QualityOfProtection.AUTHENTICATION;
-    String rpcProtection = conf.get("hadoop.rpc.protection",
+    String rpcProtection = conf.get("hbase.rpc.protection",
         QualityOfProtection.AUTHENTICATION.name().toLowerCase());
     if (QualityOfProtection.INTEGRITY.name().toLowerCase()
         .equals(rpcProtection)) {
