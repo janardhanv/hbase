@@ -1,6 +1,4 @@
 /*
- * Copyright The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -30,7 +28,8 @@ import org.apache.hadoop.security.UserGroupInformation;
 
 /**
  * The IPC connection header sent by the client to the server
- * on connection establishment.
+ * on connection establishment.  Part of the {@link SecureRpcEngine}
+ * implementation.
  */
 class SecureConnectionHeader extends ConnectionHeader {
   private User user = null;

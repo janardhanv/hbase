@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -42,6 +40,19 @@ import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.Token;
 import org.apache.zookeeper.KeeperException;
 
+/**
+ * Manages an internal list of secret keys used to sign new authentication
+ * tokens as they are generated, and to valid existing tokens used for
+ * authentication.
+ *
+ * <p>
+ * A single instance of {@code AuthenticationTokenSecretManager} will be
+ * running as the "leader" in a given HBase cluster.  The leader is responsible
+ * for periodically generating new secret keys, which are then distributed to
+ * followers via ZooKeeper, and for expiring previously used secret keys that
+ * are no longer needed (as any tokens using them have expired).
+ * </p>
+ */
 public class AuthenticationTokenSecretManager
     extends SecretManager<AuthenticationTokenIdentifier> {
 
@@ -66,10 +77,10 @@ public class AuthenticationTokenSecretManager
 
   /**
    * Create a new secret manager instance for generating keys.
-   * @param conf 
-   * @param zk
-   * @param keyUpdateInterval
-   * @param tokenMaxLifetime
+   * @param conf Configuration to use
+   * @param zk Connection to zookeeper for handling leader elections
+   * @param keyUpdateInterval Time (in milliseconds) between rolling a new master key for token signing
+   * @param tokenMaxLifetime Maximum age (in milliseconds) before a token expires and is no longer valid
    */
   public AuthenticationTokenSecretManager(Configuration conf,
       ZooKeeperWatcher zk, String serverName,

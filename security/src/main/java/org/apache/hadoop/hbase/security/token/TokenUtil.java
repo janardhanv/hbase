@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -35,9 +33,17 @@ import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.Token;
 
+/**
+ * Utility methods for obtaining authentication tokens.
+ */
 public class TokenUtil {
   private static Log LOG = LogFactory.getLog(TokenUtil.class);
 
+  /**
+   * Obtain and return an authentication token for the current user.
+   * @param conf The configuration for connecting to the cluster
+   * @return the authentication token instance
+   */
   public static Token<AuthenticationTokenIdentifier> obtainToken(
       Configuration conf) throws IOException {
     HTable meta = null;
@@ -59,6 +65,14 @@ public class TokenUtil {
         ? token.getService() : new Text("default");
   }
 
+  /**
+   * Obtain an authentication token for the given user and add it to the
+   * user's credentials.
+   * @param conf The configuration for connecting to the cluster
+   * @param user The user for whom to obtain the token
+   * @throws IOException If making a remote call to the {@link TokenProvider} fails
+   * @throws InterruptedException If executing as the given user is interrupted
+   */
   public static void obtainAndCacheToken(final Configuration conf,
       UserGroupInformation user)
       throws IOException, InterruptedException {
@@ -90,6 +104,15 @@ public class TokenUtil {
     }
   }
 
+  /**
+   * Obtain an authentication token on behalf of the given user and add it to
+   * the credentials for the given map reduce job.
+   * @param conf The configuration for connecting to the cluster
+   * @param user The user for whom to obtain the token
+   * @param job The job instance in which the token should be stored
+   * @throws IOException If making a remote call to the {@link TokenProvider} fails
+   * @throws InterruptedException If executing as the given user is interrupted
+   */
   public static void obtainTokenForJob(final Configuration conf,
       UserGroupInformation user, Job job)
       throws IOException, InterruptedException {
@@ -120,6 +143,14 @@ public class TokenUtil {
     }
   }
 
+  /**
+   * Obtain an authentication token on behalf of the given user and add it to
+   * the credentials for the given map reduce job.
+   * @param user The user for whom to obtain the token
+   * @param job The job configuration in which the token should be stored
+   * @throws IOException If making a remote call to the {@link TokenProvider} fails
+   * @throws InterruptedException If executing as the given user is interrupted
+   */
   public static void obtainTokenForJob(final JobConf job,
       UserGroupInformation user)
       throws IOException, InterruptedException {

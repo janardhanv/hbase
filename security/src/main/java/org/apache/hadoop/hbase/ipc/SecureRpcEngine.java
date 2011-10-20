@@ -1,6 +1,4 @@
 /*
- * Copyright The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -49,37 +47,26 @@ import java.net.SocketTimeoutException;
 import java.util.HashMap;
 import java.util.Map;
 
-/** A simple RPC mechanism.
+/**
+ * A loadable RPC engine supporting SASL authentication of connections, using
+ * GSSAPI for Kerberos authentication or DIGEST-MD5 for authentication via
+ * signed tokens.
  *
- * This is a local hbase copy of the hadoop RPC so we can do things like
- * address HADOOP-414 for hbase-only and try other hbase-specific
- * optimizations like using our own version of ObjectWritable.  Class has been
- * renamed to avoid confusing it w/ hadoop versions.
  * <p>
+ * This is a fork of the {@code org.apache.hadoop.ipc.WriteableRpcEngine} from
+ * secure Hadoop, reworked to eliminate code duplication with the existing
+ * HBase {@link WritableRpcEngine}.
+ * </p>
  *
- *
- * A <i>protocol</i> is a Java interface.  All parameters and return types must
- * be one of:
- *
- * <ul> <li>a primitive type, <code>boolean</code>, <code>byte</code>,
- * <code>char</code>, <code>short</code>, <code>int</code>, <code>long</code>,
- * <code>float</code>, <code>double</code>, or <code>void</code>; or</li>
- *
- * <li>a {@link String}; or</li>
- *
- * <li>a {@link org.apache.hadoop.io.Writable}; or</li>
- *
- * <li>an array of the above types</li> </ul>
- *
- * All methods in the protocol should throw only IOException.  No field data of
- * the protocol instance is transmitted.
+ * @see SecureClient
+ * @see SecureServer
  */
 public class SecureRpcEngine implements RpcEngine {
   // Leave this out in the hadoop ipc package but keep class name.  Do this
   // so that we dont' get the logging of this class's invocations by doing our
   // blanket enabling DEBUG on the o.a.h.h. package.
   protected static final Log LOG =
-    LogFactory.getLog("org.apache.hadoop.ipc.HbaseRPC");
+    LogFactory.getLog("org.apache.hadoop.ipc.SecureRpcEngine");
 
   private SecureRpcEngine() {
     super();

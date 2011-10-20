@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,6 +27,10 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableUtils;
 
+/**
+ * Represents a secret key used for signing and verifying authentication tokens
+ * by {@link AuthenticationTokenSecretManager}.
+ */
 public class AuthenticationKey implements Writable {
   private int id;
   private long expirationDate;

@@ -1,6 +1,4 @@
 /*
- * Copyright The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -61,14 +59,16 @@ import java.util.*;
 
 import static org.apache.hadoop.fs.CommonConfigurationKeys.HADOOP_SECURITY_AUTHORIZATION;
 
-/** An abstract IPC service.  IPC calls take a single {@link org.apache.hadoop.io.Writable} as a
- * parameter, and return a {@link org.apache.hadoop.io.Writable} as their value.  A service runs on
- * a port and is defined by a parameter class and a value class.
+/**
+ * An abstract IPC service, supporting SASL authentication of connections,
+ * using GSSAPI for Kerberos authentication or DIGEST-MD5 for authentication
+ * via signed tokens.
  *
+ * <p>
+ * This is part of the {@link SecureRpcEngine} implementation.
+ * </p>
  *
- * <p>Copied local so can fix HBASE-900.
- *
- * @see org.apache.hadoop.hbase.ipc.HBaseClient
+ * @see org.apache.hadoop.hbase.ipc.SecureClient
  */
 public abstract class SecureServer extends HBaseServer {
   private final boolean authorize;

@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,6 +27,9 @@ import org.apache.hadoop.io.WritableUtils;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.TokenIdentifier;
 
+/**
+ * Represents the identity information stored in an HBase authentication token.
+ */
 public class AuthenticationTokenIdentifier extends TokenIdentifier {
   public static final byte VERSION = 1;
   public static final Text AUTH_TOKEN_TYPE = new Text("HBASE_AUTH_TOKEN");

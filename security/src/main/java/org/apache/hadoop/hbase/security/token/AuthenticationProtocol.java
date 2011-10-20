@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -25,12 +23,15 @@ import java.io.IOException;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.security.token.Token;
 
+/**
+ * Defines a custom RPC protocol for obtaining authentication tokens
+ */
 public interface AuthenticationProtocol extends CoprocessorProtocol {
   /**
    * Obtains a token capable of authenticating as the current user for future
    * connections.
    * @return an authentication token for the current user
-   * @throws IOException
+   * @throws IOException If obtaining a token is denied or encounters an error
    */
   public Token<AuthenticationTokenIdentifier> getAuthenticationToken()
       throws IOException;

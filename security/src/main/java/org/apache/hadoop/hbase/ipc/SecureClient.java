@@ -1,6 +1,4 @@
 /*
- * Copyright The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -55,14 +53,18 @@ import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** A client for an IPC service.  IPC calls take a single {@link org.apache.hadoop.io.Writable} as a
- * parameter, and return a {@link org.apache.hadoop.io.Writable} as their value.  A service runs on
- * a port and is defined by a parameter class and a value class.
+/**
+ * A client for an IPC service, which support SASL authentication of connections
+ * using either GSSAPI for Kerberos authentication or DIGEST-MD5 for
+ * authentication using signed tokens.
  *
- * <p>This is the org.apache.hadoop.ipc.Client renamed as HBaseClient and
- * moved into this package so can access package-private methods.
- *
- * @see org.apache.hadoop.hbase.ipc.HBaseServer
+ * <p>
+ * This is a copy of org.apache.hadoop.ipc.Client from secure Hadoop,
+ * reworked to remove code duplicated with
+ * {@link org.apache.hadoop.hbase.HBaseClient}.  This is part of the loadable
+ * {@link SecureRpcEngine}, and only functions in connection with a
+ * {@link SecureServer} instance.
+ * </p>
  */
 public class SecureClient extends HBaseClient {
 

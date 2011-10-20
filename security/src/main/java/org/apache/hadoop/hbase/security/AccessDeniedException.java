@@ -1,6 +1,4 @@
 /**
- * Copyright 2010 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -27,24 +25,14 @@ import org.apache.hadoop.hbase.DoNotRetryIOException;
 public class AccessDeniedException extends DoNotRetryIOException {
   private static final long serialVersionUID = 1913879564363001780L;
 
-  /** Default Constructor */
   public AccessDeniedException() {
     super();
   }
 
-  /**
-   * Constructor with a Class object and exception message.
-   * @param clazz
-   * @param s
-   */
   public AccessDeniedException(Class<?> clazz, String s) {
     super( "AccessDenied [" + clazz.getName() + "]: " + s);
   }
 
-  /**
-   * Constructs the exception and supplies a string as the message
-   * @param s message
-   */
   public AccessDeniedException(String s) {
     super(s);
   }

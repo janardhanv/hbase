@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -36,6 +34,10 @@ import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.security.token.SecretManager;
 import org.apache.hadoop.security.token.Token;
 
+/**
+ * Provides a service for obtaining authentication tokens via the
+ * {@link AuthenticationProtocol} coprocessor protocol.
+ */
 public class TokenProvider extends BaseEndpointCoprocessor
     implements AuthenticationProtocol {
 

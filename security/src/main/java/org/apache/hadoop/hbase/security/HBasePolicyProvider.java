@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -29,7 +27,7 @@ import org.apache.hadoop.security.authorize.ServiceAuthorizationManager;
 
 /**
  * Implementation of secure Hadoop policy provider for mapping
- * protocol interfaces to hadoop-policy.xml entries.
+ * protocol interfaces to hbase-policy.xml entries.
  */
 public class HBasePolicyProvider extends PolicyProvider {
   protected static Service[] services = {

@@ -1,6 +1,4 @@
 /*
- * Copyright 2011 The Apache Software Foundation
- *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
  * distributed with this work for additional information
@@ -32,7 +30,14 @@ import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.apache.zookeeper.KeeperException;
 
 /**
- * Handles race to become 
+ * Handles coordination of a single "leader" instance among many possible
+ * candidates.  The first {@code ZKLeaderManager} to successfully create
+ * the given znode becomes the leader, allowing the instance to continue
+ * with whatever processing must be protected.  Other {@ZKLeaderManager}
+ * instances will wait to be notified of changes to the leader znode.
+ * If the current master instance fails, the ephemeral leader znode will
+ * be removed, and all waiting instances will be notified, with the race
+ * to claim the leader znode beginning all over again.
  */
 public class ZKLeaderManager extends ZooKeeperListener {
   private static Log LOG = LogFactory.getLog(ZKLeaderManager.class);
@@ -146,6 +151,9 @@ public class ZKLeaderManager extends ZooKeeperListener {
     }
   }
 
+  /**
+   * Removes the leader znode, if it is currently claimed by this instance.
+   */
   public void stepDownAsLeader() {
     try {
       synchronized(leaderExists) {
