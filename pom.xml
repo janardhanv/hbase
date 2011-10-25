@@ -224,18 +224,6 @@
         <enabled>true</enabled>
       </releases>
     </repository>
-    <!-- snapshot builds of Hadoop 0.20.104-append branch for testing -->
-    <repository>
-      <id>ghelmling.testing</id>
-      <name>Gary Helmling test repo</name>
-      <url>http://people.apache.org/~garyh/mvn/</url>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-      <releases>
-        <enabled>true</enabled>
-      </releases>
-    </repository>
     <repository>
       <id>repository.jboss.org</id>
       <url>http://repository.jboss.org/nexus/content/groups/public-jboss/</url>
@@ -1280,53 +1268,10 @@
 
     <!-- profile for building against Hadoop 0.20+security-->
     <profile>
-      <id>hadoop-0.20S</id>
-      <activation>
-        <property>
-          <name>hadoop.profile</name>
-          <value>20S</value>
-        </property>
-      </activation>
+      <id>security</id>
       <properties>
-        <hadoop.version>0.20.205.0</hadoop.version>
-        <zookeeper.version>3.4.0-security</zookeeper.version>
+        <hbase.version>0.93-security-SNAPSHOT</hbase.version>
       </properties>
-      <dependencies>
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-core</artifactId>
-          <version>${hadoop.version}</version>
-          <exclusions>
-            <exclusion>
-              <groupId>hsqldb</groupId>
-              <artifactId>hsqldb</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>net.sf.kosmosfs</groupId>
-              <artifactId>kfs</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>org.eclipse.jdt</groupId>
-              <artifactId>core</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>net.java.dev.jets3t</groupId>
-              <artifactId>jets3t</artifactId>
-            </exclusion>
-            <exclusion>
-              <groupId>oro</groupId>
-              <artifactId>oro</artifactId>
-            </exclusion>
-          </exclusions>
-        </dependency>
-        <!-- test deps for hadoop-0.20 profile -->
-        <dependency>
-          <groupId>org.apache.hadoop</groupId>
-          <artifactId>hadoop-test</artifactId>
-          <version>${hadoop.version}</version>
-          <scope>test</scope>
-        </dependency>
-      </dependencies>
       <build>
         <plugins>
           <plugin>
