@@ -47,6 +47,7 @@ import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.InternalScanner;
 import org.apache.hadoop.hbase.regionserver.RegionScanner;
+import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.security.AccessDeniedException;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
@@ -656,34 +657,34 @@ public class AccessController extends BaseRegionObserver
 
   @Override
   public void prePut(final ObserverContext<RegionCoprocessorEnvironment> c,
-      final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
+      final Put put, final WALEdit edit, final boolean writeToWAL)
       throws IOException {
     requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
-        familyMap);
+        put.getFamilyMap());
   }
 
   @Override
   public void postPut(final ObserverContext<RegionCoprocessorEnvironment> c,
-      final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL) {
+      final Put put, final WALEdit edit, final boolean writeToWAL) {
     if (isAclRegion) {
-      updateACL(c.getEnvironment(), familyMap);
+      updateACL(c.getEnvironment(), put.getFamilyMap());
     }
   }
 
   @Override
   public void preDelete(final ObserverContext<RegionCoprocessorEnvironment> c,
-      final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
+      final Delete delete, final WALEdit edit, final boolean writeToWAL)
       throws IOException {
     requirePermission(TablePermission.Action.WRITE, c.getEnvironment(),
-        familyMap);
+        delete.getFamilyMap());
   }
 
   @Override
   public void postDelete(final ObserverContext<RegionCoprocessorEnvironment> c,
-      final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
+      final Delete delete, final WALEdit edit, final boolean writeToWAL)
       throws IOException {
     if (isAclRegion) {
-      updateACL(c.getEnvironment(), familyMap);
+      updateACL(c.getEnvironment(), delete.getFamilyMap());
     }
   }
 
