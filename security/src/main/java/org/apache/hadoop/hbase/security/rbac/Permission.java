@@ -171,9 +171,8 @@ public class Permission extends VersionedWritable {
         byte b = in.readByte();
         Action a = ACTION_BY_CODE.get(b);
         if (a == null) {
-          LOG.error("Ignoring unknown action code '"+
-              Bytes.toStringBinary(new byte[]{b})+"'");
-          continue;
+          throw new IOException("Unknown action code '"+
+              Bytes.toStringBinary(new byte[]{b})+"' in input");
         }
         this.actions[i] = a;
       }

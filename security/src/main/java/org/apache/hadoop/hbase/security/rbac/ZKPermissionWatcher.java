@@ -76,6 +76,8 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
         refreshNodes(nodes);
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper", ke);
+        // only option is to abort
+        watcher.abort("Zookeeper error obtaining acl node children", ke);
       }
     }
   }
@@ -97,7 +99,9 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
         byte[] data = ZKUtil.getDataAndWatch(watcher, path);
         authManager.refreshCacheFromWritable(Bytes.toBytes(table), data);
       } catch (KeeperException ke) {
-        LOG.error("Error reading data from zookeeper", ke);
+        LOG.error("Error reading data from zookeeper for node "+table, ke);
+        // only option is to abort
+        watcher.abort("Zookeeper error getting data for node "+table, ke);
       } catch (IOException ioe) {
         LOG.error("Error reading permissions writables", ioe);
       }
@@ -113,7 +117,8 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
             ZKUtil.getChildDataAndWatchForNewChildren(watcher, aclZNode);
         refreshNodes(nodes);
       } catch (KeeperException ke) {
-        LOG.error("Error reading data from zookeeper", ke);
+        LOG.error("Error reading data from zookeeper for path "+path, ke);
+        watcher.abort("Zookeeper error get node children for path "+path, ke);
       }
     }
   }
@@ -145,17 +150,17 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
    */
   public void writeToZookeeper(String tableName, 
       byte[] permsData) {
-    try {
-      String zkNode =
+    String zkNode =
         ZKUtil.joinZNode(ZKUtil.joinZNode(watcher.baseZNode, ACL_NODE),
           tableName);
+    try {
       ZKUtil.createWithParents(watcher, zkNode);
       ZKUtil.updateExistingNodeData(watcher, zkNode,
         permsData, -1);
-    }
-    catch (KeeperException e) {
+    } catch (KeeperException e) {
       LOG.error("Failed updating permissions for table '" + tableName +
           "'", e);
+      watcher.abort("Failed writing node "+zkNode+" to zookeeper", e);
     }
   }
 }

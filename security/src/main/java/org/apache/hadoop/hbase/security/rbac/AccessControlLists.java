@@ -92,12 +92,13 @@ public class AccessControlLists {
             Compression.Algorithm.NONE.getName(), true, true, 8 * 1024,
             HConstants.FOREVER, StoreFile.BloomType.NONE.toString(),
             HConstants.REPLICATION_SCOPE_LOCAL));
-    // TODO: should ACLs be replicated?
   }
 
-  /** delimiter to separate user and column family in .META. acl: column keys */
+  /**
+   * Delimiter to separate user, column family, and qualifier in
+   * _acl_ table info: column keys */
   public static final char ACL_KEY_DELIMITER = ',';
-  /** prefix character to denote group names */
+  /** Prefix character to denote group names */
   public static final String GROUP_PREFIX = "@";
   /** Configuration key for superusers */
   public static final String SUPERUSER_CONF_KEY = "hbase.superuser";

@@ -44,7 +44,7 @@ import java.util.concurrent.ConcurrentSkipListMap;
  */
 public class TableAuthManager {
   /** Key for the user and group cache maps for globally assigned permissions */
-  private static final String GLOBAL_CACHE_KEY = ".rbac.";
+  private static final String GLOBAL_CACHE_KEY = ".access.";
   private static Log LOG = LogFactory.getLog(TableAuthManager.class);
 
   private static TableAuthManager instance;
@@ -63,7 +63,8 @@ public class TableAuthManager {
   private Configuration conf;
   private ZKPermissionWatcher zkperms;
 
-  private TableAuthManager(ZooKeeperWatcher watcher, Configuration conf) {
+  private TableAuthManager(ZooKeeperWatcher watcher, Configuration conf)
+      throws IOException {
     this.conf = conf;
     this.zkperms = new ZKPermissionWatcher(watcher, this, conf);
     try {
@@ -76,19 +77,18 @@ public class TableAuthManager {
     initGlobal(conf);
   }
 
-  private void initGlobal(Configuration conf) {
-    String currentUser = null;
-    try {
-      currentUser = User.getCurrent().getShortName();
-    } catch (IOException ioe) {
-      LOG.warn("Unable to get current user!", ioe);
+  private void initGlobal(Configuration conf) throws IOException {
+    User user = User.getCurrent();
+    if (user == null) {
+      throw new IOException("Unable to obtain the current user, " +
+          "authorization checks for internal operations will not work correctly!");
     }
+    String currentUser = user.getShortName();
 
     // the system user is always included
     List<String> superusers = Lists.asList(currentUser, conf.getStrings(
         AccessControlLists.SUPERUSER_CONF_KEY, new String[0]));
     if (superusers != null) {
-      List<Permission.Action> allActions = Arrays.asList(Permission.Action.values());
       for (String name : superusers) {
         if (AccessControlLists.isGroupPrincipal(name)) {
           GROUP_CACHE.put(AccessControlLists.getGroupName(name),
@@ -110,7 +110,7 @@ public class TableAuthManager {
       ListMultimap<String,TablePermission> perms = AccessControlLists.readPermissions(in, conf);
       cache(table, perms);
     } else {
-      LOG.info("Skipping permission cache refresh because writable data is empty");
+      LOG.debug("Skipping permission cache refresh because writable data is empty");
     }
   }
 
@@ -474,7 +474,7 @@ public class TableAuthManager {
     new HashMap<ZooKeeperWatcher,TableAuthManager>();
 
   public synchronized static TableAuthManager get(
-      ZooKeeperWatcher watcher, Configuration conf) {
+      ZooKeeperWatcher watcher, Configuration conf) throws IOException {
     instance = managerMap.get(watcher);
     if (instance == null) {
       instance = new TableAuthManager(watcher, conf);

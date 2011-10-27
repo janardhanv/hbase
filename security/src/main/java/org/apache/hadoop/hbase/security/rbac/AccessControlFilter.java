@@ -34,7 +34,7 @@ import org.apache.hadoop.security.UserGroupInformation;
  * <strong>NOTE: for internal use only by AccessController implementation</strong>
  *
  * <p>
- * TODO: this implementation might suck performance wise.
+ * TODO: There is room for further performance optimization here.
  * Calling TableAuthManager.authorize() per KeyValue imposes a fair amount of
  * overhead.  A more optimized solution might look at the qualifiers where
  * permissions are actually granted and explicitly limit the scan to those.
