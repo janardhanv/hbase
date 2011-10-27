@@ -18,17 +18,15 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
-import java.util.List;
 
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.filter.FilterBase;
 import org.apache.hadoop.hbase.security.User;
-import org.apache.hadoop.security.UserGroupInformation;
 
 /**
  * <strong>NOTE: for internal use only by AccessController implementation</strong>

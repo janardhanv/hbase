@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import static org.junit.Assert.*;
 
 /**
- * Test the reading and writing of rbac permission in {@link org.apache.hadoop.hbase.catalog.MetaReader} and {@link org.apache.hadoop.hbase.catalog.MetaEditor}.
+ * Test the reading and writing of access permissions on {@code _acl_} table.
  */
 public class TestTablePermissions {
   private static final Log LOG = LogFactory.getLog(TestTablePermissions.class);

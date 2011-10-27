@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.ListMultimap;
@@ -74,7 +74,7 @@ import java.util.*;
  * @group,family,qualifier  column qualifier level permissions for a group
  * </pre>
  * All values are encoded as byte arrays containing the codes from the
- * {@link org.apache.hadoop.hbase.security.rbac.TablePermission.Action} enum.
+ * {@link org.apache.hadoop.hbase.security.access.TablePermission.Action} enum.
  * </p>
  */
 public class AccessControlLists {
@@ -332,7 +332,7 @@ public class AccessControlLists {
    * @group,family,qualifier  column qualifier level permissions for a group
    * </pre>
    * All values are encoded as byte arrays containing the codes from the
-   * {@link org.apache.hadoop.hbase.security.rbac.TablePermission.Action} enum.
+   * {@link org.apache.hadoop.hbase.security.access.TablePermission.Action} enum.
    * </p>
    */
   static ListMultimap<String,TablePermission> getTablePermissions(

@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;

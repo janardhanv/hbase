@@ -1,4 +1,4 @@
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import java.io.IOException;
 

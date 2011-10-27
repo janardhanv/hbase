@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -101,7 +101,7 @@ public class ZKPermissionWatcher extends ZooKeeperListener {
       } catch (KeeperException ke) {
         LOG.error("Error reading data from zookeeper for node "+table, ke);
         // only option is to abort
-        watcher.abort("Zookeeper error getting data for node "+table, ke);
+        watcher.abort("Zookeeper error getting data for node " + table, ke);
       } catch (IOException ioe) {
         LOG.error("Error reading permissions writables", ioe);
       }

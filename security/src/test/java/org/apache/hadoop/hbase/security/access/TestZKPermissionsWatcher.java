@@ -18,7 +18,7 @@
  * limitations under the License.
  */
 
-package org.apache.hadoop.hbase.security.rbac;
+package org.apache.hadoop.hbase.security.access;
 
 import static org.junit.Assert.*;
 
@@ -28,7 +28,6 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Abortable;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.zookeeper.ZKUtil;
 import org.apache.hadoop.hbase.zookeeper.ZooKeeperWatcher;
 import org.junit.AfterClass;
 import org.junit.BeforeClass;
@@ -40,7 +39,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * Test the reading and writing of rbac permission in {@link org.apache.hadoop.hbase.catalog.MetaReader} and {@link org.apache.hadoop.hbase.catalog.MetaEditor}.
+ * Test the reading and writing of access permissions to and from zookeeper.
  */
 public class TestZKPermissionsWatcher {
   private static final Log LOG = LogFactory.getLog(TestZKPermissionsWatcher.class);
