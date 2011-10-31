@@ -240,7 +240,7 @@ public class AccessControlLists {
     Map<byte[],ListMultimap<String,TablePermission>> allPerms =
         new TreeMap<byte[],ListMultimap<String,TablePermission>>(Bytes.BYTES_COMPARATOR);
     
-    // do a full scan of .acl. table
+    // do a full scan of _acl_ table
 
     Scan scan = new Scan();
     scan.addFamily(HConstants.CATALOG_FAMILY);
@@ -339,7 +339,7 @@ public class AccessControlLists {
       Configuration conf, byte[] tableName)
   throws IOException {
     /* TODO: -ROOT- and .META. cannot easily be handled because they must be
-     * online before .acl. table.  Can anything be done here?
+     * online before _acl_ table.  Can anything be done here?
      */
     if (Bytes.equals(tableName, HConstants.ROOT_TABLE_NAME) ||
         Bytes.equals(tableName, HConstants.META_TABLE_NAME) ||
@@ -347,7 +347,7 @@ public class AccessControlLists {
       return ArrayListMultimap.create(0,0);
     }
 
-    // for normal user tables, we just read the table row from .acl.
+    // for normal user tables, we just read the table row from _acl_
     ListMultimap<String,TablePermission> perms = ArrayListMultimap.create();
     HTable acls = null;
     try {

@@ -63,8 +63,8 @@ public class TestAccessControlFilter {
     Configuration conf = TEST_UTIL.getConfiguration();
     SecureTestUtil.enableSecurity(conf);
     String baseuser = User.getCurrent().getShortName();
-    conf.set("hbase.superuser",
-        String.format("admin,%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
+    conf.set("hbase.superuser", conf.get("hbase.superuser", "") +
+        String.format(",%s.hfs.0,%s.hfs.1,%s.hfs.2", baseuser, baseuser, baseuser));
     TEST_UTIL.startMiniCluster(2);
 
     ADMIN = User.createUserForTesting(conf, "admin", new String[]{"supergroup"});
