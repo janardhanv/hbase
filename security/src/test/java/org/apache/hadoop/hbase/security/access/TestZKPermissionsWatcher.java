@@ -78,7 +78,7 @@ public class TestZKPermissionsWatcher {
   }
 
   @AfterClass
-  public static void afterClass() throws IOException {
+  public static void afterClass() throws Exception {
     UTIL.shutdownMiniCluster();
   }
 

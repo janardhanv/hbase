@@ -86,7 +86,7 @@ public class TestTablePermissions {
   }
 
   @AfterClass
-  public static void afterClass() throws IOException {
+  public static void afterClass() throws Exception {
     UTIL.shutdownMiniCluster();
   }
 
