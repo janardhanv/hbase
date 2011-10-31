@@ -204,7 +204,6 @@ public class TestAdmin {
     htd.addFamily(fam1);
     htd.addFamily(fam2);
     htd.addFamily(fam3);
-    htd.setOwnerString("testuser");
     this.admin.createTable(htd);
     HTable table = new HTable(TEST_UTIL.getConfiguration(), "myTestTable");
     HTableDescriptor confirmedHtd = table.getTableDescriptor();
@@ -1134,7 +1133,7 @@ public class TestAdmin {
       this.admin.deleteTable(tableName);
     }
   }
-
+  
 
   /**
    * For HBASE-2556
