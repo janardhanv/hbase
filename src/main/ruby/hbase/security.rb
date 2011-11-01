@@ -47,9 +47,9 @@ module Hbase
       # invoke cp endpoint to perform access control
       fambytes = family.to_java_bytes if (family != nil)
       qualbytes = qualifier.to_java_bytes if (qualifier != nil)
-      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, permissions.to_java_bytes)
-      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.rbac.AccessControlLists::ACL_TABLE_NAME)
-      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, 
+      tp = org.apache.hadoop.hbase.security.access.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, permissions.to_java_bytes)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.access.AccessControlLists::ACL_TABLE_NAME)
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.access.AccessControllerProtocol.java_class,
                                              org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       protocol.grant(user.to_java_bytes, tp)
     end
@@ -69,9 +69,9 @@ module Hbase
 
       fambytes = family.to_java_bytes if (family != nil)
       qualbytes = qualifier.to_java_bytes if (qualifier != nil)
-      tp = org.apache.hadoop.hbase.security.rbac.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, "".to_java_bytes)
-      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.rbac.AccessControlLists::ACL_TABLE_NAME)
-      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class,
+      tp = org.apache.hadoop.hbase.security.access.TablePermission.new(table_name.to_java_bytes, fambytes, qualbytes, "".to_java_bytes)
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.access.AccessControlLists::ACL_TABLE_NAME)
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.access.AccessControllerProtocol.java_class,
                                              org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       protocol.revoke(user.to_java_bytes, tp)
     end
@@ -82,8 +82,8 @@ module Hbase
 
       raise(ArgumentError, "Can't find table: #{table_name}") unless exists?(table_name)
 
-      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.rbac.AccessControlLists::ACL_TABLE_NAME)
-      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol.java_class, 
+      meta_table = org.apache.hadoop.hbase.client.HTable.new(org.apache.hadoop.hbase.security.access.AccessControlLists::ACL_TABLE_NAME)
+      protocol = meta_table.coprocessorProxy(org.apache.hadoop.hbase.security.access.AccessControllerProtocol.java_class,
                                              org.apache.hadoop.hbase.HConstants::EMPTY_START_ROW)
       perms = protocol.getUserPermissions(table_name.to_java_bytes)
 
@@ -95,7 +95,7 @@ module Hbase
         family = (value.getFamily != nil) ? org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getFamily) : ''
         qualifier = (value.getQualifier != nil) ? org.apache.hadoop.hbase.util.Bytes::toStringBinary(value.getQualifier) : ''
 
-        action = org.apache.hadoop.hbase.security.rbac.Permission.new value.getActions
+        action = org.apache.hadoop.hbase.security.access.Permission.new value.getActions
 
         if block_given?
           yield(user_name, "#{table},#{family},#{qualifier}: #{action.to_s}")
@@ -117,7 +117,7 @@ module Hbase
     # Make sure that security classes are available
     def security_available?()
       begin
-        org.apache.hadoop.hbase.security.rbac.AccessControllerProtocol
+        org.apache.hadoop.hbase.security.access.AccessControllerProtocol
       rescue NameError
         raise(ArgumentError, "DISABLED: Security features are not available in this build of HBase")
       end
