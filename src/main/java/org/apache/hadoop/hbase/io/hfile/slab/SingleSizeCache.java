@@ -57,9 +57,9 @@ public class SingleSizeCache implements BlockCache, HeapSize {
   private final int numBlocks;
   private final int blockSize;
   private final CacheStats stats;
-  private final SlabItemEvictionWatcher evictionWatcher;
-  private AtomicLong size;
-  private AtomicLong timeSinceLastAccess;
+  private final SlabItemActionWatcher actionWatcher;
+  private final AtomicLong size;
+  private final AtomicLong timeSinceLastAccess;
   public final static long CACHE_FIXED_OVERHEAD = ClassSize
       .align((2 * Bytes.SIZEOF_INT) + (5 * ClassSize.REFERENCE)
           + +ClassSize.OBJECT);
@@ -78,22 +78,24 @@ public class SingleSizeCache implements BlockCache, HeapSize {
    * @param master the SlabCache this SingleSlabCache is assigned to.
    */
   public SingleSizeCache(int blockSize, int numBlocks,
-      SlabItemEvictionWatcher master) {
+      SlabItemActionWatcher master) {
     this.blockSize = blockSize;
     this.numBlocks = numBlocks;
     backingStore = new Slab(blockSize, numBlocks);
     this.stats = new CacheStats();
-    this.evictionWatcher = master;
+    this.actionWatcher = master;
     this.size = new AtomicLong(CACHE_FIXED_OVERHEAD + backingStore.heapSize());
     this.timeSinceLastAccess = new AtomicLong();
 
-    // This evictionListener is called whenever the cache automatically evicts
+    // This evictionListener is called whenever the cache automatically
+    // evicts
     // something.
     MapEvictionListener<String, CacheablePair> listener = new MapEvictionListener<String, CacheablePair>() {
       @Override
       public void onEviction(String key, CacheablePair value) {
         timeSinceLastAccess.set(System.nanoTime()
             - value.recentlyAccessed.get());
+        stats.evict();
         doEviction(key, value);
       }
     };
@@ -107,12 +109,6 @@ public class SingleSizeCache implements BlockCache, HeapSize {
   public void cacheBlock(String blockName, Cacheable toBeCached) {
     ByteBuffer storedBlock;
 
-    /*
-     * Spinlock if empty, Guava Mapmaker guarantees that we will not store more
-     * items than the memory we have allocated, but the Slab Allocator may still
-     * be empty if we have not yet completed eviction
-     */
-
     try {
       storedBlock = backingStore.alloc(toBeCached.getSerializedLength());
     } catch (InterruptedException e) {
@@ -125,11 +121,17 @@ public class SingleSizeCache implements BlockCache, HeapSize {
         storedBlock);
     toBeCached.serialize(storedBlock);
 
-    CacheablePair alreadyCached = backingMap.putIfAbsent(blockName, newEntry);
+    synchronized (this) {
+      CacheablePair alreadyCached = backingMap.putIfAbsent(blockName, newEntry);
+    
 
-    if (alreadyCached != null) {
-      backingStore.free(storedBlock);
-      throw new RuntimeException("already cached " + blockName);
+      if (alreadyCached != null) {
+        backingStore.free(storedBlock);
+        throw new RuntimeException("already cached " + blockName);
+      }
+      if (actionWatcher != null) {
+        actionWatcher.onInsertion(blockName, this);
+      }
     }
     newEntry.recentlyAccessed.set(System.nanoTime());
     this.size.addAndGet(newEntry.heapSize());
@@ -171,6 +173,7 @@ public class SingleSizeCache implements BlockCache, HeapSize {
   public boolean evictBlock(String key) {
     stats.evict();
     CacheablePair evictedBlock = backingMap.remove(key);
+
     if (evictedBlock != null) {
       doEviction(key, evictedBlock);
     }
@@ -200,8 +203,9 @@ public class SingleSizeCache implements BlockCache, HeapSize {
       // Thread A sees the null serializedData, and returns null
       // Thread A calls cacheBlock on the same block, and gets
       // "already cached" since the block is still in backingStore
-      if (evictionWatcher != null) {
-        evictionWatcher.onEviction(key, false);
+
+      if (actionWatcher != null) {
+        actionWatcher.onEviction(key, this);
       }
     }
     stats.evicted();
@@ -210,7 +214,7 @@ public class SingleSizeCache implements BlockCache, HeapSize {
 
   public void logStats() {
 
-    long milliseconds = (long) this.timeSinceLastAccess.get() / 1000000;
+    long milliseconds = this.timeSinceLastAccess.get() / 1000000;
 
     LOG.info("For Slab of size " + this.blockSize + ": "
         + this.getOccupiedSize() / this.blockSize
@@ -269,6 +273,11 @@ public class SingleSizeCache implements BlockCache, HeapSize {
 
   public CacheStats getStats() {
     return this.stats;
+  }
+
+  @Override
+  public long getBlockCount() {
+    return numBlocks - backingStore.getBlocksRemaining();
   }
 
   /* Since its offheap, it doesn't matter if its in memory or not */

@@ -133,9 +133,9 @@ public abstract class HBaseServer implements RpcServer {
   }
 
   /** Returns the server instance called under or null.  May be called under
-   * {@link #call(Class, Writable, long)} implementations, and under {@link Writable}
-   * methods of paramters and return values.  Permits applications to access
-   * the server context.
+   * {@link #call(Class, Writable, long, MonitoredRPCHandler)} implementations,
+   * and under {@link Writable} methods of paramters and return values.
+   * Permits applications to access the server context.
    * @return HBaseServer
    */
   public static RpcServer get() {
@@ -297,7 +297,8 @@ public abstract class HBaseServer implements RpcServer {
       if (result instanceof WritableWithSize) {
         // get the size hint.
         WritableWithSize ohint = (WritableWithSize) result;
-        long hint = ohint.getWritableSize() + Bytes.SIZEOF_BYTE + Bytes.SIZEOF_INT;
+        long hint = ohint.getWritableSize() + Bytes.SIZEOF_BYTE +
+          (2 * Bytes.SIZEOF_INT);
         if (hint > Integer.MAX_VALUE) {
           // oops, new problem.
           IOException ioe =
@@ -312,8 +313,15 @@ public abstract class HBaseServer implements RpcServer {
       ByteBufferOutputStream buf = new ByteBufferOutputStream(size);
       DataOutputStream out = new DataOutputStream(buf);
       try {
-        out.writeInt(this.id);                // write call id
-        out.writeBoolean(error != null);      // write error flag
+        // Call id.
+        out.writeInt(this.id);
+        // Write flag.
+        byte flag = (error != null)?
+          ResponseFlag.getErrorAndLengthSet(): ResponseFlag.getLengthSetOnly();
+        out.writeByte(flag);
+        // Place holder for length set later below after we
+        // fill the buffer with data.
+        out.writeInt(0xdeadbeef);
       } catch (IOException e) {
         errorClass = e.getClass().getName();
         error = StringUtils.stringifyException(e);
@@ -330,7 +338,16 @@ public abstract class HBaseServer implements RpcServer {
         LOG.warn("Error sending response to call: ", e);
       }
 
-      this.response = buf.getByteBuffer();
+      // Set the length into the ByteBuffer after call id and after
+      // byte flag.
+      ByteBuffer bb = buf.getByteBuffer();
+      int bufSiz = bb.remaining();
+      // Move to the size location in our ByteBuffer past call.id
+      // and past the byte flag.
+      bb.position(Bytes.SIZEOF_INT + Bytes.SIZEOF_BYTE); 
+      bb.putInt(bufSiz);
+      bb.position(0);
+      this.response = bb;
     }
 
     @Override
@@ -849,7 +866,6 @@ public abstract class HBaseServer implements RpcServer {
     // Processes one response. Returns true if there are no more pending
     // data for this channel.
     //
-    @SuppressWarnings({"ConstantConditions"})
     private boolean processResponse(final LinkedList<Call> responseQueue,
                                     boolean inHandler) throws IOException {
       boolean error = true;
@@ -1281,14 +1297,15 @@ public abstract class HBaseServer implements RpcServer {
 
   }
 
+
+  private Function<Writable,Integer> qosFunction = null;
+
   /**
    * Gets the QOS level for this call.  If it is higher than the highPriorityLevel and there
    * are priorityHandlers available it will be processed in it's own thread set.
    *
-   * @param param
-   * @return priority, higher is better
+   * @param newFunc
    */
-  private Function<Writable,Integer> qosFunction = null;
   @Override
   public void setQosFunction(Function<Writable, Integer> newFunc) {
     qosFunction = newFunc;

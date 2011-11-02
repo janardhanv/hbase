@@ -42,12 +42,14 @@ import java.util.Random;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
+import java.util.Map.Entry;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import org.apache.commons.lang.mutable.MutableDouble;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -59,7 +61,6 @@ import org.apache.hadoop.hbase.ClockOutOfSyncException;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.HDFSBlocksDistribution;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerAddress;
@@ -76,16 +77,17 @@ import org.apache.hadoop.hbase.TableDescriptors;
 import org.apache.hadoop.hbase.UnknownRowLockException;
 import org.apache.hadoop.hbase.UnknownScannerException;
 import org.apache.hadoop.hbase.YouAreDeadException;
+import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.catalog.MetaEditor;
 import org.apache.hadoop.hbase.catalog.RootLocationEditor;
 import org.apache.hadoop.hbase.client.Action;
+import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.MultiAction;
-import org.apache.hadoop.hbase.client.MultiPut;
-import org.apache.hadoop.hbase.client.MultiPutResponse;
 import org.apache.hadoop.hbase.client.MultiResponse;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
@@ -97,10 +99,11 @@ import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
 import org.apache.hadoop.hbase.executor.ExecutorService;
 import org.apache.hadoop.hbase.executor.ExecutorService.ExecutorType;
 import org.apache.hadoop.hbase.filter.BinaryComparator;
-import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.filter.WritableByteArrayComparable;
+import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
 import org.apache.hadoop.hbase.io.hfile.BlockCacheColumnFamilySummary;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.CacheStats;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
@@ -119,11 +122,11 @@ import org.apache.hadoop.hbase.regionserver.handler.CloseRootHandler;
 import org.apache.hadoop.hbase.regionserver.handler.OpenMetaHandler;
 import org.apache.hadoop.hbase.regionserver.handler.OpenRegionHandler;
 import org.apache.hadoop.hbase.regionserver.handler.OpenRootHandler;
+import org.apache.hadoop.hbase.regionserver.metrics.RegionServerDynamicMetrics;
 import org.apache.hadoop.hbase.regionserver.metrics.RegionServerMetrics;
 import org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.regionserver.wal.WALActionsListener;
-import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CompressionTest;
@@ -239,6 +242,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   private final LinkedList<byte[]> reservedSpace = new LinkedList<byte[]>();
 
   private RegionServerMetrics metrics;
+  private RegionServerDynamicMetrics dynamicMetrics;
 
   // Compactions
   public CompactSplitThread compactSplitThread;
@@ -291,6 +295,12 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
   private final RegionServerAccounting regionServerAccounting;
 
+  // Cache configuration and block cache reference
+  private final CacheConfig cacheConfig;
+
+  // reference to the Thrift Server.
+  volatile private HRegionThriftServer thriftServer;
+
   /**
    * The server name the Master sees us as.  Its made from the hostname the
    * master passes us, port, and server startcode. Gets set after registration
@@ -330,6 +340,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   throws IOException, InterruptedException {
     this.fsOk = true;
     this.conf = conf;
+    // Set how many times to retry talking to another server over HConnection.
+    HConnectionManager.setServerSideHConnectionRetries(this.conf, LOG);
     this.isOnline = false;
     checkCodecs(this.conf);
 
@@ -386,6 +398,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     User.login(this.conf, "hbase.regionserver.keytab.file",
       "hbase.regionserver.kerberos.principal", this.isa.getHostName());
     regionServerAccounting = new RegionServerAccounting();
+    cacheConfig = new CacheConfig(conf);
   }
 
   /**
@@ -605,6 +618,13 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         HConstants.HBASE_REGIONSERVER_LEASE_PERIOD_KEY,
         HConstants.DEFAULT_HBASE_REGIONSERVER_LEASE_PERIOD),
         this.threadWakeFrequency);
+
+    // Create the thread for the ThriftServer.
+    if (conf.getBoolean("hbase.regionserver.export.thrift", false)) {
+      thriftServer = new HRegionThriftServer(this, conf);
+      thriftServer.start();
+      LOG.info("Started Thrift API from Region Server.");
+    }
   }
 
   /**
@@ -673,6 +693,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       }
     }
     // Run shutdown.
+    if (this.thriftServer != null) this.thriftServer.shutdown();
     this.leases.closeAfterLeasesExpire();
     this.rpcServer.stop();
     if (this.splitLogWorker != null) {
@@ -687,9 +708,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       }
     }
     // Send cache a shutdown.
-    BlockCache c = StoreFile.getBlockCache(this.conf);
-    if (c != null) {
-      c.shutdown();
+    if (cacheConfig.isBlockCacheEnabled()) {
+      cacheConfig.getBlockCache().shutdown();
     }
 
     // Send interrupts to wake up threads if sleeping so they notice shutdown.
@@ -762,7 +782,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     // Why we do this?
     this.requestCount.set(0);
     try {
-      this.hbaseMaster.regionServerReport(this.serverNameFromMasterPOV.getBytes(), hsl);
+      this.hbaseMaster.regionServerReport(this.serverNameFromMasterPOV.getVersionedBytes(), hsl);
     } catch (IOException ioe) {
       if (ioe instanceof RemoteException) {
         ioe = ((RemoteException)ioe).unwrapRemoteException();
@@ -788,7 +808,8 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
     return new HServerLoad(requestCount.get(),(int)metrics.getRequests(),
       (int)(memory.getUsed() / 1024 / 1024),
-      (int) (memory.getMax() / 1024 / 1024), regionLoads);
+      (int) (memory.getMax() / 1024 / 1024), regionLoads,
+      this.hlog.getCoprocessorHost().getCoprocessors());
   }
 
   String getOnlineRegionsAsPrintableString() {
@@ -907,6 +928,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       this.hlog = setupWALAndReplication();
       // Init in here rather than in constructor after thread name has been set
       this.metrics = new RegionServerMetrics();
+      this.dynamicMetrics = RegionServerDynamicMetrics.newInstance();
       startServiceThreads();
       LOG.info("Serving as " + this.serverNameFromMasterPOV +
         ", RPC listening on " + this.isa +
@@ -987,13 +1009,13 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
         storefileSizeMB, memstoreSizeMB, storefileIndexSizeMB, rootIndexSizeKB,
         totalStaticIndexSizeKB, totalStaticBloomSizeKB,
         (int) r.readRequestsCount.get(), (int) r.writeRequestsCount.get(),
-        totalCompactingKVs, currentCompactedKVs);
+        totalCompactingKVs, currentCompactedKVs,
+        r.getCoprocessorHost().getCoprocessors());
   }
 
   /**
    * @param encodedRegionName
    * @return An instance of RegionLoad.
-   * @throws IOException
    */
   public HServerLoad.RegionLoad createRegionLoad(final String encodedRegionName) {
     HRegion r = null;
@@ -1229,9 +1251,28 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     }
   }
 
+  /**
+   * Help function for metrics() that increments a map value if it exists.
+   *
+   * @param map
+   *          The map to work with
+   * @param key
+   *          the string key
+   * @param val
+   *          the value to add or set the map key to
+   */
+  protected void incrMap(Map<String, MutableDouble> map, String key, double val) {
+    if (map.get(key) != null) {
+      map.get(key).add(val);
+    } else {
+      map.put(key, new MutableDouble(val));
+    }
+  }
+
   protected void metrics() {
     this.metrics.regions.set(this.onlineRegions.size());
     this.metrics.incrementRequests(this.requestCount.get());
+    this.metrics.requests.intervalHeartBeat();
     // Is this too expensive every three seconds getting a lock on onlineRegions
     // and then per store carried? Can I make metrics be sloppier and avoid
     // the synchronizations?
@@ -1245,24 +1286,62 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       new HDFSBlocksDistribution();
     long totalStaticIndexSize = 0;
     long totalStaticBloomSize = 0;
-    for (Map.Entry<String, HRegion> e : this.onlineRegions.entrySet()) {
-        HRegion r = e.getValue();
-        memstoreSize += r.memstoreSize.get();
-        readRequestsCount += r.readRequestsCount.get();
-        writeRequestsCount += r.writeRequestsCount.get();
-        synchronized (r.stores) {
-          stores += r.stores.size();
-          for (Map.Entry<byte[], Store> ee : r.stores.entrySet()) {
-            Store store = ee.getValue();
-            storefiles += store.getStorefilesCount();
-            storefileIndexSize += store.getStorefilesIndexSize();
-            totalStaticIndexSize += store.getTotalStaticIndexSize();
-            totalStaticBloomSize += store.getTotalStaticBloomSize();
-          }
-        }
 
-        hdfsBlocksDistribution.add(r.getHDFSBlocksDistribution());
+    long tmpfiles;
+    long tmpindex;
+    long tmpfilesize;
+    long tmpbloomsize;
+    long tmpstaticsize;
+    String cfname;
+
+    // Note that this is a map of Doubles instead of Longs. This is because we
+    // do effective integer division, which would perhaps truncate more than it
+    // should because we do it only on one part of our sum at a time. Rather
+    // than dividing at the end, where it is difficult to know the proper
+    // factor, everything is exact then truncated.
+    Map<String, MutableDouble> tempVals = new HashMap<String, MutableDouble>();
+
+    for (Map.Entry<String, HRegion> e : this.onlineRegions.entrySet()) {
+      HRegion r = e.getValue();
+      memstoreSize += r.memstoreSize.get();
+      readRequestsCount += r.readRequestsCount.get();
+      writeRequestsCount += r.writeRequestsCount.get();
+      synchronized (r.stores) {
+        stores += r.stores.size();
+        for (Map.Entry<byte[], Store> ee : r.stores.entrySet()) {
+          Store store = ee.getValue();
+          tmpfiles = store.getStorefilesCount();
+          tmpindex = store.getStorefilesIndexSize();
+          tmpfilesize = store.getStorefilesSize();
+          tmpbloomsize = store.getTotalStaticBloomSize();
+          tmpstaticsize = store.getTotalStaticIndexSize();
+
+          // Note that there is only one store per CF so setting is safe
+          cfname = "cf." + store.toString();
+          this.incrMap(tempVals, cfname + ".storeFileCount", tmpfiles);
+          this.incrMap(tempVals, cfname + ".storeFileIndexSizeMB",
+              (tmpindex / (1024.0 * 1024)));
+          this.incrMap(tempVals, cfname + ".storeFileSizeMB",
+              (tmpfilesize / (1024.0 * 1024)));
+          this.incrMap(tempVals, cfname + ".staticBloomSizeKB",
+              (tmpbloomsize / 1024.0));
+          this.incrMap(tempVals, cfname + ".memstoreSizeMB",
+              (store.getMemStoreSize() / (1024.0 * 1024)));
+          this.incrMap(tempVals, cfname + ".staticIndexSizeKB",
+              tmpstaticsize / 1024.0);
+
+          storefiles += tmpfiles;
+          storefileIndexSize += tmpindex;
+          totalStaticIndexSize += tmpstaticsize;
+          totalStaticBloomSize += tmpbloomsize;
+        }
       }
+
+      hdfsBlocksDistribution.add(r.getHDFSBlocksDistribution());
+    }
+    for (Entry<String, MutableDouble> e : tempVals.entrySet()) {
+      HRegion.setNumericMetric(e.getKey(), e.getValue().longValue());
+    }
     this.metrics.stores.set(stores);
     this.metrics.storefiles.set(storefiles);
     this.metrics.memstoreSizeMB.set((int) (memstoreSize / (1024 * 1024)));
@@ -1277,7 +1356,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     this.metrics.readRequestsCount.set(readRequestsCount);
     this.metrics.writeRequestsCount.set(writeRequestsCount);
 
-    BlockCache blockCache = StoreFile.getBlockCache(conf);
+    BlockCache blockCache = cacheConfig.getBlockCache();
     if (blockCache != null) {
       this.metrics.blockCacheCount.set(blockCache.size());
       this.metrics.blockCacheFree.set(blockCache.getFreeSize());
@@ -1342,10 +1421,10 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     this.service.startExecutorService(ExecutorType.RS_CLOSE_META,
       conf.getInt("hbase.regionserver.executor.closemeta.threads", 1));
 
-    Threads.setDaemonThreadRunning(this.hlogRoller, n + ".logRoller", handler);
-    Threads.setDaemonThreadRunning(this.cacheFlusher, n + ".cacheFlusher",
+    Threads.setDaemonThreadRunning(this.hlogRoller.getThread(), n + ".logRoller", handler);
+    Threads.setDaemonThreadRunning(this.cacheFlusher.getThread(), n + ".cacheFlusher",
       handler);
-    Threads.setDaemonThreadRunning(this.compactionChecker, n +
+    Threads.setDaemonThreadRunning(this.compactionChecker.getThread(), n +
       ".compactionChecker", handler);
 
     // Leases is not a Thread. Internally it runs a daemon thread. If it gets
@@ -1532,7 +1611,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       }
       if (hbaseMaster != null) {
         hbaseMaster.reportRSFatalError(
-            this.serverNameFromMasterPOV.getBytes(), msg);
+            this.serverNameFromMasterPOV.getVersionedBytes(), msg);
       }
     } catch (Throwable t) {
       LOG.warn("Unable to report fatal error to master", t);
@@ -1566,9 +1645,9 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
    * have already been called.
    */
   protected void join() {
-    Threads.shutdown(this.compactionChecker);
-    Threads.shutdown(this.cacheFlusher);
-    Threads.shutdown(this.hlogRoller);
+    Threads.shutdown(this.compactionChecker.getThread());
+    Threads.shutdown(this.cacheFlusher.getThread());
+    Threads.shutdown(this.hlogRoller.getThread());
     if (this.compactSplitThread != null) {
       this.compactSplitThread.join();
     }
@@ -2038,6 +2117,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
     requestCount.incrementAndGet();
     try {
       HRegion r = getRegion(regionName);
+      r.checkRow(scan.getStartRow(), "Scan");
       r.prepareScanner(scan);
       RegionScanner s = null;
       if (r.getCoprocessorHost() != null) {
@@ -2828,6 +2908,37 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   }
 
   @Override
+  public Result append(byte[] regionName, Append append)
+  throws IOException {
+    checkOpen();
+    if (regionName == null) {
+      throw new IOException("Invalid arguments to increment " +
+      "regionName is null");
+    }
+    requestCount.incrementAndGet();
+    try {
+      HRegion region = getRegion(regionName);
+      Integer lock = getLockFromId(append.getLockId());
+      Append appVal = append;
+      Result resVal;
+      if (region.getCoprocessorHost() != null) {
+        resVal = region.getCoprocessorHost().preAppend(appVal);
+        if (resVal != null) {
+          return resVal;
+        }
+      }
+      resVal = region.append(appVal, lock, append.getWriteToWAL());
+      if (region.getCoprocessorHost() != null) {
+        region.getCoprocessorHost().postAppend(appVal, resVal);
+      }
+      return resVal;
+    } catch (IOException e) {
+      checkFileSystem();
+      throw e;
+    }
+  }
+
+  @Override
   public Result increment(byte[] regionName, Increment increment)
   throws IOException {
     checkOpen();
@@ -3001,25 +3112,6 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
       }
     }
     return response;
-  }
-
-  /**
-   * @deprecated Use HRegionServer.multi( MultiAction action) instead
-   */
-  @Override
-  public MultiPutResponse multiPut(MultiPut puts) throws IOException {
-    checkOpen();
-    MultiPutResponse resp = new MultiPutResponse();
-
-    // do each region as it's own.
-    for (Map.Entry<byte[], List<Put>> e : puts.puts.entrySet()) {
-      int result = put(e.getKey(), e.getValue());
-      resp.addResult(e.getKey(), result);
-
-      e.getValue().clear(); // clear some RAM
-    }
-
-    return resp;
   }
 
   /**
@@ -3229,7 +3321,7 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
 
   @Override
   public List<BlockCacheColumnFamilySummary> getBlockCacheColumnFamilySummaries() throws IOException {
-    BlockCache c = StoreFile.getBlockCache(this.conf);
+    BlockCache c = new CacheConfig(this.conf).getBlockCache();
     return c.getBlockCacheColumnFamilySummaries(this.conf);
   }
 
@@ -3237,5 +3329,11 @@ public class HRegionServer implements HRegionInterface, HBaseRPCErrorHandler,
   public byte[][] rollHLogWriter() throws IOException, FailedLogCloseException {
     HLog wal = this.getWAL();
     return wal.rollWriter(true);
+  }
+
+  // used by org/apache/hbase/tmpl/regionserver/RSStatusTmpl.jamon (HBASE-4070).
+  public String[] getCoprocessors() {
+    HServerLoad hsl = buildServerLoad();
+    return hsl == null? null: hsl.getCoprocessors();
   }
 }

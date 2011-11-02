@@ -54,6 +54,7 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.ImmutableBytesWritable;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.Compression;
 import org.apache.hadoop.hbase.io.hfile.Compression.Algorithm;
 import org.apache.hadoop.hbase.io.hfile.HFile;
@@ -174,7 +175,7 @@ public class TestHFileOutputFormat  {
     RecordWriter<ImmutableBytesWritable, KeyValue> writer = null;
     TaskAttemptContext context = null;
     Path dir =
-      HBaseTestingUtility.getTestDir("test_LATEST_TIMESTAMP_isReplaced");
+      util.getDataTestDir("test_LATEST_TIMESTAMP_isReplaced");
     try {
       Job job = new Job(conf);
       FileOutputFormat.setOutputPath(job, dir);
@@ -242,7 +243,7 @@ public class TestHFileOutputFormat  {
     RecordWriter<ImmutableBytesWritable, KeyValue> writer = null;
     TaskAttemptContext context = null;
     Path dir =
-      HBaseTestingUtility.getTestDir("test_TIMERANGE_present");
+      util.getDataTestDir("test_TIMERANGE_present");
     LOG.info("Timerange dir writing to dir: "+ dir);
     try {
       // build a record writer using HFileOutputFormat
@@ -281,8 +282,8 @@ public class TestHFileOutputFormat  {
       FileStatus[] file = fs.listStatus(sub3[0].getPath());
 
       // open as HFile Reader and pull out TIMERANGE FileInfo.
-      HFile.Reader rd = HFile.createReader(fs, file[0].getPath(), null, true,
-          false);
+      HFile.Reader rd = HFile.createReader(fs, file[0].getPath(),
+          new CacheConfig(conf));
       Map<byte[],byte[]> finfo = rd.loadFileInfo();
       byte[] range = finfo.get("TIMERANGE".getBytes());
       assertNotNull(range);
@@ -306,7 +307,7 @@ public class TestHFileOutputFormat  {
   @Test
   public void testWritingPEData() throws Exception {
     Configuration conf = util.getConfiguration();
-    Path testDir = HBaseTestingUtility.getTestDir("testWritingPEData");
+    Path testDir = util.getDataTestDir("testWritingPEData");
     FileSystem fs = testDir.getFileSystem(conf);
     
     // Set down this value or we OOME in eclipse.
@@ -371,7 +372,7 @@ public class TestHFileOutputFormat  {
   private void doIncrementalLoadTest(
       boolean shouldChangeRegions) throws Exception {
     Configuration conf = util.getConfiguration();
-    Path testDir = HBaseTestingUtility.getTestDir("testLocalMRIncrementalLoad");
+    Path testDir = util.getDataTestDir("testLocalMRIncrementalLoad");
     byte[][] startKeys = generateRandomStartKeys(5);
     
     try {
@@ -556,7 +557,7 @@ public class TestHFileOutputFormat  {
     RecordWriter<ImmutableBytesWritable, KeyValue> writer = null;
     TaskAttemptContext context = null;
     Path dir =
-        HBaseTestingUtility.getTestDir("testColumnFamilyCompression");
+        util.getDataTestDir("testColumnFamilyCompression");
 
     HTable table = Mockito.mock(HTable.class);
 
@@ -608,8 +609,8 @@ public class TestHFileOutputFormat  {
             // verify that the compression on this file matches the configured
             // compression
             Path dataFilePath = fileSystem.listStatus(f.getPath())[0].getPath();
-            Reader reader = HFile.createReader(fileSystem, dataFilePath, null,
-                false, true);
+            Reader reader = HFile.createReader(fileSystem, dataFilePath,
+                new CacheConfig(conf));
             reader.loadFileInfo();
             assertEquals("Incorrect compression used for column family " + familyStr
                          + "(reader: " + reader + ")",

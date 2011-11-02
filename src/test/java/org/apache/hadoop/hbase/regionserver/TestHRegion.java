@@ -34,8 +34,6 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.MiniDFSCluster;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.DoNotRetryIOException;
 import org.apache.hadoop.hbase.HBaseConfiguration;
@@ -44,7 +42,6 @@ import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HDFSBlocksDistribution;
-import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.HConstants.OperationStatusCode;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
@@ -91,8 +88,8 @@ public class TestHRegion extends HBaseTestCase {
   static final Log LOG = LogFactory.getLog(TestHRegion.class);
 
   HRegion region = null;
-  private final String DIR = HBaseTestingUtility.getTestDir() +
-    "/TestHRegion/";
+  private HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
+  private final String DIR = TEST_UTIL.getDataTestDir("TestHRegion").toString();
 
   private final int MAX_VERSIONS = 2;
 
@@ -2752,7 +2749,7 @@ public class TestHRegion extends HBaseTestCase {
         // TODO this was removed, now what dangit?!
         // search looking for the qualifier in question?
         long timestamp = 0;
-        for (KeyValue kv : result.sorted()) {
+        for (KeyValue kv : result.raw()) {
           if (Bytes.equals(kv.getFamily(), families[0])
             && Bytes.equals(kv.getQualifier(), qualifiers[0])) {
             timestamp = kv.getTimestamp();
@@ -2792,6 +2789,24 @@ public class TestHRegion extends HBaseTestCase {
     flushThread.checkNoError();
   }
 
+  public void testHolesInMeta() throws Exception {
+    String method = "testHolesInMeta";
+    byte[] tableName = Bytes.toBytes(method);
+    byte[] family = Bytes.toBytes("family");
+    initHRegion(tableName, Bytes.toBytes("x"), Bytes.toBytes("z"), method,
+        HBaseConfiguration.create(), family);
+    byte[] rowNotServed = Bytes.toBytes("a");
+    Get g = new Get(rowNotServed);
+    try {
+      region.get(g, null);
+      fail();
+    } catch (WrongRegionException x) {
+      // OK
+    }
+    byte[] row = Bytes.toBytes("y");
+    g = new Get(row);
+    region.get(g, null);
+  }
 
   public void testIndexesScanWithOneDeletedRow() throws IOException {
     byte[] tableName = Bytes.toBytes("testIndexesScanWithOneDeletedRow");
@@ -3005,7 +3020,7 @@ public class TestHRegion extends HBaseTestCase {
       put.add(fam2, col, 1, Bytes.toBytes("test2"));
       ht.put(put);
       
-      HRegion firstRegion = htu.getHbaseCluster().
+      HRegion firstRegion = htu.getHBaseCluster().
         getRegions(Bytes.toBytes(this.getName())).get(0);
       firstRegion.flushcache();
       HDFSBlocksDistribution blocksDistribution1 =
@@ -3059,7 +3074,7 @@ public class TestHRegion extends HBaseTestCase {
         get.addColumn(family, qf);
       }
       Result result = newReg.get(get, null);
-      KeyValue [] raw = result.sorted();
+      KeyValue [] raw = result.raw();
       assertEquals(families.length, result.size());
       for(int j=0; j<families.length; j++) {
         assertEquals(0, Bytes.compareTo(row, raw[j].getRow()));
@@ -3142,13 +3157,19 @@ public class TestHRegion extends HBaseTestCase {
   }
 
   private void initHRegion (byte [] tableName, String callingMethod,
-    Configuration conf, byte [] ... families)
-  throws IOException{
+      Configuration conf, byte [] ... families)
+    throws IOException{
+    initHRegion(tableName, null, null, callingMethod, conf, families);
+  }
+
+  private void initHRegion(byte[] tableName, byte[] startKey, byte[] stopKey,
+      String callingMethod, Configuration conf, byte[]... families)
+      throws IOException {
     HTableDescriptor htd = new HTableDescriptor(tableName);
     for(byte [] family : families) {
       htd.addFamily(new HColumnDescriptor(family));
     }
-    HRegionInfo info = new HRegionInfo(htd.getName(), null, null, false);
+    HRegionInfo info = new HRegionInfo(htd.getName(), startKey, stopKey, false);
     Path path = new Path(DIR + callingMethod);
     if (fs.exists(path)) {
       if (!fs.delete(path, true)) {

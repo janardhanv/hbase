@@ -31,14 +31,14 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
+import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.IdLock;
 
 /**
  * {@link HFile} reader for version 2.
  */
-public class HFileReaderV2 extends AbstractHFileReader implements
-    HFileBlock.BasicReader {
+public class HFileReaderV2 extends AbstractHFileReader {
 
   private static final Log LOG = LogFactory.getLog(HFileReaderV2.class);
 
@@ -66,20 +66,20 @@ public class HFileReaderV2 extends AbstractHFileReader implements
    * Opens a HFile. You must load the index before you can use it by calling
    * {@link #loadFileInfo()}.
    *
+   * @param path Path to HFile.
+   * @param trailer File trailer.
    * @param fsdis input stream. Caller is responsible for closing the passed
    *          stream.
    * @param size Length of the stream.
-   * @param blockCache block cache. Pass null if none.
-   * @param inMemory whether blocks should be marked as in-memory in cache
-   * @param evictOnClose whether blocks in cache should be evicted on close
+   * @param closeIStream Whether to close the stream.
+   * @param cacheConf Cache configuration.
    * @throws IOException
    */
   public HFileReaderV2(Path path, FixedFileTrailer trailer,
       final FSDataInputStream fsdis, final long size,
-      final boolean closeIStream, final BlockCache blockCache,
-      final boolean inMemory, final boolean evictOnClose) throws IOException {
-    super(path, trailer, fsdis, size, closeIStream, blockCache, inMemory,
-        evictOnClose);
+      final boolean closeIStream, final CacheConfig cacheConf)
+  throws IOException {
+    super(path, trailer, fsdis, size, closeIStream, cacheConf);
 
     trailer.expectVersion(2);
     fsBlockReader = new HFileBlock.FSReaderV2(fsdis, compressAlgo,
@@ -170,18 +170,21 @@ public class HFileReaderV2 extends AbstractHFileReader implements
     // single-level.
     synchronized (metaBlockIndexReader.getRootBlockKey(block)) {
       metaLoads.incrementAndGet();
+      HRegion.incrNumericMetric(fsMetaBlockReadCntMetric, 1);
 
       // Check cache for block. If found return.
       long metaBlockOffset = metaBlockIndexReader.getRootBlockOffset(block);
       String cacheKey = HFile.getBlockCacheKey(name, metaBlockOffset);
 
-      if (blockCache != null) {
-        HFileBlock cachedBlock = (HFileBlock) blockCache.getBlock(cacheKey,
-            true);
+      cacheBlock &= cacheConf.shouldCacheDataOnRead();
+      if (cacheConf.isBlockCacheEnabled()) {
+        HFileBlock cachedBlock =
+          (HFileBlock) cacheConf.getBlockCache().getBlock(cacheKey, cacheBlock);
         if (cachedBlock != null) {
           // Return a distinct 'shallow copy' of the block,
           // so pos does not get messed by the scanner
           cacheHits.incrementAndGet();
+          HRegion.incrNumericMetric(fsMetaBlockReadCacheHitCntMetric, 1);
           return cachedBlock.getBufferWithoutHeader();
         }
         // Cache Miss, please load.
@@ -189,13 +192,17 @@ public class HFileReaderV2 extends AbstractHFileReader implements
 
       HFileBlock metaBlock = fsBlockReader.readBlockData(metaBlockOffset,
           blockSize, -1, true);
+      metaBlock.setColumnFamilyName(this.getColumnFamilyName());
 
-      HFile.readTimeNano.addAndGet(System.nanoTime() - startTimeNs);
+      long delta = System.nanoTime() - startTimeNs;
+      HRegion.incrTimeVaryingMetric(fsReadTimeNanoMetric, delta);
+      HFile.readTimeNano.addAndGet(delta);
       HFile.readOps.incrementAndGet();
 
       // Cache the block
-      if (cacheBlock && blockCache != null) {
-        blockCache.cacheBlock(cacheKey, metaBlock, inMemory);
+      if (cacheBlock) {
+        cacheConf.getBlockCache().cacheBlock(cacheKey, metaBlock,
+            cacheConf.isInMemory());
       }
 
       return metaBlock.getBufferWithoutHeader();
@@ -203,27 +210,11 @@ public class HFileReaderV2 extends AbstractHFileReader implements
   }
 
   /**
-   * Implements the "basic block reader" API, used mainly by
-   * {@link HFileBlockIndex.BlockIndexReader} in
-   * {@link HFileBlockIndex.BlockIndexReader#seekToDataBlock(byte[], int, int,
-   * HFileBlock)} in a random-read access pattern.
-   */
-  @Override
-  public HFileBlock readBlockData(long offset, long onDiskSize,
-      int uncompressedSize, boolean pread) throws IOException {
-    if (onDiskSize >= Integer.MAX_VALUE) {
-      throw new IOException("Invalid on-disk size: " + onDiskSize);
-    }
-
-    // Assuming we are not doing a compaction.
-    return readBlock(offset, (int) onDiskSize, true, pread, false);
-  }
-
-  /**
    * Read in a file block.
    *
    * @param dataBlockOffset offset to read.
-   * @param onDiskSize size of the block
+   * @param onDiskBlockSize size of the block
+   * @param cacheBlock
    * @param pread Use positional read instead of seek+read (positional is better
    *          doing random reads whereas seek+read is better scanning).
    * @param isCompaction is this block being read as part of a compaction
@@ -231,7 +222,7 @@ public class HFileReaderV2 extends AbstractHFileReader implements
    * @throws IOException
    */
   @Override
-  public HFileBlock readBlock(long dataBlockOffset, int onDiskBlockSize,
+  public HFileBlock readBlock(long dataBlockOffset, long onDiskBlockSize,
       boolean cacheBlock, boolean pread, final boolean isCompaction)
       throws IOException {
     if (dataBlockIndexReader == null) {
@@ -255,12 +246,22 @@ public class HFileReaderV2 extends AbstractHFileReader implements
       blockLoads.incrementAndGet();
 
       // Check cache for block. If found return.
-      if (blockCache != null) {
-        HFileBlock cachedBlock = (HFileBlock) blockCache.getBlock(cacheKey,
-            true);
+      cacheBlock &= cacheConf.shouldCacheDataOnRead();
+      if (cacheConf.isBlockCacheEnabled()) {
+        HFileBlock cachedBlock =
+          (HFileBlock) cacheConf.getBlockCache().getBlock(cacheKey, cacheBlock);
         if (cachedBlock != null) {
           cacheHits.incrementAndGet();
 
+          if (isCompaction) {
+            HRegion.incrNumericMetric(
+                this.compactionBlockReadCacheHitCntMetric, 1);
+          } else {
+            HRegion.incrNumericMetric(this.fsBlockReadCacheHitCntMetric, 1);
+          }
+
+          if (cachedBlock.getBlockType() == BlockType.DATA)
+            HFile.dataBlockReadCnt.incrementAndGet();
           return cachedBlock;
         }
         // Carry on, please load.
@@ -270,14 +271,25 @@ public class HFileReaderV2 extends AbstractHFileReader implements
       long startTimeNs = System.nanoTime();
       HFileBlock dataBlock = fsBlockReader.readBlockData(dataBlockOffset,
           onDiskBlockSize, -1, pread);
+      dataBlock.setColumnFamilyName(this.getColumnFamilyName());
 
-      HFile.readTimeNano.addAndGet(System.nanoTime() - startTimeNs);
+      long delta = System.nanoTime() - startTimeNs;
+      HFile.readTimeNano.addAndGet(delta);
       HFile.readOps.incrementAndGet();
+      if (isCompaction) {
+        HRegion.incrTimeVaryingMetric(this.compactionReadTimeNanoMetric, delta);
+      } else {
+        HRegion.incrTimeVaryingMetric(this.fsReadTimeNanoMetric, delta);
+      }
 
       // Cache the block
-      if (cacheBlock && blockCache != null) {
-        blockCache.cacheBlock(cacheKey, dataBlock, inMemory);
+      if (cacheBlock) {
+        cacheConf.getBlockCache().cacheBlock(cacheKey, dataBlock,
+            cacheConf.isInMemory());
       }
+
+      if (dataBlock.getBlockType() == BlockType.DATA)
+        HFile.dataBlockReadCnt.incrementAndGet();
 
       return dataBlock;
     } finally {
@@ -307,10 +319,14 @@ public class HFileReaderV2 extends AbstractHFileReader implements
 
   @Override
   public void close() throws IOException {
-    if (evictOnClose && blockCache != null) {
-      int numEvicted = blockCache.evictBlocksByPrefix(name
+    close(cacheConf.shouldEvictOnClose());
+  }
+
+  public void close(boolean evictOnClose) throws IOException {
+    if (evictOnClose && cacheConf.isBlockCacheEnabled()) {
+      int numEvicted = cacheConf.getBlockCache().evictBlocksByPrefix(name
           + HFile.CACHE_KEY_SEPARATOR);
-      LOG.debug("On close of file " + name + " evicted " + numEvicted
+      LOG.debug("On close, file=" + name + " evicted=" + numEvicted
           + " block(s)");
     }
     if (closeIStream && istream != null) {
@@ -498,9 +514,11 @@ public class HFileReaderV2 extends AbstractHFileReader implements
      */
     private int seekTo(byte[] key, int offset, int length, boolean rewind)
         throws IOException {
-      HFileBlock seekToBlock =
-        ((HFileReaderV2) reader).getDataBlockIndexReader().seekToDataBlock(
-            key, offset, length, block);
+      HFileBlockIndex.BlockIndexReader indexReader =
+          reader.getDataBlockIndexReader();
+      HFileBlock seekToBlock = indexReader.seekToDataBlock(key, offset, length,
+          block, cacheBlocks, pread, isCompaction);
+
       if (seekToBlock == null) {
         // This happens if the key e.g. falls before the beginning of the file.
         return -1;
@@ -665,10 +683,9 @@ public class HFileReaderV2 extends AbstractHFileReader implements
     @Override
     public boolean seekBefore(byte[] key, int offset, int length)
         throws IOException {
-      HFileReaderV2 reader2 = (HFileReaderV2) reader;
       HFileBlock seekToBlock =
-          reader2.getDataBlockIndexReader().seekToDataBlock(
-              key, offset, length, block);
+          reader.getDataBlockIndexReader().seekToDataBlock(key, offset,
+              length, block, cacheBlocks, pread, isCompaction);
       if (seekToBlock == null) {
         return false;
       }
@@ -686,8 +703,9 @@ public class HFileReaderV2 extends AbstractHFileReader implements
         // It is important that we compute and pass onDiskSize to the block
         // reader so that it does not have to read the header separately to
         // figure out the size.
-        seekToBlock = reader2.fsBlockReader.readBlockData(previousBlockOffset,
-            seekToBlock.getOffset() - previousBlockOffset, -1, pread);
+        seekToBlock = reader.readBlock(previousBlockOffset,
+            seekToBlock.getOffset() - previousBlockOffset, cacheBlocks,
+            pread, isCompaction);
 
         // TODO shortcut: seek forward in this block to the last key of the
         // block.
@@ -717,9 +735,25 @@ public class HFileReaderV2 extends AbstractHFileReader implements
    * ownership of the buffer.
    */
   @Override
-  public DataInput getBloomFilterMetadata() throws IOException {
+  public DataInput getGeneralBloomFilterMetadata() throws IOException {
+    return this.getBloomFilterMetadata(BlockType.GENERAL_BLOOM_META);
+  }
+
+  @Override
+  public DataInput getDeleteBloomFilterMetadata() throws IOException {
+    return this.getBloomFilterMetadata(BlockType.DELETE_FAMILY_BLOOM_META);
+  }
+
+  private DataInput getBloomFilterMetadata(BlockType blockType)
+  throws IOException {
+    if (blockType != BlockType.GENERAL_BLOOM_META &&
+        blockType != BlockType.DELETE_FAMILY_BLOOM_META) {
+      throw new RuntimeException("Block Type: " + blockType.toString() +
+          " is not supported") ;
+    }
+
     for (HFileBlock b : loadOnOpenBlocks)
-      if (b.getBlockType() == BlockType.BLOOM_META)
+      if (b.getBlockType() == blockType)
         return b.getByteStream();
     return null;
   }

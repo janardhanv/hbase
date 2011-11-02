@@ -1,5 +1,5 @@
 /**
- * Copyright 2010 The Apache Software Foundation
+ * Copyright 2011 The Apache Software Foundation
  *
  * Licensed to the Apache Software Foundation (ASF) under one
  * or more contributor license agreements.  See the NOTICE file
@@ -53,16 +53,18 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.UnknownScannerException;
-import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.client.HConnectionManager.HConnectable;
 import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
+import org.apache.hadoop.hbase.client.metrics.ScanMetrics;
 import org.apache.hadoop.hbase.client.coprocessor.Batch;
 import org.apache.hadoop.hbase.ipc.CoprocessorProtocol;
 import org.apache.hadoop.hbase.ipc.ExecRPCInvoker;
+import org.apache.hadoop.hbase.regionserver.RegionServerStoppedException;
 import org.apache.hadoop.hbase.util.Addressing;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Writables;
+import org.apache.hadoop.io.DataOutputBuffer;
 
 /**
  * <p>Used to communicate with a single HBase table.
@@ -191,7 +193,8 @@ public class HTable implements HTableInterface, Closeable {
     }
     this.connection = HConnectionManager.getConnection(conf);
     this.scannerTimeout =
-      (int) conf.getLong(HConstants.HBASE_REGIONSERVER_LEASE_PERIOD_KEY, HConstants.DEFAULT_HBASE_REGIONSERVER_LEASE_PERIOD);
+      (int) conf.getLong(HConstants.HBASE_REGIONSERVER_LEASE_PERIOD_KEY,
+        HConstants.DEFAULT_HBASE_REGIONSERVER_LEASE_PERIOD);
     this.operationTimeout = HTableDescriptor.isMetaTable(tableName) ? HConstants.DEFAULT_HBASE_CLIENT_OPERATION_TIMEOUT
         : conf.getInt(HConstants.HBASE_CLIENT_OPERATION_TIMEOUT,
             HConstants.DEFAULT_HBASE_CLIENT_OPERATION_TIMEOUT);
@@ -415,8 +418,9 @@ public class HTable implements HTableInterface, Closeable {
       }
     };
     MetaScanner.metaScan(configuration, visitor, this.tableName);
-    return new Pair(startKeyList.toArray(new byte[startKeyList.size()][]),
-                endKeyList.toArray(new byte[endKeyList.size()][]));
+    return new Pair<byte [][], byte [][]>(
+      startKeyList.toArray(new byte[startKeyList.size()][]),
+      endKeyList.toArray(new byte[endKeyList.size()][]));
   }
 
   /**
@@ -737,6 +741,25 @@ public class HTable implements HTableInterface, Closeable {
    * {@inheritDoc}
    */
   @Override
+  public Result append(final Append append) throws IOException {
+    if (append.numFamilies() == 0) {
+      throw new IOException(
+          "Invalid arguments to append, no columns specified");
+    }
+    return connection.getRegionServerWithRetries(
+        new ServerCallable<Result>(connection, tableName, append.getRow(), operationTimeout) {
+          public Result call() throws IOException {
+            return server.append(
+                location.getRegionInfo().getRegionName(), append);
+          }
+        }
+    );    
+  }
+
+  /**
+   * {@inheritDoc}
+   */
+  @Override
   public Result increment(final Increment increment) throws IOException {
     if (!increment.hasFamilies()) {
       throw new IOException(
@@ -850,7 +873,23 @@ public class HTable implements HTableInterface, Closeable {
   @Override
   public void flushCommits() throws IOException {
     try {
-      connection.processBatchOfPuts(writeBuffer, tableName, pool);
+      Object[] results = new Object[writeBuffer.size()];
+      try {
+        this.connection.processBatch(writeBuffer, tableName, pool, results);
+      } catch (InterruptedException e) {
+        throw new IOException(e);
+      } finally {
+        // mutate list so that it is empty for complete success, or contains
+        // only failed records results are returned in the same order as the
+        // requests in list walk the list backwards, so we can remove from list
+        // without impacting the indexes of earlier members
+        for (int i = results.length - 1; i>=0; i--) {
+          if (results[i] instanceof Result) {
+            // successful Puts are removed from the list here.
+            writeBuffer.remove(i);
+          }
+        }
+      }
     } finally {
       if (clearBufferOnFail) {
         writeBuffer.clear();
@@ -1034,6 +1073,7 @@ public class HTable implements HTableInterface, Closeable {
     private long lastNext;
     // Keep lastResult returned successfully in case we have to reset scanner.
     private Result lastResult = null;
+    private ScanMetrics scanMetrics = null;
 
     protected ClientScanner(final Scan scan) {
       if (CLIENT_LOG.isDebugEnabled()) {
@@ -1043,6 +1083,13 @@ public class HTable implements HTableInterface, Closeable {
       }
       this.scan = scan;
       this.lastNext = System.currentTimeMillis();
+
+      // check if application wants to collect scan metrics
+      byte[] enableMetrics = scan.getAttribute(
+        Scan.SCAN_ATTRIBUTES_METRICS_ENABLE);
+      if (enableMetrics != null && Bytes.toBoolean(enableMetrics)) {
+        scanMetrics = new ScanMetrics();
+      }
 
       // Use the caching from the Scan.  If not set, use the default cache setting for this table.
       if (this.scan.getCaching() > 0) {
@@ -1139,6 +1186,9 @@ public class HTable implements HTableInterface, Closeable {
         // beginning of the region
         getConnection().getRegionServerWithRetries(callable);
         this.currentRegion = callable.getHRegionInfo();
+        if (this.scanMetrics != null) {
+          this.scanMetrics.countOfRegions.inc();
+        }
       } catch (IOException e) {
         close();
         throw e;
@@ -1150,15 +1200,39 @@ public class HTable implements HTableInterface, Closeable {
         int nbRows) {
       scan.setStartRow(localStartKey);
       ScannerCallable s = new ScannerCallable(getConnection(),
-        getTableName(), scan);
+        getTableName(), scan, this.scanMetrics);
       s.setCaching(nbRows);
       return s;
+    }
+
+    /**
+     * publish the scan metrics
+     * For now, we use scan.setAttribute to pass the metrics for application
+     * or TableInputFormat to consume
+     * Later, we could push it to other systems
+     * We don't use metrics framework because it doesn't support
+     * multi instances of the same metrics on the same machine; for scan/map
+     * reduce scenarios, we will have multiple scans running at the same time
+     */
+    private void writeScanMetrics() throws IOException
+    {
+      // by default, scanMetrics is null
+      // if application wants to collect scanMetrics, it can turn it on by
+      // calling scan.setAttribute(SCAN_ATTRIBUTES_METRICS_ENABLE,
+      // Bytes.toBytes(Boolean.TRUE))
+      if (this.scanMetrics == null) {
+        return;
+      }
+      final DataOutputBuffer d = new DataOutputBuffer();
+      scanMetrics.write(d);
+      scan.setAttribute(Scan.SCAN_ATTRIBUTES_METRICS_DATA, d.getData());
     }
 
     public Result next() throws IOException {
       // If the scanner is closed but there is some rows left in the cache,
       // it will first empty it before returning null
       if (cache.size() == 0 && this.closed) {
+        writeScanMetrics();
         return null;
       }
       if (cache.size() == 0) {
@@ -1201,7 +1275,8 @@ public class HTable implements HTableInterface, Closeable {
               }
             } else {
               Throwable cause = e.getCause();
-              if (cause == null || !(cause instanceof NotServingRegionException)) {
+              if (cause == null || (!(cause instanceof NotServingRegionException)
+                  && !(cause instanceof RegionServerStoppedException))) {
                 throw e;
               }
             }
@@ -1217,7 +1292,12 @@ public class HTable implements HTableInterface, Closeable {
             this.currentRegion = null;
             continue;
           }
-          lastNext = System.currentTimeMillis();
+          long currentTime = System.currentTimeMillis();
+          if (this.scanMetrics != null ) {
+            this.scanMetrics.sumOfMillisSecBetweenNexts.inc(
+              currentTime-lastNext);
+          }
+          lastNext = currentTime;
           if (values != null && values.length > 0) {
             for (Result rs : values) {
               cache.add(rs);
@@ -1235,6 +1315,7 @@ public class HTable implements HTableInterface, Closeable {
       if (cache.size() > 0) {
         return cache.poll();
       }
+      writeScanMetrics();
       return null;
     }
 

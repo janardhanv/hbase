@@ -33,6 +33,7 @@ import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
 import org.apache.hadoop.hbase.io.hfile.HFile.Reader;
 import org.apache.hadoop.hbase.io.hfile.HFile.Writer;
+import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.IOUtils;
 import org.apache.hadoop.io.RawComparator;
@@ -54,18 +55,13 @@ public class HFileReaderV1 extends AbstractHFileReader {
    * @param fsdis input stream.  Caller is responsible for closing the passed
    * stream.
    * @param size Length of the stream.
-   * @param blockCache block cache. Pass null if none.
-   * @param inMemory whether blocks should be marked as in-memory in cache
-   * @param evictOnClose whether blocks in cache should be evicted on close
-   * @throws IOException
+   * @param cacheConf cache references and configuration
    */
   public HFileReaderV1(Path path, FixedFileTrailer trailer,
       final FSDataInputStream fsdis, final long size,
       final boolean closeIStream,
-      final BlockCache blockCache, final boolean inMemory,
-      final boolean evictOnClose) {
-    super(path, trailer, fsdis, size, closeIStream, blockCache, inMemory,
-        evictOnClose);
+      final CacheConfig cacheConf) {
+    super(path, trailer, fsdis, size, closeIStream, cacheConf);
 
     trailer.expectVersion(1);
     fsBlockReader = new HFileBlock.FSReaderV1(fsdis, compressAlgo, fileSize);
@@ -84,7 +80,7 @@ public class HFileReaderV1 extends AbstractHFileReader {
    * Read in the index and file info.
    *
    * @return A map of fileinfo data.
-   * @see {@link Writer#appendFileInfo(byte[], byte[])}.
+   * @see Writer#appendFileInfo(byte[], byte[])
    * @throws IOException
    */
   @Override
@@ -220,12 +216,15 @@ public class HFileReaderV1 extends AbstractHFileReader {
     // Per meta key from any given file, synchronize reads for said block
     synchronized (metaBlockIndexReader.getRootBlockKey(block)) {
       metaLoads.incrementAndGet();
+      HRegion.incrNumericMetric(this.fsMetaBlockReadCntMetric, 1);
       // Check cache for block.  If found return.
-      if (blockCache != null) {
-        HFileBlock cachedBlock = (HFileBlock) blockCache.getBlock(cacheKey,
-            true);
+      if (cacheConf.isBlockCacheEnabled()) {
+        HFileBlock cachedBlock =
+          (HFileBlock) cacheConf.getBlockCache().getBlock(cacheKey,
+              cacheConf.shouldCacheDataOnRead());
         if (cachedBlock != null) {
           cacheHits.incrementAndGet();
+          HRegion.incrNumericMetric(this.fsMetaBlockReadCacheHitCntMetric, 1);
           return cachedBlock.getBufferWithoutHeader();
         }
         // Cache Miss, please load.
@@ -234,14 +233,18 @@ public class HFileReaderV1 extends AbstractHFileReader {
       HFileBlock hfileBlock = fsBlockReader.readBlockData(offset,
           nextOffset - offset, metaBlockIndexReader.getRootBlockDataSize(block),
           true);
+      hfileBlock.setColumnFamilyName(this.getColumnFamilyName());
       hfileBlock.expectType(BlockType.META);
 
-      HFile.readTimeNano.addAndGet(System.nanoTime() - startTimeNs);
+      long delta = System.nanoTime() - startTimeNs;
+      HRegion.incrTimeVaryingMetric(fsReadTimeNanoMetric, delta);
+      HFile.readTimeNano.addAndGet(delta);
       HFile.readOps.incrementAndGet();
 
       // Cache the block
-      if (cacheBlock && blockCache != null) {
-        blockCache.cacheBlock(cacheKey, hfileBlock, inMemory);
+      if (cacheConf.shouldCacheDataOnRead() && cacheBlock) {
+        cacheConf.getBlockCache().cacheBlock(cacheKey, hfileBlock,
+            cacheConf.isInMemory());
       }
 
       return hfileBlock.getBufferWithoutHeader();
@@ -278,12 +281,28 @@ public class HFileReaderV1 extends AbstractHFileReader {
     synchronized (dataBlockIndexReader.getRootBlockKey(block)) {
       blockLoads.incrementAndGet();
 
+      if (isCompaction) {
+        HRegion.incrNumericMetric(this.compactionBlockReadCntMetric, 1);
+      } else {
+        HRegion.incrNumericMetric(this.fsBlockReadCntMetric, 1);
+      }
+
       // Check cache for block.  If found return.
-      if (blockCache != null) {
-        HFileBlock cachedBlock = (HFileBlock) blockCache.getBlock(cacheKey,
-            true);
+      if (cacheConf.isBlockCacheEnabled()) {
+        HFileBlock cachedBlock =
+          (HFileBlock) cacheConf.getBlockCache().getBlock(cacheKey,
+              cacheConf.shouldCacheDataOnRead());
         if (cachedBlock != null) {
           cacheHits.incrementAndGet();
+
+          if (isCompaction) {
+            HRegion.incrNumericMetric(
+                this.compactionBlockReadCacheHitCntMetric, 1);
+          } else {
+            HRegion.incrNumericMetric(
+                this.fsBlockReadCacheHitCntMetric, 1);
+          }
+
           return cachedBlock.getBufferWithoutHeader();
         }
         // Carry on, please load.
@@ -305,15 +324,23 @@ public class HFileReaderV1 extends AbstractHFileReader {
 
       HFileBlock hfileBlock = fsBlockReader.readBlockData(offset, nextOffset
           - offset, dataBlockIndexReader.getRootBlockDataSize(block), pread);
+      hfileBlock.setColumnFamilyName(this.getColumnFamilyName());
       hfileBlock.expectType(BlockType.DATA);
       ByteBuffer buf = hfileBlock.getBufferWithoutHeader();
 
-      HFile.readTimeNano.addAndGet(System.nanoTime() - startTimeNs);
+      long delta = System.nanoTime() - startTimeNs;
+      HFile.readTimeNano.addAndGet(delta);
       HFile.readOps.incrementAndGet();
+      if (isCompaction) {
+        HRegion.incrTimeVaryingMetric(this.compactionReadTimeNanoMetric, delta);
+      } else {
+        HRegion.incrTimeVaryingMetric(this.fsReadTimeNanoMetric, delta);
+      }
 
       // Cache the block
-      if (cacheBlock && blockCache != null) {
-        blockCache.cacheBlock(cacheKey, hfileBlock, inMemory);
+      if (cacheConf.shouldCacheDataOnRead() && cacheBlock) {
+        cacheConf.getBlockCache().cacheBlock(cacheKey, hfileBlock,
+            cacheConf.isInMemory());
       }
 
       return buf;
@@ -348,10 +375,15 @@ public class HFileReaderV1 extends AbstractHFileReader {
 
   @Override
   public void close() throws IOException {
-    if (evictOnClose && this.blockCache != null) {
+    close(cacheConf.shouldEvictOnClose());
+  }
+
+  @Override
+  public void close(boolean evictOnClose) throws IOException {
+    if (evictOnClose) {
       int numEvicted = 0;
       for (int i = 0; i < dataBlockIndexReader.getRootBlockCount(); i++) {
-        if (blockCache.evictBlock(HFile.getBlockCacheKey(name,
+        if (cacheConf.getBlockCache().evictBlock(HFile.getBlockCacheKey(name,
             dataBlockIndexReader.getRootBlockOffset(i))))
           numEvicted++;
       }
@@ -643,19 +675,24 @@ public class HFileReaderV1 extends AbstractHFileReader {
   }
 
   @Override
-  public HFileBlock readBlock(long offset, int onDiskBlockSize,
+  public HFileBlock readBlock(long offset, long onDiskBlockSize,
       boolean cacheBlock, boolean pread, boolean isCompaction) {
     throw new UnsupportedOperationException();
   }
 
   @Override
-  public DataInput getBloomFilterMetadata() throws IOException {
+  public DataInput getGeneralBloomFilterMetadata() throws IOException {
     ByteBuffer buf = getMetaBlock(HFileWriterV1.BLOOM_FILTER_META_KEY, false);
     if (buf == null)
       return null;
     ByteArrayInputStream bais = new ByteArrayInputStream(buf.array(),
         buf.arrayOffset(), buf.limit());
     return new DataInputStream(bais);
+  }
+
+  @Override
+  public DataInput getDeleteBloomFilterMetadata() throws IOException {
+    return null;
   }
 
   @Override

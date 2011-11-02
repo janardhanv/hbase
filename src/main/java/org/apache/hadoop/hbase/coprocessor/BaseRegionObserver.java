@@ -23,6 +23,7 @@ import com.google.common.collect.ImmutableList;
 import org.apache.hadoop.hbase.CoprocessorEnvironment;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
@@ -133,24 +134,23 @@ public abstract class BaseRegionObserver implements RegionObserver {
   }
 
   @Override
-  public void prePut(final ObserverContext<RegionCoprocessorEnvironment> e, final Map<byte[],
-      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+  public void prePut(final ObserverContext<RegionCoprocessorEnvironment> e, 
+      final Put put, final WALEdit edit, final boolean writeToWAL) throws IOException {
   }
 
   @Override
-  public void postPut(final ObserverContext<RegionCoprocessorEnvironment> e, final Map<byte[],
-      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+  public void postPut(final ObserverContext<RegionCoprocessorEnvironment> e, 
+      final Put put, final WALEdit edit, final boolean writeToWAL) throws IOException {
   }
 
   @Override
-  public void preDelete(final ObserverContext<RegionCoprocessorEnvironment> e, final Map<byte[],
-      List<KeyValue>> familyMap, final boolean writeToWAL) throws IOException {
+  public void preDelete(final ObserverContext<RegionCoprocessorEnvironment> e, 
+      final Delete delete, final WALEdit edit, final boolean writeToWAL) throws IOException {
   }
 
   @Override
   public void postDelete(final ObserverContext<RegionCoprocessorEnvironment> e,
-      final Map<byte[], List<KeyValue>> familyMap, final boolean writeToWAL)
-      throws IOException {
+      final Delete delete, final WALEdit edit, final boolean writeToWAL) throws IOException {
   }
 
   @Override
@@ -183,6 +183,16 @@ public abstract class BaseRegionObserver implements RegionObserver {
       final CompareOp compareOp, final WritableByteArrayComparable comparator,
       final Delete delete, final boolean result) throws IOException {
     return result;
+  }
+
+  @Override
+  public void preAppend(final ObserverContext<RegionCoprocessorEnvironment> e,
+      final Append append, final Result result) throws IOException {
+  }
+
+  @Override
+  public void postAppend(final ObserverContext<RegionCoprocessorEnvironment> e,
+      final Append append, final Result result) throws IOException {
   }
 
   @Override

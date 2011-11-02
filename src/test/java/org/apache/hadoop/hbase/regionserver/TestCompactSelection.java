@@ -36,9 +36,8 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.regionserver.StoreFile.Reader;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
-import org.apache.hadoop.hbase.regionserver.wal.TestWALReplay;
 import org.apache.hadoop.hbase.util.Bytes;
 
 import com.google.common.collect.Lists;
@@ -49,8 +48,8 @@ public class TestCompactSelection extends TestCase {
 
   private Configuration conf;
   private Store store;
-  private static final String DIR
-    = HBaseTestingUtility.getTestDir() + "/TestCompactSelection/";
+  private static final String DIR=
+    TEST_UTIL.getDataTestDir("TestCompactSelection").toString();
   private static Path TEST_FILE;
 
   private static final int minFiles = 3;
@@ -100,8 +99,9 @@ public class TestCompactSelection extends TestCase {
     boolean isRef = false;
 
     MockStoreFile(long length, boolean isRef) throws IOException {
-      super(TEST_UTIL.getTestFileSystem(), TEST_FILE, false,
-            TEST_UTIL.getConfiguration(), BloomType.NONE, false);
+      super(TEST_UTIL.getTestFileSystem(), TEST_FILE,
+            TEST_UTIL.getConfiguration(),
+            new CacheConfig(TEST_UTIL.getConfiguration()), BloomType.NONE);
       this.length = length;
       this.isRef  = isRef;
     }

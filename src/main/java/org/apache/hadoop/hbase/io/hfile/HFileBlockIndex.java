@@ -38,11 +38,13 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.HeapSize;
+import org.apache.hadoop.hbase.io.hfile.HFile.CachingBlockReader;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ClassSize;
 import org.apache.hadoop.hbase.util.CompoundBloomFilterWriter;
 import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.WritableUtils;
+import org.apache.hadoop.util.StringUtils;
 
 /**
  * Provides functionality to write ({@link BlockIndexWriter}) and read
@@ -51,7 +53,7 @@ import org.apache.hadoop.io.WritableUtils;
  * Examples of how to use the block index writer can be found in
  * {@link CompoundBloomFilterWriter} and {@link HFileWriterV2}. Examples of how
  * to use the reader can be found in {@link HFileReaderV2} and
- * {@link TestHFileBlockIndex}.
+ * TestHFileBlockIndex.
  */
 public class HFileBlockIndex {
 
@@ -61,7 +63,7 @@ public class HFileBlockIndex {
 
   /**
    * The maximum size guideline for index blocks (both leaf, intermediate, and
-   * root). If not specified, {@link #DEFAULT_MAX_CHUNK_SIZE} is used.
+   * root). If not specified, <code>DEFAULT_MAX_CHUNK_SIZE</code> is used.
    */
   public static final String MAX_CHUNK_SIZE_KEY = "hfile.index.block.max.size";
 
@@ -132,12 +134,12 @@ public class HFileBlockIndex {
     private int searchTreeLevel;
 
     /** A way to read {@link HFile} blocks at a given offset */
-    private HFileBlock.BasicReader blockReader;
+    private CachingBlockReader cachingBlockReader;
 
     public BlockIndexReader(final RawComparator<byte[]> c, final int treeLevel,
-        final HFileBlock.BasicReader blockReader) {
+        final CachingBlockReader cachingBlockReader) {
       this(c, treeLevel);
-      this.blockReader = blockReader;
+      this.cachingBlockReader = cachingBlockReader;
     }
 
     public BlockIndexReader(final RawComparator<byte[]> c, final int treeLevel)
@@ -176,7 +178,8 @@ public class HFileBlockIndex {
      * @throws IOException
      */
     public HFileBlock seekToDataBlock(final byte[] key, int keyOffset,
-        int keyLength, HFileBlock currentBlock)
+        int keyLength, HFileBlock currentBlock, boolean cacheBlocks,
+        boolean pread, boolean isCompaction)
         throws IOException {
       int rootLevelIndex = rootBlockContainingKey(key, keyOffset, keyLength);
       if (rootLevelIndex < 0 || rootLevelIndex >= blockOffsets.length) {
@@ -188,23 +191,44 @@ public class HFileBlockIndex {
       int currentOnDiskSize = blockDataSizes[rootLevelIndex];
 
       int lookupLevel = 1; // How many levels deep we are in our lookup.
-      HFileBlock block = blockReader.readBlockData(currentOffset,
-          currentOnDiskSize, -1, true);
-      if (block == null) {
-        throw new IOException("Failed to read block at offset " +
-            currentOffset + ", onDiskSize=" + currentOnDiskSize);
-      }
-      while (!block.getBlockType().equals(BlockType.DATA)) {
-        // Read the block. It may be intermediate level block, leaf level block
-        // or data block. In any case, we expect non-root index block format.
 
-        // We don't allow more than searchTreeLevel iterations of this loop.
-        if (++lookupLevel > searchTreeLevel) {
-          throw new IOException("Search Tree Level overflow: lookupLevel: "+
-              lookupLevel + " searchTreeLevel: " + searchTreeLevel);
+      HFileBlock block;
+      while (true) {
+
+        if (currentBlock != null && currentBlock.getOffset() == currentOffset)
+        {
+          // Avoid reading the same block again, even with caching turned off.
+          // This is crucial for compaction-type workload which might have
+          // caching turned off. This is like a one-block cache inside the
+          // scanner.
+          block = currentBlock;
+        } else {
+          // Call HFile's caching block reader API. We always cache index
+          // blocks, otherwise we might get terrible performance.
+          boolean shouldCache = cacheBlocks || (lookupLevel < searchTreeLevel);
+          block = cachingBlockReader.readBlock(currentOffset, currentOnDiskSize,
+              shouldCache, pread, isCompaction);
         }
 
-        // read to the byte buffer
+        if (block == null) {
+          throw new IOException("Failed to read block at offset " +
+              currentOffset + ", onDiskSize=" + currentOnDiskSize);
+        }
+
+        // Found a data block, break the loop and check our level in the tree.
+        if (block.getBlockType().equals(BlockType.DATA)) {
+          break;
+        }
+
+        // Not a data block. This must be a leaf-level or intermediate-level
+        // index block. We don't allow going deeper than searchTreeLevel.
+        if (++lookupLevel > searchTreeLevel) {
+          throw new IOException("Search Tree Level overflow: lookupLevel="+
+              lookupLevel + ", searchTreeLevel=" + searchTreeLevel);
+        }
+
+        // Locate the entry corresponding to the given key in the non-root
+        // (leaf or intermediate-level) index block.
         ByteBuffer buffer = block.getBufferWithoutHeader();
         if (!locateNonRootIndexEntry(buffer, key, keyOffset, keyLength,
             comparator)) {
@@ -216,16 +240,6 @@ public class HFileBlockIndex {
 
         currentOffset = buffer.getLong();
         currentOnDiskSize = buffer.getInt();
-
-        // Located a deeper-level block, now read it.
-        if (currentBlock != null && currentBlock.getOffset() == currentOffset)
-        {
-          // Avoid reading the same block.
-          block = currentBlock;
-        } else {
-          block = blockReader.readBlockData(currentOffset, currentOnDiskSize,
-              -1, true);
-        }
       }
 
       if (lookupLevel != searchTreeLevel) {
@@ -252,12 +266,15 @@ public class HFileBlockIndex {
         return midKey;
 
       if (midLeafBlockOffset >= 0) {
-        if (blockReader == null) {
+        if (cachingBlockReader == null) {
           throw new IOException("Have to read the middle leaf block but " +
               "no block reader available");
         }
-        HFileBlock midLeafBlock = blockReader.readBlockData(
-            midLeafBlockOffset, midLeafBlockOnDiskSize, -1, true);
+
+        // Caching, using pread, assuming this is not a compaction.
+        HFileBlock midLeafBlock = cachingBlockReader.readBlock(
+            midLeafBlockOffset, midLeafBlockOnDiskSize, true, true, false);
+
         ByteBuffer b = midLeafBlock.getBufferWithoutHeader();
         int numDataBlocks = b.getInt();
         int keyRelOffset = b.getInt(Bytes.SIZEOF_INT * (midKeyEntry + 1));
@@ -734,12 +751,15 @@ public class HFileBlockIndex {
       totalBlockUncompressedSize +=
           blockWriter.getUncompressedSizeWithoutHeader();
 
-      LOG.info("Wrote a " + numLevels + "-level index with root level at pos "
+      if (LOG.isDebugEnabled()) {
+        LOG.debug("Wrote a " + numLevels + "-level index with root level at pos "
           + out.getPos() + ", " + rootChunk.getNumEntries()
           + " root-level entries, " + totalNumEntries + " total entries, "
-          + totalBlockOnDiskSize + " bytes total on-disk size, "
-          + totalBlockUncompressedSize + " bytes total uncompressed size.");
-
+          + StringUtils.humanReadableInt(this.totalBlockOnDiskSize) +
+          " on-disk size, "
+          + StringUtils.humanReadableInt(totalBlockUncompressedSize) +
+          " total uncompressed size.");
+      }
       return rootLevelIndexPos;
     }
 
@@ -897,8 +917,6 @@ public class HFileBlockIndex {
      * blocks, so the non-root index format is used.
      *
      * @param out
-     * @param position The beginning offset of the inline block in the file not
-     *          include the header.
      */
     @Override
     public void writeInlineBlock(DataOutput out) throws IOException {

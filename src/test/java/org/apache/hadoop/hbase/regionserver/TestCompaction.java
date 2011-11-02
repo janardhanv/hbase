@@ -24,19 +24,16 @@ import static org.mockito.Mockito.spy;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
+
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.hbase.HBaseTestCase;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.*;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Put;
@@ -44,9 +41,12 @@ import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.hfile.HFileScanner;
 import org.apache.hadoop.hbase.regionserver.compactions.CompactionProgress;
+import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.junit.AfterClass;
+import org.junit.BeforeClass;
 import org.mockito.invocation.InvocationOnMock;
 import org.mockito.stubbing.Answer;
 
@@ -56,6 +56,8 @@ import org.mockito.stubbing.Answer;
  */
 public class TestCompaction extends HBaseTestCase {
   static final Log LOG = LogFactory.getLog(TestCompaction.class.getName());
+  private static final HBaseTestingUtility UTIL = new HBaseTestingUtility();
+
   private HRegion r = null;
   private Path compactionDir = null;
   private Path regionCompactionDir = null;
@@ -66,7 +68,6 @@ public class TestCompaction extends HBaseTestCase {
   private byte[] firstRowBytes, secondRowBytes, thirdRowBytes;
   final private byte[] col1, col2;
 
-  private MiniDFSCluster cluster;
 
   /** constructor */
   public TestCompaction() throws Exception {
@@ -75,7 +76,6 @@ public class TestCompaction extends HBaseTestCase {
     // Set cache flush size to 1MB
     conf.setInt("hbase.hregion.memstore.flush.size", 1024*1024);
     conf.setInt("hbase.hregion.memstore.block.multiplier", 100);
-    this.cluster = null;
     compactionThreshold = conf.getInt("hbase.hstore.compactionThreshold", 3);
 
     firstRowBytes = START_KEY.getBytes(HConstants.UTF8_ENCODING);
@@ -91,10 +91,6 @@ public class TestCompaction extends HBaseTestCase {
 
   @Override
   public void setUp() throws Exception {
-    this.cluster = new MiniDFSCluster(conf, 2, true, (String[])null);
-    // Make the hbase rootdir match the minidfs we just span up
-    this.conf.set(HConstants.HBASE_DIR,
-      this.cluster.getFileSystem().getHomeDirectory().toString());
     super.setUp();
     HTableDescriptor htd = createTableDescriptor(getName());
     this.r = createNewHRegion(htd, null, null);
@@ -105,9 +101,6 @@ public class TestCompaction extends HBaseTestCase {
     HLog hlog = r.getLog();
     this.r.close();
     hlog.closeAndDelete();
-    if (this.cluster != null) {
-      shutdownDfs(cluster);
-    }
     super.tearDown();
   }
 
@@ -234,11 +227,15 @@ public class TestCompaction extends HBaseTestCase {
 
     // Multiple versions allowed for an entry, so the delete isn't enough
     // Lower TTL and expire to ensure that all our entries have been wiped
-    final int ttlInSeconds = 1;
+    final int ttl = 1000;
     for (Store store: this.r.stores.values()) {
-      store.ttl = ttlInSeconds * 1000;
+      Store.ScanInfo old = store.scanInfo;
+      Store.ScanInfo si = new Store.ScanInfo(old.getFamily(),
+          old.getMinVersions(), old.getMaxVersions(), ttl,
+          old.getKeepDeletedCells(), old.getComparator());
+      store.scanInfo = si;
     }
-    Thread.sleep(ttlInSeconds * 1000);
+    Thread.sleep(1000);
 
     r.compactStores(true);
     int count = count();
@@ -421,7 +418,7 @@ public class TestCompaction extends HBaseTestCase {
       assertEquals(compactionThreshold, s.getStorefilesCount());
       assertTrue(s.getStorefilesSize() > 15*1000);
       // and no new store files persisted past compactStores()
-      FileStatus[] ls = cluster.getFileSystem().listStatus(r.getTmpDir());
+      FileStatus[] ls = FileSystem.get(conf).listStatus(r.getTmpDir());
       assertEquals(0, ls.length);
 
     } finally {
@@ -440,11 +437,15 @@ public class TestCompaction extends HBaseTestCase {
 
       // Multiple versions allowed for an entry, so the delete isn't enough
       // Lower TTL and expire to ensure that all our entries have been wiped
-      final int ttlInSeconds = 1;
+      final int ttl = 1000;
       for (Store store: this.r.stores.values()) {
-        store.ttl = ttlInSeconds * 1000;
+        Store.ScanInfo old = store.scanInfo;
+        Store.ScanInfo si = new Store.ScanInfo(old.getFamily(),
+            old.getMinVersions(), old.getMaxVersions(), ttl,
+            old.getKeepDeletedCells(), old.getComparator());
+        store.scanInfo = si;
       }
-      Thread.sleep(ttlInSeconds * 1000);
+      Thread.sleep(ttl);
 
       r.compactStores(true);
       assertEquals(0, count());
@@ -477,5 +478,42 @@ public class TestCompaction extends HBaseTestCase {
     addContent(loader, Bytes.toString(COLUMN_FAMILY), ("" +
     		"bbb").getBytes(), null);
     loader.flushcache();
+  }
+
+  public void testCompactionWithCorruptResult() throws Exception {
+    int nfiles = 10;
+    for (int i = 0; i < nfiles; i++) {
+      createStoreFile(r);
+    }
+    Store store = r.getStore(COLUMN_FAMILY);
+
+    List<StoreFile> storeFiles = store.getStorefiles();
+    long maxId = StoreFile.getMaxSequenceIdInList(storeFiles);
+
+    StoreFile.Writer compactedFile = store.compactStore(storeFiles, false, maxId);
+
+    // Now lets corrupt the compacted file.
+    FileSystem fs = FileSystem.get(conf);
+    Path origPath = compactedFile.getPath();
+    Path homedir = store.getHomedir();
+    Path dstPath = new Path(homedir, origPath.getName());
+    FSDataOutputStream stream = fs.create(origPath, null, true, 512, (short) 3,
+        (long) 1024,
+        null);
+    stream.writeChars("CORRUPT FILE!!!!");
+    stream.close();
+
+    try {
+      store.completeCompaction(storeFiles, compactedFile);
+    } catch (Exception e) {
+      // The complete compaction should fail and the corrupt file should remain
+      // in the 'tmp' directory;
+      assert (fs.exists(origPath));
+      assert (!fs.exists(dstPath));
+      System.out.println("testCompactionWithCorruptResult Passed");
+      return;
+    }
+    fail("testCompactionWithCorruptResult failed since no exception was" +
+        "thrown while completing a corrupt file");
   }
 }

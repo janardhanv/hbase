@@ -47,11 +47,10 @@ import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.HServerLoad;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
+import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
-import org.apache.hadoop.hbase.client.MultiPut;
-import org.apache.hadoop.hbase.client.MultiPutResponse;
 import org.apache.hadoop.hbase.client.MultiAction;
 import org.apache.hadoop.hbase.client.Action;
 import org.apache.hadoop.hbase.client.MultiResponse;
@@ -92,6 +91,7 @@ import org.apache.hadoop.io.ObjectWritable;
 import org.apache.hadoop.io.Text;
 import org.apache.hadoop.io.Writable;
 import org.apache.hadoop.io.WritableFactories;
+import org.apache.hadoop.io.WritableUtils;
 
 /**
  * This is a customized version of the polymorphic hadoop
@@ -114,15 +114,15 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
   // Here we maintain two static maps of classes to code and vice versa.
   // Add new classes+codes as wanted or figure way to auto-generate these
   // maps from the HMasterInterface.
-  static final Map<Byte, Class<?>> CODE_TO_CLASS =
-    new HashMap<Byte, Class<?>>();
-  static final Map<Class<?>, Byte> CLASS_TO_CODE =
-    new HashMap<Class<?>, Byte>();
+  static final Map<Integer, Class<?>> CODE_TO_CLASS =
+    new HashMap<Integer, Class<?>>();
+  static final Map<Class<?>, Integer> CLASS_TO_CODE =
+    new HashMap<Class<?>, Integer>();
   // Special code that means 'not-encoded'; in this case we do old school
   // sending of the class name using reflection, etc.
   private static final byte NOT_ENCODED = 0;
   static {
-    byte code = NOT_ENCODED + 1;
+    int code = NOT_ENCODED + 1;
     // Primitive types.
     addToMap(Boolean.TYPE, code++);
     addToMap(Byte.TYPE, code++);
@@ -201,9 +201,6 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
 
     addToMap(Delete [].class, code++);
 
-    addToMap(MultiPut.class, code++);
-    addToMap(MultiPutResponse.class, code++);
-
     addToMap(HLog.Entry.class, code++);
     addToMap(HLog.Entry[].class, code++);
     addToMap(HLogKey.class, code++);
@@ -237,7 +234,8 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
     addToMap(HServerLoad.class, code++);
     
     addToMap(RegionOpeningState.class, code++);
-    
+
+    addToMap(Append.class, code++);
   }
 
   private Class<?> declaredClass;
@@ -317,7 +315,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
     }
 
     public void readFields(DataInput in) throws IOException {
-      this.declaredClass = CODE_TO_CLASS.get(in.readByte());
+      this.declaredClass = CODE_TO_CLASS.get(WritableUtils.readVInt(in));
     }
 
     public void write(DataOutput out) throws IOException {
@@ -333,7 +331,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
    */
   static void writeClassCode(final DataOutput out, final Class<?> c)
   throws IOException {
-    Byte code = CLASS_TO_CODE.get(c);
+    Integer code = CLASS_TO_CODE.get(c);
     if (code == null ) {
       if ( List.class.isAssignableFrom(c)) {
         code = CLASS_TO_CODE.get(List.class);
@@ -351,11 +349,9 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
       for(StackTraceElement elem : els) {
         LOG.error(elem.getMethodName());
       }
-//          new Exception().getStackTrace()[0].getMethodName());
-//      throw new IOException(new Exception().getStackTrace()[0].getMethodName());
       throw new UnsupportedOperationException("No code for unexpected " + c);
     }
-    out.writeByte(code);
+    WritableUtils.writeVInt(out, code);
   }
 
 
@@ -452,7 +448,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
       Text.writeString(out, ((Enum)instanceObj).name());
     } else if (Writable.class.isAssignableFrom(declClass)) { // Writable
       Class <?> c = instanceObj.getClass();
-      Byte code = CLASS_TO_CODE.get(c);
+      Integer code = CLASS_TO_CODE.get(c);
       if (code == null) {
         out.writeByte(NOT_ENCODED);
         Text.writeString(out, c.getName());
@@ -462,7 +458,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
       ((Writable)instanceObj).write(out);
     } else if (Serializable.class.isAssignableFrom(declClass)) {
       Class <?> c = instanceObj.getClass();
-      Byte code = CLASS_TO_CODE.get(c);
+      Integer code = CLASS_TO_CODE.get(c);
       if (code == null) {
         out.writeByte(NOT_ENCODED);
         Text.writeString(out, c.getName());
@@ -514,7 +510,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
   public static Object readObject(DataInput in,
       HbaseObjectWritable objectWritable, Configuration conf)
   throws IOException {
-    Class<?> declaredClass = CODE_TO_CLASS.get(in.readByte());
+    Class<?> declaredClass = CODE_TO_CLASS.get(WritableUtils.readVInt(in));
     Object instance;
     if (declaredClass.isPrimitive()) {            // primitive types
       if (declaredClass == Boolean.TYPE) {             // boolean
@@ -550,7 +546,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
           Array.set(instance, i, readObject(in, conf));
         }
       }
-    } else if (List.class.isAssignableFrom(declaredClass)) {              // List
+    } else if (List.class.isAssignableFrom(declaredClass)) {            // List
       int length = in.readInt();
       instance = new ArrayList(length);
       for (int i = 0; i < length; i++) {
@@ -563,8 +559,8 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
         Text.readString(in));
     } else {                                      // Writable or Serializable
       Class instanceClass = null;
-      Byte b = in.readByte();
-      if (b.byteValue() == NOT_ENCODED) {
+      int b = (byte)WritableUtils.readVInt(in);
+      if (b == NOT_ENCODED) {
         String className = Text.readString(in);
         try {
           instanceClass = getClassByName(conf, className);
@@ -627,7 +623,7 @@ public class HbaseObjectWritable implements Writable, WritableWithSize, Configur
     return Class.forName(className, true, cl);
   }
 
-  private static void addToMap(final Class<?> clazz, final byte code) {
+  private static void addToMap(final Class<?> clazz, final int code) {
     CLASS_TO_CODE.put(clazz, code);
     CODE_TO_CLASS.put(code, clazz);
   }

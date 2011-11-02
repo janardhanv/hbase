@@ -1,5 +1,12 @@
 HBase Change Log
 Release 0.93.0 - Unreleased
+  NEW FEATURE
+   HBASE-4460  Support running an embedded ThriftServer within a RegionServer (jgray)
+   HBASE-4536  Allow CF to retain deleted rows (Lars H)
+   HBASE-4629  Enable automated patch testing for hbase (Giridharan Kesavan)
+   HBASE-4528  The put operation can release the rowlock before sync-ing the
+               Hlog (dhruba via jgray)
+
   IMPROVEMENT
    HBASE-4132  Extend the WALActionsListener API to accomodate log archival
                (dhruba borthakur)
@@ -8,10 +15,29 @@ Release 0.93.0 - Unreleased
                (kannan via jgray)
    HBASE-4131  Make the Replication Service pluggable via a standard
                interface definition (dhruba via jgray)
+   HBASE-4477  Ability for an application to store metadata into the        
+               transaction log (dhruba via jgray)
+   HBASE-4145  Provide metrics for hbase client (Ming Ma)
+   HBASE-4465  Lazy-seek optimization for StoreFile scanners (mikhail/liyin)
+   HBASE-4422  Move block cache parameters and references into single
+               CacheConf class (jgray)
+   HBASE-4102  atomicAppend: A put that appends to the latest version of a cell (Lars H)
+   HBASE-4469  Avoid top row seek by looking up bloomfilter (liyin via jgray)
+   HBASE-4418  Show all the hbase configuration in the web ui
+   HBASE-4489  Better key splitting in RegionSplitter
+   HBASE-4626  Filters unnecessarily copy byte arrays (Lars H)
+   HBASE-4691  Remove more unnecessary byte[] copies from KeyValues (Lars H)
 
   BUG FIXES
    HBASE-4488  Store could miss rows during flush (Lars H via jgray)
-
+   HBASE-4673  NPE in HFileReaderV2.close during major compaction when
+               hfile.block.cache.size is set to 0 (Lars H)
+ 
+  TESTS
+   HBASE-4534  A new unit test for lazy seek and StoreScanner in general
+               (mikhail via jgray)
+   HBASE-4545  TestHLog doesn't clean up after itself
+   HBASE-4690  Intermittent TestRegionServerCoprocessorExceptionWithAbort failure
 
 Release 0.92.0 - Unreleased
   INCOMPATIBLE CHANGES
@@ -35,6 +61,9 @@ Release 0.92.0 - Unreleased
    HBASE-4369  Deprecate HConnection#getZookeeperWatcher in prep for HBASE-1762
    HBASE-4247  Add isAborted method to the Abortable interface
                (Akash Ashok)
+   HBASE-4503  Purge deprecated HBaseClusterTestCase
+   HBASE-4374  Up default regions size from 256M to 1G
+   HBASE-4648  Bytes.toBigDecimal() doesn't use offset (Brian Keller via Lars H)
 
   BUG FIXES
    HBASE-3280  YouAreDeadException being swallowed in HRS getMaster
@@ -313,12 +342,103 @@ Release 0.92.0 - Unreleased
    HBASE-4472  MiniHBaseCluster.shutdown() doesn't work if no active master
    HBASE-4455  Rolling restart RSs scenario, -ROOT-, .META. regions are lost in
                AssignmentManager (Ming Ma)
+   HBASE-4513  NOTICES.txt refers to Facebook for Thrift
+   HBASE-3130  [replication] ReplicationSource can't recover from session
+               expired on remote clusters (Chris Trezzo via JD)
+   HBASE-4212  TestMasterFailover fails occasionally (Gao Jinchao)
+   HBASE-4412  No need to retry scan operation on the same server in case of
+               RegionServerStoppedException (Ming Ma)
+   HBASE-4476  Compactions must fail if column tracker gets columns out of order
+               (Mikhail Bautin)
+   HBASE-4209  The HBase hbase-daemon.sh SIGKILLs master when stopping it
+               (Roman Shaposhnik)
+   HBASE-4496  HFile V2 does not honor setCacheBlocks when scanning (Lars and Mikhail)
+   HBASE-4531  hbase-4454 failsafe broke mvn site; back it out or fix
+               (Akash Ashok)
+   HBASE-4334  HRegion.get never validates row (Lars Hofhansl)
+   HBASE-4494  AvroServer:: get fails with NPE on a non-existent row
+               (Kay Kay)
+   HBASE-4481  TestMergeTool failed in 0.92 build 20
+   HBASE-4386  Fix a potential NPE in TaskMonitor (todd)
+   HBASE-4402  Retaining locality after restart broken
+   HBASE-4482  Race Condition Concerning Eviction in SlabCache (Li Pi)
+   HBASE-4547  TestAdmin failing in 0.92 because .tableinfo not found
+   HBASE-4540  OpenedRegionHandler is not enforcing atomicity of the operation
+               it is performing(Ram)
+   HBASE-4335  Splits can create temporary holes in .META. that confuse clients
+               and regionservers (Lars H)
+   HBASE-4555  TestShell seems passed, but actually errors seen in test output
+               file (Mingjie Lai)
+   HBASE-4582  Store.java cleanup (failing TestHeapSize and has warnings)
+   HBASE-4556  Fix all incorrect uses of InternalScanner.next(...) (Lars H)
+   HBASE-4078  Validate store files after flush/compaction
+   HBASE-3417  CacheOnWrite is using the temporary output path for block
+               names, need to use a more consistent block naming scheme (jgray)
+   HBASE-4551  Fix pom and some test cases to compile and run against
+               Hadoop 0.23 (todd)
+   HBASE-3446  ProcessServerShutdown fails if META moves, orphaning lots of
+               regions
+   HBASE-4589  CacheOnWrite broken in some cases because it can conflict
+               with evictOnClose (jgray)
+   HBASE-4579  CST.requestCompaction semantics changed, logs are now
+               spammed when too many store files
+   HBASE-4620  I broke the build when I submitted HBASE-3581 (Send length
+               of the rpc response)
+   HBASE-4621  TestAvroServer fails quite often intermittently (Akash Ashok)
+   HBASE-4378  [hbck] Does not complain about regions with startkey==endkey.
+               (Jonathan Hsieh)
+   HBASE-4459  HbaseObjectWritable code is a byte, we will eventually run out of codes
+   HBASE-4430  Disable TestSlabCache and TestSingleSizedCache temporarily to
+               see if these are cause of build box failure though all tests
+               pass (Li Pi)
+   HBASE-4510  Check and workaround usage of internal HDFS APIs in HBase
+               (Harsh)
+   HBASE-4595  HFilePrettyPrinter Scanned kv count always 0 (Matteo Bertozzi)
+   HBASE-4580  Some invalid zk nodes were created when a clean cluster restarts
+               (Gaojinchao)
+   HBASE-4588  The floating point arithmetic to validate memory allocation
+               configurations need to be done as integers (dhruba)
+   HBASE-4647  RAT finds about 40 files missing licenses
+   HBASE-4642  Add Apache License Header
+   HBASE-4591  TTL for old HLogs should be calculated from last modification time.
+   HBASE-4578  NPE when altering a table that has moving regions (gaojinchao)
+   HBASE-4070  Improve region server metrics to report loaded coprocessors to
+               master (Eugene Koontz via apurtell)
+   HBASE-3512  Shell support for listing currently loaded coprocessors (Eugene
+               Koontz via apurtell)
+   HBASE-4670  Fix javadoc warnings
+   HBASE-4367  Deadlock in MemStore flusher due to JDK internally synchronizing
+               on current thread
+   HBASE-4645  Edits Log recovery losing data across column families
+   HBASE-4634  "test.build.data" property overused leading to write data at the
+               wrong place (nkeywal)
+   HBASE-4388  Second start after migration from 90 to trunk crashes
+   HBASE-4685  TestDistributedLogSplitting.testOrphanLogCreation failing because
+               of ArithmeticException: / by zero.
+   HBASE-4300  Start of new-version master fails if old master's znode is
+               hanging around
+   HBASE-4679  Thrift null mutation error
+   HBASE-4304  requestsPerSecond counter stuck at 0 (Li Pi)
+   HBASE-4692  HBASE-4300 broke the build
+   HBASE-4680  FSUtils.isInSafeMode() checks should operate on HBase root dir,
+               where we have permissions
+   HBASE-4641  Block cache can be mistakenly instantiated on Master (jgray)
+   HBASE-4687  regionserver may miss zk-heartbeats to master when replaying
+               edits at region open (prakash via jgray)
+   HBASE-4701  TestMasterObserver fails up on jenkins
+   HBASE-4700  TestSplitTransactionOnCluster fails on occasion when it tries
+               to move a region
+   HBASE-4613  hbase.util.Threads#threadDumpingIsAlive sleeps 1 second,
+               slowing down the shutdown by 0.5s
 
   TESTS
    HBASE-4450  test for number of blocks read: to serve as baseline for expected
                blocks read and for catching regressions (Kannan)
    HBASE-4492  TestRollingRestart fails intermittently (Ted Yu and Ram)
    HBASE-4512  JVMClusterUtil throwing wrong exception when master thread cannot be created (Ram)
+   HBASE-4479  TestMasterFailover failure in Hbase-0.92#17(Ram)
+   HBASE-4651  ConcurrentModificationException might be thrown in
+               TestHCM.testConnectionUniqueness (Jinchao)
 
   IMPROVEMENTS
    HBASE-3290  Max Compaction Size (Nicolas Spiegelberg via Stack)  
@@ -555,6 +675,31 @@ Release 0.92.0 - Unreleased
                (David Revell)
    HBASE-4454  Add failsafe plugin to build and rename integration tests
                (Jesse Yates)
+   HBASE-4499  [replication] Source shouldn't update ZK if it didn't progress
+               (Chris Trezzo via JD)
+   HBASE-2794  Utilize ROWCOL bloom filter if multiple columns within same family
+               are requested in a Get (Mikhail Bautin)
+   HBASE-4487  The increment operation can release the rowlock before sync-ing
+               the Hlog (dhruba borthakur)
+   HBASE-4526  special case for stopping master in hbase-daemon.sh is no longer
+               required (Roman Shaposhnik)
+   HBASE-4520  Better handling of Bloom filter type discrepancy between HFile
+               and CF config (Mikhail Bautin)
+   HBASE-4558  Refactor TestOpenedRegionHandler and TestOpenRegionHandler.(Ram)
+   HBASE-4558  Addendum for TestMasterFailover (Ram) - Breaks the build
+   HBASE-4568  Make zk dump jsp response faster
+   HBASE-4606  Remove spam in HCM and fix a list.size == 0
+   HBASE-3581  hbase rpc should send size of response
+   HBASE-4585  Avoid seek operation when current kv is deleted(Liyin Tang)
+   HBASE-4486  Improve Javadoc for HTableDescriptor (Akash Ashok)
+   HBASE-4604  hbase.client.TestHTablePool could start a single
+               cluster instead of one per method (nkeywal)
+   HBASE-3929  Add option to HFile tool to produce basic stats (Matteo
+               Bertozzi and todd via todd)
+   HBASE-4694  Some cleanup of log messages in RS and M
+   HBASE-4603  Uneeded sleep time for tests in
+               hbase.master.ServerManager#waitForRegionServers (nkeywal)
+       
 
   TASKS
    HBASE-3559  Move report of split to master OFF the heartbeat channel
@@ -579,6 +724,12 @@ Release 0.92.0 - Unreleased
    HBASE-2195  Support cyclic replication (Lars Hofhansl)
    HBASE-2196  Support more than one slave cluster (Lars Hofhansl)
    HBASE-4429  Provide synchronous balanceSwitch()
+   HBASE-4437  Update hadoop in 0.92 (0.20.205?)
+   HBASE-4656  Note how dfs.support.append has to be enabled in 0.20.205.0
+               clusters
+   HBASE-4699  Cleanup the UIs
+   HBASE-4552  Remove trivial 0.90 deprecated code from 0.92 and trunk.
+               (Jonathan Hsieh)
 
   NEW FEATURES
    HBASE-2001  Coprocessors: Colocate user code with regions (Mingjie Lai via
@@ -624,6 +775,8 @@ Release 0.92.0 - Unreleased
    HBASE-4292  Add a debugging dump servlet to the master and regionserver
                (todd)
    HBASE-4057  Implement HBase version of "show processlist" (Riley Patterson)
+   HBASE-4219  Per Column Family Metrics
+   HBASE-4219  Addendum for failure of TestHFileBlock
 
 Release 0.90.5 - Unreleased
 
@@ -662,6 +815,18 @@ Release 0.90.5 - Unreleased
                (Lars Hofhansl)
    HBASE-4295  rowcounter does not return the correct number of rows in
                certain circumstances (David Revell)
+   HBASE-4515  User.getCurrent() can fail to initialize the current user
+   HBASE-4473  NPE when executors are down but events are still coming in
+   HBASE-4537  TestUser imports breaking build against secure Hadoop
+   HBASE-4501  [replication] Shutting down a stream leaves recovered
+               sources running
+   HBASE-4563  When error occurs in this.parent.close(false) of split,
+               the split region cannot write or read (bluedavy via Lars H)
+   HBASE-4570. Fix a race condition that could cause inconsistent results
+               from scans during concurrent writes. (todd and Jonathan Jsieh
+               via todd)
+   HBASE-4562  When split doing offlineParentInMeta encounters error, it'll
+               cause data loss (bluedavy via Lars H)
 
   IMPROVEMENT
    HBASE-4205  Enhance HTable javadoc (Eric Charles)
@@ -681,6 +846,10 @@ Release 0.90.5 - Unreleased
    HBASE-4384  Hard to tell what causes failure in CloseRegionHandler#getCurrentVersion
                (Harsh J)
    HBASE-4375  [hbck] Add region coverage visualization to hbck
+               (Jonathan Hsieh)
+   HBASE-4506  [hbck] Allow HBaseFsck to be instantiated without connecting
+               (Jonathan Hsieh)
+   HBASE-4509  [hbck] Improve region map output
                (Jonathan Hsieh)
 
 Release 0.90.4 - August 10, 2011
@@ -4163,3 +4332,4 @@ Below are the list of changes before 2007-08-18
      (Edward Yoon via Stack).
  61. HADOOP-1709 Make HRegionInterface more like that of HTable
      HADOOP-1725 Client find of table regions should not include offlined, split parents
+=

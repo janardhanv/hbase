@@ -59,7 +59,7 @@ import org.apache.zookeeper.data.Stat;
  * the create it will do a getChildren("/") and see "x-222-1", "x-542-30", 
  * "x-352-109", x-333-110". The process will know that the original create 
  * succeeded an the znode it created is "x-352-109".
- * @see http://wiki.apache.org/hadoop/ZooKeeper/ErrorHandling
+ * @see "http://wiki.apache.org/hadoop/ZooKeeper/ErrorHandling"
  */
 public class RecoverableZooKeeper {
   private static final Log LOG = LogFactory.getLog(RecoverableZooKeeper.class);
@@ -132,8 +132,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
       isRetry = true;
@@ -144,7 +142,7 @@ public class RecoverableZooKeeper {
    * exists is an idempotent operation. Retry before throw out exception
    * @param path
    * @param watcher
-   * @return
+   * @return A Stat instance
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -170,8 +168,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -181,7 +177,7 @@ public class RecoverableZooKeeper {
    * exists is an idempotent operation. Retry before throw out exception
    * @param path
    * @param watch
-   * @return
+   * @return A Stat instance
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -207,8 +203,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -218,7 +212,7 @@ public class RecoverableZooKeeper {
    * getChildren is an idempotent operation. Retry before throw out exception
    * @param path
    * @param watcher
-   * @return
+   * @return List of children znodes
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -244,8 +238,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -255,7 +247,7 @@ public class RecoverableZooKeeper {
    * getChildren is an idempotent operation. Retry before throw out exception
    * @param path
    * @param watch
-   * @return
+   * @return List of children znodes
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -281,8 +273,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -293,7 +283,7 @@ public class RecoverableZooKeeper {
    * @param path
    * @param watcher
    * @param stat
-   * @return
+   * @return Data
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -319,9 +309,7 @@ public class RecoverableZooKeeper {
           default:
             throw e;
         }
-      } 
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
+      }
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -332,7 +320,7 @@ public class RecoverableZooKeeper {
    * @param path
    * @param watch
    * @param stat
-   * @return
+   * @return Data
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -359,8 +347,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -373,7 +359,7 @@ public class RecoverableZooKeeper {
    * @param path
    * @param data
    * @param version
-   * @return 
+   * @return Stat instance
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -419,8 +405,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }
@@ -443,7 +427,7 @@ public class RecoverableZooKeeper {
    * @param data
    * @param acl
    * @param createMode
-   * @return
+   * @return Path
    * @throws KeeperException
    * @throws InterruptedException
    */
@@ -509,8 +493,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
       isRetry = true;
@@ -550,8 +532,6 @@ public class RecoverableZooKeeper {
             throw e;
         }
       }
-      LOG.info("The "+retryCounter.getAttemptTimes()+" times to retry " +
-          "ZooKeeper after sleeping "+retryIntervalMillis+" ms");
       retryCounter.sleepUntilNextRetry();
       retryCounter.useRetry();
     }

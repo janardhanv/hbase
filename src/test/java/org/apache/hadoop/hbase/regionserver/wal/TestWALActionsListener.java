@@ -55,9 +55,9 @@ public class TestWALActionsListener {
     conf = TEST_UTIL.getConfiguration();
     conf.setInt("hbase.regionserver.maxlogs", 5);
     fs = FileSystem.get(conf);
-    oldLogDir = new Path(HBaseTestingUtility.getTestDir(),
+    oldLogDir = new Path(TEST_UTIL.getDataTestDir(),
         HConstants.HREGION_OLDLOGDIR_NAME);
-    logDir = new Path(HBaseTestingUtility.getTestDir(),
+    logDir = new Path(TEST_UTIL.getDataTestDir(),
         HConstants.HREGION_LOGDIR_NAME);
   }
 
@@ -96,7 +96,7 @@ public class TestWALActionsListener {
       htd.addFamily(new HColumnDescriptor(b));
 
       HLogKey key = new HLogKey(b,b, 0, 0, HConstants.DEFAULT_CLUSTER_ID);
-      hlog.append(hri, key, edit, htd);
+      hlog.append(hri, key, edit, htd, true);
       if (i == 10) {
         hlog.registerWALActionsListener(laterobserver);
       }

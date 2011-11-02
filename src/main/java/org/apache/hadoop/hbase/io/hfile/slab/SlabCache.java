@@ -21,8 +21,8 @@
 package org.apache.hadoop.hbase.io.hfile.slab;
 
 import java.math.BigDecimal;
-import java.util.Map.Entry;
 import java.util.List;
+import java.util.Map.Entry;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executors;
@@ -39,6 +39,7 @@ import org.apache.hadoop.hbase.io.hfile.BlockCacheColumnFamilySummary;
 import org.apache.hadoop.hbase.io.hfile.CacheStats;
 import org.apache.hadoop.hbase.io.hfile.Cacheable;
 import org.apache.hadoop.hbase.util.ClassSize;
+import org.apache.hadoop.hbase.util.HasThread;
 import org.apache.hadoop.util.StringUtils;
 
 import com.google.common.base.Preconditions;
@@ -50,7 +51,7 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
  * correct SingleSizeCache.
  *
  **/
-public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize {
+public class SlabCache implements SlabItemActionWatcher, BlockCache, HeapSize {
 
   private final ConcurrentHashMap<String, SingleSizeCache> backingStore;
   private final TreeMap<Integer, SingleSizeCache> sizer;
@@ -103,7 +104,7 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
    * The second list is blocksize of the slabs in bytes. (E.g. the slab holds
    * blocks of this size).
    *
-   * @param Configuration file.
+   * @param conf Configuration file.
    */
   public void addSlabByConf(Configuration conf) {
     // Proportions we allocate to each slab of the total size.
@@ -122,7 +123,9 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
               + sizes.length + " slabs "
               + "offheapslabporportions and offheapslabsizes");
     }
-    /* We use BigDecimals instead of floats because float rounding is annoying */
+    /*
+     * We use BigDecimals instead of floats because float rounding is annoying
+     */
 
     BigDecimal[] parsedProportions = stringArrayToBigDecimalArray(porportions);
     BigDecimal[] parsedSizes = stringArrayToBigDecimalArray(sizes);
@@ -205,14 +208,12 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
     this.successfullyCachedStats.addin(cachedItem.getSerializedLength());
     SingleSizeCache scache = scacheEntry.getValue();
 
-    /*This will throw a runtime exception if we try to cache the same value twice*/
+    /*
+     * This will throw a runtime exception if we try to cache the same value
+     * twice
+     */
     scache.cacheBlock(blockName, cachedItem);
-
-    /*Spinlock, if we're spinlocking, that means an eviction hasn't taken place yet*/
-    while (backingStore.putIfAbsent(blockName, scache) != null) {
-      Thread.yield();
-    }
-  }
+  } 
 
   /**
    * We don't care about whether its in memory or not, so we just pass the call
@@ -229,7 +230,8 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
   /**
    * Get the buffer of the block with the specified name.
    *
-   * @param blockName block name
+   * @param key
+   * @param caching
    * @return buffer of specified block name, or null if not in cache
    */
   public Cacheable getBlock(String key, boolean caching) {
@@ -254,25 +256,24 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
    * the evict counter.
    */
   public boolean evictBlock(String key) {
-    stats.evict();
-    return onEviction(key, true);
+    SingleSizeCache cacheEntry = backingStore.get(key);
+    if (cacheEntry == null) {
+      return false;
+    } else {
+      cacheEntry.evictBlock(key);
+      return true;
+    }
   }
 
   @Override
-  public boolean onEviction(String key, boolean callAssignedCache) {
-    SingleSizeCache cacheEntry = backingStore.remove(key);
-    if (cacheEntry == null) {
-      return false;
-    }
-    /* we need to bump up stats.evict, as this call came from the assignedCache. */
-    if (callAssignedCache == false) {
-      stats.evict();
-    }
+  public void onEviction(String key, SingleSizeCache notifier) {
     stats.evicted();
-    if (callAssignedCache) {
-      cacheEntry.evictBlock(key);
-    }
-    return true;
+    backingStore.remove(key);
+  }
+  
+  @Override
+  public void onInsertion(String key, SingleSizeCache notifier) {
+    backingStore.put(key, notifier);
   }
 
   /**
@@ -303,6 +304,15 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
     return 0; // this cache, by default, allocates all its space.
   }
 
+  @Override
+  public long getBlockCount() {
+    long count = 0;
+    for (SingleSizeCache cache : backingStore.values()) {
+      count += cache.getBlockCount();
+    }
+    return count;
+  }
+
   public long getCurrentSize() {
     return size;
   }
@@ -314,7 +324,7 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
   /*
    * Statistics thread. Periodically prints the cache statistics to the log.
    */
-  static class StatisticsThread extends Thread {
+  static class StatisticsThread extends HasThread {
     SlabCache ourcache;
 
     public StatisticsThread(SlabCache slabCache) {
@@ -346,7 +356,8 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
    *
    */
   static class SlabStats {
-    // the maximum size somebody will ever try to cache, then we multiply by 10
+    // the maximum size somebody will ever try to cache, then we multiply by
+    // 10
     // so we have finer grained stats.
     final int MULTIPLIER = 10;
     final int NUMDIVISIONS = (int) (Math.log(Integer.MAX_VALUE) * MULTIPLIER);
@@ -368,11 +379,11 @@ public class SlabCache implements SlabItemEvictionWatcher, BlockCache, HeapSize 
     }
 
     double getUpperBound(int index) {
-      return Math.pow(Math.E, ((double) (index + 0.5) / (double) MULTIPLIER));
+      return Math.pow(Math.E, ((index + 0.5) / MULTIPLIER));
     }
 
     double getLowerBound(int index) {
-      return Math.pow(Math.E, ((double) (index - 0.5) / (double) MULTIPLIER));
+      return Math.pow(Math.E, ((index - 0.5) / MULTIPLIER));
     }
 
     public void logStats() {

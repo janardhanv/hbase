@@ -48,6 +48,7 @@ import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.CancelableProgressable;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.HasThread;
 import org.apache.hadoop.hbase.util.PairOfSameType;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.hbase.zookeeper.ZKAssign;
@@ -61,7 +62,7 @@ import com.google.common.util.concurrent.ThreadFactoryBuilder;
 /**
  * Executes region split as a "transaction".  Call {@link #prepare()} to setup
  * the transaction, {@link #execute(Server, RegionServerServices)} to run the
- * transaction and {@link #rollback(OnlineRegions)} to cleanup if execute fails.
+ * transaction and {@link #rollback(Server, RegionServerServices)} to cleanup if execute fails.
  *
  * <p>Here is an example of how you would use this class:
  * <pre>
@@ -145,9 +146,6 @@ public class SplitTransaction {
 
   /**
    * Constructor
-   * @param services So we can online new regions.  If null, we'll skip onlining
-   * (Useful testing).
-   * @param c Configuration to use running split
    * @param r Region to split
    * @param splitrow Row to split around
    */
@@ -203,19 +201,15 @@ public class SplitTransaction {
   }
 
   /**
-   * Run the transaction.
+   * Prepare the regions and region files.
    * @param server Hosting server instance.  Can be null when testing (won't try
    * and update in zk if a null server)
    * @param services Used to online/offline regions.
    * @throws IOException If thrown, transaction failed. Call {@link #rollback(Server, RegionServerServices)}
    * @return Regions created
-   * @throws KeeperException
-   * @throws NodeExistsException 
-   * @see #rollback(Server, RegionServerServices)
    */
-  public PairOfSameType<HRegion> execute(final Server server,
-      final RegionServerServices services)
-  throws IOException {
+  /* package */PairOfSameType<HRegion> createDaughters(final Server server,
+      final RegionServerServices services) throws IOException {
     LOG.info("Starting split of region " + this.parent);
     if ((server != null && server.isStopped()) ||
         (services != null && services.isStopping())) {
@@ -250,18 +244,22 @@ public class SplitTransaction {
 
     createSplitDir(this.parent.getFilesystem(), this.splitdir);
     this.journal.add(JournalEntry.CREATE_SPLIT_DIR);
-
-    List<StoreFile> hstoreFilesToSplit = this.parent.close(false);
-    if (hstoreFilesToSplit == null) {
-      // The region was closed by a concurrent thread.  We can't continue
-      // with the split, instead we must just abandon the split.  If we
-      // reopen or split this could cause problems because the region has
-      // probably already been moved to a different server, or is in the
-      // process of moving to a different server.
-      throw new IOException("Failed to close region: already closed by " +
-        "another thread");
+ 
+    List<StoreFile> hstoreFilesToSplit = null;
+    try{
+      hstoreFilesToSplit = this.parent.close(false);
+      if (hstoreFilesToSplit == null) {
+        // The region was closed by a concurrent thread.  We can't continue
+        // with the split, instead we must just abandon the split.  If we
+        // reopen or split this could cause problems because the region has
+        // probably already been moved to a different server, or is in the
+        // process of moving to a different server.
+        throw new IOException("Failed to close region: already closed by " +
+          "another thread");
+      }
+    } finally {
+      this.journal.add(JournalEntry.CLOSED_PARENT_REGION);
     }
-    this.journal.add(JournalEntry.CLOSED_PARENT_REGION);
 
     if (!testing) {
       services.removeFromOnlineRegions(this.parent.getRegionInfo().getEncodedName());
@@ -287,18 +285,6 @@ public class SplitTransaction {
     this.journal.add(JournalEntry.STARTED_REGION_B_CREATION);
     HRegion b = createDaughterRegion(this.hri_b, this.parent.rsServices);
 
-    // Edit parent in meta.  Offlines parent region and adds splita and splitb.
-    // TODO: This can 'fail' by timing out against .META. but the edits could
-    // be applied anyways over on the server.  There is no way to tell for sure.
-    // We could try and get the edits again subsequent to their application
-    // whether we fail or not but that could fail too.  We should probably move
-    // the PONR to here before the edits go in but could mean we'd abort the
-    // regionserver when we didn't need to; i.e. the edits did not make it in.
-    if (!testing) {
-      MetaEditor.offlineParentInMeta(server.getCatalogTracker(),
-        this.parent.getRegionInfo(), a.getRegionInfo(), b.getRegionInfo());
-    }
-
     // This is the point of no return.  Adding subsequent edits to .META. as we
     // do below when we do the daughter opens adding each to .META. can fail in
     // various interesting ways the most interesting of which is a timeout
@@ -310,28 +296,90 @@ public class SplitTransaction {
     // crash out, then they will have their references to the parent in place
     // still and the server shutdown fixup of .META. will point to these
     // regions.
+    // We should add PONR JournalEntry before offlineParentInMeta,so even if
+    // OfflineParentInMeta timeout,this will cause regionserver exit,and then
+    // master ServerShutdownHandler will fix daughter & avoid data loss. (See 
+    // HBase-4562).
     this.journal.add(JournalEntry.PONR);
-      // Open daughters in parallel.
-    DaughterOpener aOpener = new DaughterOpener(server, services, a);
-    DaughterOpener bOpener = new DaughterOpener(server, services, b);
-    aOpener.start();
-    bOpener.start();
-    try {
-      aOpener.join();
-      bOpener.join();
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-      throw new IOException("Interrupted " + e.getMessage());
-    }
-    if (aOpener.getException() != null) {
-      throw new IOException("Failed " +
-        aOpener.getName(), aOpener.getException());
-    }
-    if (bOpener.getException() != null) {
-      throw new IOException("Failed " +
-        bOpener.getName(), bOpener.getException());
-    }
 
+    // Edit parent in meta.  Offlines parent region and adds splita and splitb.
+    if (!testing) {
+      MetaEditor.offlineParentInMeta(server.getCatalogTracker(),
+        this.parent.getRegionInfo(), a.getRegionInfo(), b.getRegionInfo());
+    }
+    return new PairOfSameType<HRegion>(a, b);
+  }
+
+  /**
+   * Perform time consuming opening of the daughter regions.
+   * @param server Hosting server instance.  Can be null when testing (won't try
+   * and update in zk if a null server)
+   * @param services Used to online/offline regions.
+   * @param a first daughter region
+   * @param a second daughter region
+   * @throws IOException If thrown, transaction failed. Call {@link #rollback(Server, RegionServerServices)}
+   */
+  /* package */void openDaughters(final Server server,
+      final RegionServerServices services, HRegion a, HRegion b)
+      throws IOException {
+    boolean stopped = server != null && server.isStopped();
+    boolean stopping = services != null && services.isStopping();
+    // TODO: Is this check needed here?
+    if (stopped || stopping) {
+      // add 2nd daughter first (see HBASE-4335)
+      MetaEditor.addDaughter(server.getCatalogTracker(),
+          b.getRegionInfo(), null);
+      MetaEditor.addDaughter(server.getCatalogTracker(),
+          a.getRegionInfo(), null);
+      LOG.info("Not opening daughters " +
+          b.getRegionInfo().getRegionNameAsString() +
+          " and " +
+          a.getRegionInfo().getRegionNameAsString() +
+          " because stopping=" + stopping + ", stopped=" + stopped);
+    } else {
+      // Open daughters in parallel.
+      DaughterOpener aOpener = new DaughterOpener(server, a);
+      DaughterOpener bOpener = new DaughterOpener(server, b);
+      aOpener.start();
+      bOpener.start();
+      try {
+        aOpener.join();
+        bOpener.join();
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new IOException("Interrupted " + e.getMessage());
+      }
+      if (aOpener.getException() != null) {
+        throw new IOException("Failed " +
+          aOpener.getName(), aOpener.getException());
+      }
+      if (bOpener.getException() != null) {
+        throw new IOException("Failed " +
+          bOpener.getName(), bOpener.getException());
+      }
+      if (services != null) {
+        try {
+          // add 2nd daughter first (see HBASE-4335)
+          services.postOpenDeployTasks(b, server.getCatalogTracker(), true);
+          services.postOpenDeployTasks(a, server.getCatalogTracker(), true);
+        } catch (KeeperException ke) {
+          throw new IOException(ke);
+        }
+      }
+    }
+  }
+
+  /**
+   * Finish off split transaction, transition the zknode
+   * @param server Hosting server instance.  Can be null when testing (won't try
+   * and update in zk if a null server)
+   * @param services Used to online/offline regions.
+   * @param a first daughter region
+   * @param a second daughter region
+   * @throws IOException If thrown, transaction failed. Call {@link #rollback(Server, RegionServerServices)}
+   */
+  /* package */void transitionZKNode(final Server server, HRegion a, HRegion b)
+      throws IOException {
     // Tell master about split by updating zk.  If we fail, abort.
     if (server != null && server.getZooKeeper() != null) {
       try {
@@ -371,25 +419,40 @@ public class SplitTransaction {
     // Leaving here, the splitdir with its dross will be in place but since the
     // split was successful, just leave it; it'll be cleaned when parent is
     // deleted and cleaned up.
-    return new PairOfSameType<HRegion>(a, b);
+  }
+
+  /**
+   * Run the transaction.
+   * @param server Hosting server instance.  Can be null when testing (won't try
+   * and update in zk if a null server)
+   * @param services Used to online/offline regions.
+   * @throws IOException If thrown, transaction failed. Call {@link #rollback(Server, RegionServerServices)}
+   * @return Regions created
+   * @throws IOException
+   * @see #rollback(Server, RegionServerServices)
+   */
+  public PairOfSameType<HRegion> execute(final Server server,
+      final RegionServerServices services)
+  throws IOException {
+    PairOfSameType<HRegion> regions = createDaughters(server, services);
+    openDaughters(server, services, regions.getFirst(), regions.getSecond());
+    transitionZKNode(server, regions.getFirst(), regions.getSecond());
+    return regions;
   }
 
   /*
    * Open daughter region in its own thread.
    * If we fail, abort this hosting server.
    */
-  class DaughterOpener extends Thread {
-    private final RegionServerServices services;
+  class DaughterOpener extends HasThread {
     private final Server server;
     private final HRegion r;
     private Throwable t = null;
 
-    DaughterOpener(final Server s, final RegionServerServices services,
-        final HRegion r) {
+    DaughterOpener(final Server s, final HRegion r) {
       super((s == null? "null-services": s.getServerName()) +
         "-daughterOpener=" + r.getRegionInfo().getEncodedName());
       setDaemon(true);
-      this.services = services;
       this.server = s;
       this.r = r;
     }
@@ -405,7 +468,7 @@ public class SplitTransaction {
     @Override
     public void run() {
       try {
-        openDaughterRegion(this.server, this.services, r);
+        openDaughterRegion(this.server, r);
       } catch (Throwable t) {
         this.t = t;
       }
@@ -420,26 +483,12 @@ public class SplitTransaction {
    * @throws IOException
    * @throws KeeperException
    */
-  void openDaughterRegion(final Server server,
-      final RegionServerServices services, final HRegion daughter)
+  void openDaughterRegion(final Server server, final HRegion daughter)
   throws IOException, KeeperException {
-    boolean stopped = server != null && server.isStopped();
-    boolean stopping = services != null && services.isStopping();
-    if (stopped || stopping) {
-      MetaEditor.addDaughter(server.getCatalogTracker(),
-        daughter.getRegionInfo(), null);
-      LOG.info("Not opening daughter " +
-        daughter.getRegionInfo().getRegionNameAsString() +
-        " because stopping=" + stopping + ", stopped=" + server.isStopped());
-      return;
-    }
     HRegionInfo hri = daughter.getRegionInfo();
     LoggingProgressable reporter = server == null? null:
       new LoggingProgressable(hri, server.getConfiguration());
-    HRegion r = daughter.openHRegion(reporter);
-    if (services != null) {
-      services.postOpenDeployTasks(r, server.getCatalogTracker(), true);
-    }
+    daughter.openHRegion(reporter);
   }
 
   static class LoggingProgressable implements CancelableProgressable {

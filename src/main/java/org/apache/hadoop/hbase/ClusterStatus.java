@@ -24,6 +24,7 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -31,6 +32,7 @@ import java.util.Map;
 import java.util.TreeMap;
 
 import org.apache.hadoop.hbase.master.AssignmentManager.RegionState;
+import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.VersionedWritable;
 
 /**
@@ -66,6 +68,7 @@ public class ClusterStatus extends VersionedWritable {
   private Collection<ServerName> deadServers;
   private Map<String, RegionState> intransition;
   private String clusterId;
+  private String[] masterCoprocessors;
 
   /**
    * Constructor, for Writable
@@ -76,12 +79,14 @@ public class ClusterStatus extends VersionedWritable {
 
   public ClusterStatus(final String hbaseVersion, final String clusterid,
       final Map<ServerName, HServerLoad> servers,
-      final Collection<ServerName> deadServers, final Map<String, RegionState> rit) {
+      final Collection<ServerName> deadServers, final Map<String, RegionState> rit,
+      final String[] masterCoprocessors) {
     this.hbaseVersion = hbaseVersion;
     this.liveServers = servers;
     this.deadServers = deadServers;
     this.intransition = rit;
     this.clusterId = clusterid;
+    this.masterCoprocessors = masterCoprocessors;
   }
 
   /**
@@ -155,7 +160,8 @@ public class ClusterStatus extends VersionedWritable {
     return (getVersion() == ((ClusterStatus)o).getVersion()) &&
       getHBaseVersion().equals(((ClusterStatus)o).getHBaseVersion()) &&
       this.liveServers.equals(((ClusterStatus)o).liveServers) &&
-      deadServers.equals(((ClusterStatus)o).deadServers);
+      deadServers.equals(((ClusterStatus)o).deadServers) &&
+      Arrays.equals(this.masterCoprocessors, ((ClusterStatus)o).masterCoprocessors);
   }
 
   /**
@@ -205,6 +211,10 @@ public class ClusterStatus extends VersionedWritable {
     return clusterId;
   }
 
+   public String[] getMasterCoprocessors() {
+     return masterCoprocessors;
+  }
+
   //
   // Writable
   //
@@ -214,12 +224,12 @@ public class ClusterStatus extends VersionedWritable {
     out.writeUTF(hbaseVersion);
     out.writeInt(getServersSize());
     for (Map.Entry<ServerName, HServerLoad> e: this.liveServers.entrySet()) {
-      out.writeUTF(e.getKey().toString());
+      Bytes.writeByteArray(out, e.getKey().getVersionedBytes());
       e.getValue().write(out);
     }
     out.writeInt(deadServers.size());
     for (ServerName server: deadServers) {
-      out.writeUTF(server.toString());
+      Bytes.writeByteArray(out, server.getVersionedBytes());
     }
     out.writeInt(this.intransition.size());
     for (Map.Entry<String, RegionState> e: this.intransition.entrySet()) {
@@ -227,6 +237,10 @@ public class ClusterStatus extends VersionedWritable {
       e.getValue().write(out);
     }
     out.writeUTF(clusterId);
+    out.writeInt(masterCoprocessors.length);
+    for(String masterCoprocessor: masterCoprocessors) {
+      out.writeUTF(masterCoprocessor);
+    }
   }
 
   public void readFields(DataInput in) throws IOException {
@@ -235,15 +249,15 @@ public class ClusterStatus extends VersionedWritable {
     int count = in.readInt();
     this.liveServers = new HashMap<ServerName, HServerLoad>(count);
     for (int i = 0; i < count; i++) {
-      String str = in.readUTF();
+      byte [] versionedBytes = Bytes.readByteArray(in);
       HServerLoad hsl = new HServerLoad();
       hsl.readFields(in);
-      this.liveServers.put(new ServerName(str), hsl);
+      this.liveServers.put(ServerName.parseVersionedServerName(versionedBytes), hsl);
     }
     count = in.readInt();
     deadServers = new ArrayList<ServerName>(count);
     for (int i = 0; i < count; i++) {
-      deadServers.add(new ServerName(in.readUTF()));
+      deadServers.add(ServerName.parseVersionedServerName(Bytes.readByteArray(in)));
     }
     count = in.readInt();
     this.intransition = new TreeMap<String, RegionState>();
@@ -254,5 +268,10 @@ public class ClusterStatus extends VersionedWritable {
       this.intransition.put(key, regionState);
     }
     this.clusterId = in.readUTF();
+    int masterCoprocessorsLength = in.readInt();
+    masterCoprocessors = new String[masterCoprocessorsLength];
+    for(int i = 0; i < masterCoprocessorsLength; i++) {
+      masterCoprocessors[i] = in.readUTF();
+    }
   }
 }

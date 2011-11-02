@@ -165,15 +165,13 @@ public class MasterFileSystem {
 
   /**
    * @return HBase root dir.
-   * @throws IOException
    */
   public Path getRootDir() {
     return this.rootdir;
   }
 
   /**
-   * Returns the unique identifier generated for this cluster
-   * @return
+   * @return The unique identifier generated for this cluster
    */
   public String getClusterId() {
     return clusterId;
@@ -206,7 +204,11 @@ public class MasterFileSystem {
     }
     List<ServerName> serverNames = new ArrayList<ServerName>();
     for (FileStatus status : logFolders) {
-      ServerName serverName = new ServerName(status.getPath().getName());
+      String sn = status.getPath().getName();
+      // Is this old or new style servername?  If old style, it will be
+      // hostname, colon, and port.  If new style, it will be formatted as
+      // ServerName.toString.
+      ServerName serverName = ServerName.parseServerName(sn);
       if (!onlineServers.contains(serverName)) {
         LOG.info("Log folder " + status.getPath() + " doesn't belong " +
           "to a known region server, splitting");
@@ -383,7 +385,7 @@ public class MasterFileSystem {
 
   private static void setInfoFamilyCachingForRoot(final boolean b) {
     for (HColumnDescriptor hcd:
-        HTableDescriptor.ROOT_TABLEDESC.families.values()) {
+        HTableDescriptor.ROOT_TABLEDESC.getColumnFamilies()) {
        if (Bytes.equals(hcd.getName(), HConstants.CATALOG_FAMILY)) {
          hcd.setBlockCacheEnabled(b);
          hcd.setInMemory(b);
@@ -398,7 +400,7 @@ public class MasterFileSystem {
 
   private static void setInfoFamilyCachingForMeta(final boolean b) {
     for (HColumnDescriptor hcd:
-        HTableDescriptor.META_TABLEDESC.families.values()) {
+        HTableDescriptor.META_TABLEDESC.getColumnFamilies()) {
       if (Bytes.equals(hcd.getName(), HConstants.CATALOG_FAMILY)) {
         hcd.setBlockCacheEnabled(b);
         hcd.setInMemory(b);
@@ -425,17 +427,6 @@ public class MasterFileSystem {
     if (splitLogManager != null) {
       this.splitLogManager.stop();
     }
-  }
-
-  /**
-   * Get table info path for a table.
-   * @param tableName
-   * @return Table info path
-   */
-  private Path getTableInfoPath(byte[] tableName) {
-    Path tablePath = new Path(this.rootdir, Bytes.toString(tableName));
-    Path tableInfoPath = new Path(tablePath, HConstants.TABLEINFO_NAME);
-    return tableInfoPath;
   }
 
   /**

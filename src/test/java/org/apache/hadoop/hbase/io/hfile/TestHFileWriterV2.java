@@ -63,12 +63,12 @@ public class TestHFileWriterV2 {
 
   @Test
   public void testHFileFormatV2() throws IOException {
-    Path hfilePath = new Path(HBaseTestingUtility.getTestDir(),
+    Path hfilePath = new Path(TEST_UTIL.getDataTestDir(),
         "testHFileFormatV2");
 
     final Compression.Algorithm COMPRESS_ALGO = Compression.Algorithm.GZ;
-    HFileWriterV2 writer = new HFileWriterV2(conf, fs, hfilePath, 4096,
-        COMPRESS_ALGO, KeyValue.KEY_COMPARATOR);
+    HFileWriterV2 writer = new HFileWriterV2(conf, new CacheConfig(conf), fs,
+        hfilePath, 4096, COMPRESS_ALGO, KeyValue.KEY_COMPARATOR);
 
     long totalKeyLength = 0;
     long totalValueLength = 0;

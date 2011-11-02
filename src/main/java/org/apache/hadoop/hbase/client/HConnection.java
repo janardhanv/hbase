@@ -21,7 +21,6 @@ package org.apache.hadoop.hbase.client;
 
 import java.io.Closeable;
 import java.io.IOException;
-import java.net.InetSocketAddress;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -192,7 +191,7 @@ public interface HConnection extends Abortable, Closeable {
    * @param regionServer - the server to connect to
    * @return proxy for HRegionServer
    * @throws IOException if a remote or network exception occurs
-   * @deprecated Use {@link #getHRegionConnection(InetSocketAddress)}
+   * @deprecated Use {@link #getHRegionConnection(String, int)}
    */
   public HRegionInterface getHRegionConnection(HServerAddress regionServer)
   throws IOException;
@@ -284,7 +283,7 @@ public interface HConnection extends Abortable, Closeable {
    * @throws IOException if there are problems talking to META. Per-item
    * exceptions are stored in the results array.
    */
-  public void processBatch(List<Row> actions, final byte[] tableName,
+  public void processBatch(List<? extends Row> actions, final byte[] tableName,
       ExecutorService pool, Object[] results)
       throws IOException, InterruptedException;
 
@@ -327,20 +326,6 @@ public interface HConnection extends Abortable, Closeable {
       ExecutorService pool,
       final Batch.Call<T,R> call,
       final Batch.Callback<R> callback) throws IOException, Throwable;
-
-  /**
-   * Process a batch of Puts.
-   *
-   * @param list The collection of actions. The list is mutated: all successful Puts
-   * are removed from the list.
-   * @param tableName Name of the hbase table
-   * @param pool Thread pool for parallel execution
-   * @throws IOException
-   * @deprecated Use HConnectionManager::processBatch instead.
-   */
-  public void processBatchOfPuts(List<Put> list,
-                                 final byte[] tableName, ExecutorService pool)
-      throws IOException;
 
   /**
    * Enable or disable region cache prefetch for the table. It will be

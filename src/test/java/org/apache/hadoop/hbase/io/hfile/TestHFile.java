@@ -49,10 +49,15 @@ import org.apache.hadoop.io.Writable;
 public class TestHFile extends HBaseTestCase {
   static final Log LOG = LogFactory.getLog(TestHFile.class);
 
-  private static String ROOT_DIR =
-    HBaseTestingUtility.getTestDir("TestHFile").toString();
+  private String ROOT_DIR;
   private final int minBlockSize = 512;
   private static String localFormatter = "%010d";
+  private static CacheConfig cacheConf = null;
+
+  public void setUp() throws Exception {
+    super.setUp();
+    ROOT_DIR = this.getUnitTestdir("TestHFile").toString();
+  }
 
   /**
    * Test empty HFile.
@@ -60,10 +65,11 @@ public class TestHFile extends HBaseTestCase {
    * @throws IOException
    */
   public void testEmptyHFile() throws IOException {
+    if (cacheConf == null) cacheConf = new CacheConfig(conf);
     Path f = new Path(ROOT_DIR, getName());
-    Writer w = HFile.getWriterFactory(conf).createWriter(this.fs, f);
+    Writer w = HFile.getWriterFactory(conf, cacheConf).createWriter(this.fs, f);
     w.close();
-    Reader r = HFile.createReader(fs, f, null, false, false);
+    Reader r = HFile.createReader(fs, f, cacheConf);
     r.loadFileInfo();
     assertNull(r.getFirstKey());
     assertNull(r.getLastKey());
@@ -121,7 +127,7 @@ public class TestHFile extends HBaseTestCase {
   }
 
   private FSDataOutputStream createFSOutput(Path name) throws IOException {
-    if (fs.exists(name)) fs.delete(name, true);
+    //if (fs.exists(name)) fs.delete(name, true);
     FSDataOutputStream fout = fs.create(name);
     return fout;
   }
@@ -130,16 +136,18 @@ public class TestHFile extends HBaseTestCase {
    * test none codecs
    */
   void basicWithSomeCodec(String codec) throws IOException {
-    Path ncTFile = new Path(ROOT_DIR, "basic.hfile");
+    if (cacheConf == null) cacheConf = new CacheConfig(conf);
+    Path ncTFile = new Path(ROOT_DIR, "basic.hfile." + codec.toString());
     FSDataOutputStream fout = createFSOutput(ncTFile);
-    Writer writer = HFile.getWriterFactory(conf).createWriter(fout,
+    Writer writer = HFile.getWriterFactory(conf, cacheConf).createWriter(fout,
         minBlockSize, Compression.getCompressionAlgorithmByName(codec), null);
     LOG.info(writer);
     writeRecords(writer);
     fout.close();
     FSDataInputStream fin = fs.open(ncTFile);
     Reader reader = HFile.createReader(ncTFile, fs.open(ncTFile),
-      fs.getFileStatus(ncTFile).getLen(), null, false, false);
+      fs.getFileStatus(ncTFile).getLen(), cacheConf);
+    System.out.println(cacheConf.toString());
     // Load up the index.
     reader.loadFileInfo();
     // Get a scanner that caches and that does not use pread.
@@ -205,9 +213,10 @@ public class TestHFile extends HBaseTestCase {
   }
 
   private void metablocks(final String compress) throws Exception {
+    if (cacheConf == null) cacheConf = new CacheConfig(conf);
     Path mFile = new Path(ROOT_DIR, "meta.hfile");
     FSDataOutputStream fout = createFSOutput(mFile);
-    Writer writer = HFile.getWriterFactory(conf).createWriter(fout,
+    Writer writer = HFile.getWriterFactory(conf, cacheConf).createWriter(fout,
         minBlockSize, Compression.getCompressionAlgorithmByName(compress),
         null);
     someTestingWithMetaBlock(writer);
@@ -215,7 +224,7 @@ public class TestHFile extends HBaseTestCase {
     fout.close();
     FSDataInputStream fin = fs.open(mFile);
     Reader reader = HFile.createReader(mFile, fs.open(mFile),
-        this.fs.getFileStatus(mFile).getLen(), null, false, false);
+        this.fs.getFileStatus(mFile).getLen(), cacheConf);
     reader.loadFileInfo();
     // No data -- this should return false.
     assertFalse(reader.getScanner(false, false).seekTo());
@@ -232,16 +241,17 @@ public class TestHFile extends HBaseTestCase {
   }
 
   public void testNullMetaBlocks() throws Exception {
+    if (cacheConf == null) cacheConf = new CacheConfig(conf);
     for (Compression.Algorithm compressAlgo : 
         HBaseTestingUtility.COMPRESSION_ALGORITHMS) {
       Path mFile = new Path(ROOT_DIR, "nometa_" + compressAlgo + ".hfile");
       FSDataOutputStream fout = createFSOutput(mFile);
-      Writer writer = HFile.getWriterFactory(conf).createWriter(fout,
+      Writer writer = HFile.getWriterFactory(conf, cacheConf).createWriter(fout,
           minBlockSize, compressAlgo, null);
       writer.append("foo".getBytes(), "value".getBytes());
       writer.close();
       fout.close();
-      Reader reader = HFile.createReader(fs, mFile, null, false, false);
+      Reader reader = HFile.createReader(fs, mFile, cacheConf);
       reader.loadFileInfo();
       assertNull(reader.getMetaBlock("non-existant", false));
     }
@@ -257,9 +267,10 @@ public class TestHFile extends HBaseTestCase {
   }
 
   public void testComparator() throws IOException {
+    if (cacheConf == null) cacheConf = new CacheConfig(conf);
     Path mFile = new Path(ROOT_DIR, "meta.tfile");
     FSDataOutputStream fout = createFSOutput(mFile);
-    Writer writer = HFile.getWriterFactory(conf).createWriter(fout,
+    Writer writer = HFile.getWriterFactory(conf, cacheConf).createWriter(fout,
       minBlockSize, (Compression.Algorithm) null, new KeyComparator() {
         @Override
         public int compare(byte[] b1, int s1, int l1, byte[] b2, int s2,

@@ -20,6 +20,7 @@
 package org.apache.hadoop.hbase.client;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
@@ -43,7 +44,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.SynchronousQueue;
 import java.util.concurrent.ThreadPoolExecutor;
-
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
@@ -67,7 +67,13 @@ import org.apache.hadoop.hbase.filter.RowFilter;
 import org.apache.hadoop.hbase.filter.SingleColumnValueFilter;
 import org.apache.hadoop.hbase.filter.WhileMatchFilter;
 import org.apache.hadoop.hbase.filter.CompareFilter.CompareOp;
+import org.apache.hadoop.hbase.io.hfile.BlockCache;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
+import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hbase.regionserver.Store;
 import org.apache.hadoop.hbase.util.Bytes;
+import org.apache.hadoop.io.DataInputBuffer;
+import org.apache.hadoop.hbase.client.metrics.ScanMetrics;
 import org.junit.After;
 import org.junit.AfterClass;
 import org.junit.Before;
@@ -121,6 +127,82 @@ public class TestFromClientSide {
   }
 
   /**
+   * Basic client side validation of HBASE-4536
+   */
+   @Test
+   public void testKeepDeletedCells() throws Exception {
+     final byte[] TABLENAME = Bytes.toBytes("testKeepDeletesCells");
+     final byte[] FAMILY = Bytes.toBytes("family");
+     final byte[] C0 = Bytes.toBytes("c0");
+
+     final byte[] T1 = Bytes.toBytes("T1");
+     final byte[] T2 = Bytes.toBytes("T2");
+     final byte[] T3 = Bytes.toBytes("T3");
+     HColumnDescriptor hcd = new HColumnDescriptor(FAMILY,
+         HColumnDescriptor.DEFAULT_MIN_VERSIONS,
+         HColumnDescriptor.DEFAULT_VERSIONS,
+         true,
+         HColumnDescriptor.DEFAULT_COMPRESSION,
+         HColumnDescriptor.DEFAULT_IN_MEMORY,
+         HColumnDescriptor.DEFAULT_BLOCKCACHE,
+         HColumnDescriptor.DEFAULT_BLOCKSIZE,
+         HColumnDescriptor.DEFAULT_TTL,
+         HColumnDescriptor.DEFAULT_BLOOMFILTER,
+         HColumnDescriptor.DEFAULT_REPLICATION_SCOPE);
+
+     HTableDescriptor desc = new HTableDescriptor(TABLENAME);
+     desc.addFamily(hcd);
+     TEST_UTIL.getHBaseAdmin().createTable(desc);
+     Configuration c = TEST_UTIL.getConfiguration();
+     HTable h = new HTable(c, TABLENAME);
+
+     long ts = System.currentTimeMillis();
+     Put p = new Put(T1, ts);
+     p.add(FAMILY, C0, T1);
+     h.put(p);
+     p = new Put(T1, ts+2);
+     p.add(FAMILY, C0, T2);
+     h.put(p);
+     p = new Put(T1, ts+4);
+     p.add(FAMILY, C0, T3);
+     h.put(p);
+
+     Delete d = new Delete(T1, ts+2, null);
+     h.delete(d);
+
+     d = new Delete(T1, ts+3, null);
+     d.deleteColumns(FAMILY, C0, ts+3);
+     h.delete(d);
+
+     Get g = new Get(T1);
+     // does *not* include the delete
+     g.setTimeRange(0, ts+3);
+     Result r = h.get(g);
+     assertArrayEquals(T2, r.getValue(FAMILY, C0));
+
+     Scan s = new Scan(T1);
+     s.setTimeRange(0, ts+3);
+     s.setMaxVersions();
+     ResultScanner scanner = h.getScanner(s);
+     KeyValue[] kvs = scanner.next().raw();
+     assertArrayEquals(T2, kvs[0].getValue());
+     assertArrayEquals(T1, kvs[1].getValue());
+     scanner.close();
+
+     s = new Scan(T1);
+     s.setRaw(true);
+     s.setMaxVersions();
+     scanner = h.getScanner(s);
+     kvs = scanner.next().raw();
+     assertTrue(kvs[0].isDeleteFamily());
+     assertArrayEquals(T3, kvs[1].getValue());
+     assertTrue(kvs[2].isDelete());
+     assertArrayEquals(T2, kvs[3].getValue());
+     assertArrayEquals(T1, kvs[4].getValue());
+     scanner.close();
+   }
+
+   /**
    * HBASE-2468 use case 1 and 2: region info de/serialization
    */
    @Test
@@ -142,7 +224,7 @@ public class TestFromClientSide {
      ResultScanner scanner = table.getScanner(s);
      while (scanner.next() != null) continue;
 
-     Path tempPath = new Path(HBaseTestingUtility.getTestDir(), "regions.dat");
+     Path tempPath = new Path(TEST_UTIL.getDataTestDir(), "regions.dat");
 
      final String tempFileName = tempPath.toString();
 
@@ -1857,15 +1939,15 @@ public class TestFromClientSide {
     result = scanner.next();
     assertTrue("Expected 1 key but received " + result.size(),
         result.size() == 1);
-    assertTrue(Bytes.equals(result.sorted()[0].getRow(), ROWS[3]));
-    assertTrue(Bytes.equals(result.sorted()[0].getValue(), VALUES[0]));
+    assertTrue(Bytes.equals(result.raw()[0].getRow(), ROWS[3]));
+    assertTrue(Bytes.equals(result.raw()[0].getValue(), VALUES[0]));
     result = scanner.next();
     assertTrue("Expected 2 keys but received " + result.size(),
         result.size() == 2);
-    assertTrue(Bytes.equals(result.sorted()[0].getRow(), ROWS[4]));
-    assertTrue(Bytes.equals(result.sorted()[1].getRow(), ROWS[4]));
-    assertTrue(Bytes.equals(result.sorted()[0].getValue(), VALUES[1]));
-    assertTrue(Bytes.equals(result.sorted()[1].getValue(), VALUES[2]));
+    assertTrue(Bytes.equals(result.raw()[0].getRow(), ROWS[4]));
+    assertTrue(Bytes.equals(result.raw()[1].getRow(), ROWS[4]));
+    assertTrue(Bytes.equals(result.raw()[0].getValue(), VALUES[1]));
+    assertTrue(Bytes.equals(result.raw()[1].getValue(), VALUES[2]));
     scanner.close();
 
     // Add test of bulk deleting.
@@ -1991,7 +2073,7 @@ public class TestFromClientSide {
     Get get = new Get(ROWS[numRows-1]);
     Result result = ht.get(get);
     assertNumKeys(result, numColsPerRow);
-    KeyValue [] keys = result.sorted();
+    KeyValue [] keys = result.raw();
     for(int i=0;i<result.size();i++) {
       assertKey(keys[i], ROWS[numRows-1], FAMILY, QUALIFIERS[i], QUALIFIERS[i]);
     }
@@ -2002,7 +2084,7 @@ public class TestFromClientSide {
     int rowCount = 0;
     while((result = scanner.next()) != null) {
       assertNumKeys(result, numColsPerRow);
-      KeyValue [] kvs = result.sorted();
+      KeyValue [] kvs = result.raw();
       for(int i=0;i<numColsPerRow;i++) {
         assertKey(kvs[i], ROWS[rowCount], FAMILY, QUALIFIERS[i], QUALIFIERS[i]);
       }
@@ -2020,7 +2102,7 @@ public class TestFromClientSide {
     get = new Get(ROWS[numRows-1]);
     result = ht.get(get);
     assertNumKeys(result, numColsPerRow);
-    keys = result.sorted();
+    keys = result.raw();
     for(int i=0;i<result.size();i++) {
       assertKey(keys[i], ROWS[numRows-1], FAMILY, QUALIFIERS[i], QUALIFIERS[i]);
     }
@@ -2031,7 +2113,7 @@ public class TestFromClientSide {
     rowCount = 0;
     while((result = scanner.next()) != null) {
       assertNumKeys(result, numColsPerRow);
-      KeyValue [] kvs = result.sorted();
+      KeyValue [] kvs = result.raw();
       for(int i=0;i<numColsPerRow;i++) {
         assertKey(kvs[i], ROWS[rowCount], FAMILY, QUALIFIERS[i], QUALIFIERS[i]);
       }
@@ -2853,7 +2935,7 @@ public class TestFromClientSide {
     assertTrue("Expected " + idxs.length + " keys but result contains "
         + result.size(), result.size() == idxs.length);
 
-    KeyValue [] keys = result.sorted();
+    KeyValue [] keys = result.raw();
 
     for(int i=0;i<keys.length;i++) {
       byte [] family = families[idxs[i][0]];
@@ -2883,7 +2965,7 @@ public class TestFromClientSide {
     int expectedResults = end - start + 1;
     assertEquals(expectedResults, result.size());
 
-    KeyValue [] keys = result.sorted();
+    KeyValue [] keys = result.raw();
 
     for (int i=0; i<keys.length; i++) {
       byte [] value = values[end-i];
@@ -2917,7 +2999,7 @@ public class TestFromClientSide {
         equals(row, result.getRow()));
     assertTrue("Expected two keys but result contains " + result.size(),
         result.size() == 2);
-    KeyValue [] kv = result.sorted();
+    KeyValue [] kv = result.raw();
     KeyValue kvA = kv[0];
     assertTrue("(A) Expected family [" + Bytes.toString(familyA) + "] " +
         "Got family [" + Bytes.toString(kvA.getFamily()) + "]",
@@ -2948,7 +3030,7 @@ public class TestFromClientSide {
         equals(row, result.getRow()));
     assertTrue("Expected a single key but result contains " + result.size(),
         result.size() == 1);
-    KeyValue kv = result.sorted()[0];
+    KeyValue kv = result.raw()[0];
     assertTrue("Expected family [" + Bytes.toString(family) + "] " +
         "Got family [" + Bytes.toString(kv.getFamily()) + "]",
         equals(family, kv.getFamily()));
@@ -2968,7 +3050,7 @@ public class TestFromClientSide {
         equals(row, result.getRow()));
     assertTrue("Expected a single key but result contains " + result.size(),
         result.size() == 1);
-    KeyValue kv = result.sorted()[0];
+    KeyValue kv = result.raw()[0];
     assertTrue("Expected family [" + Bytes.toString(family) + "] " +
         "Got family [" + Bytes.toString(kv.getFamily()) + "]",
         equals(family, kv.getFamily()));
@@ -3507,7 +3589,7 @@ public class TestFromClientSide {
     scan.addColumn(CONTENTS_FAMILY, null);
     ResultScanner scanner = table.getScanner(scan);
     for (Result r : scanner) {
-      for(KeyValue key : r.sorted()) {
+      for(KeyValue key : r.raw()) {
         System.out.println(Bytes.toString(r.getRow()) + ": " + key.toString());
       }
     }
@@ -3687,7 +3769,7 @@ public class TestFromClientSide {
       int index = 0;
       Result r = null;
       while ((r = s.next()) != null) {
-        for(KeyValue key : r.sorted()) {
+        for(KeyValue key : r.raw()) {
           times[index++] = key.getTimestamp();
         }
       }
@@ -3721,7 +3803,7 @@ public class TestFromClientSide {
       int index = 0;
       Result r = null;
       while ((r = s.next()) != null) {
-        for(KeyValue key : r.sorted()) {
+        for(KeyValue key : r.raw()) {
           times[index++] = key.getTimestamp();
         }
       }
@@ -3788,7 +3870,7 @@ public class TestFromClientSide {
     try {
       for (Result r : s) {
         put = new Put(r.getRow());
-        for (KeyValue kv : r.sorted()) {
+        for (KeyValue kv : r.raw()) {
           put.add(kv);
         }
         b.put(put);
@@ -3910,6 +3992,29 @@ public class TestFromClientSide {
     assertTrue(scan.getFamilyMap().containsKey(FAMILY));
   }
 
+  @Test
+  public void testAppend() throws Exception {
+    LOG.info("Starting testAppend");
+    final byte [] TABLENAME = Bytes.toBytes("testAppend");
+    HTable t = TEST_UTIL.createTable(TABLENAME, FAMILY);
+    byte[] v1 = Bytes.toBytes("42");
+    byte[] v2 = Bytes.toBytes("23");
+    byte [][] QUALIFIERS = new byte [][] {
+        Bytes.toBytes("a"), Bytes.toBytes("b")
+    };
+    Append a = new Append(ROW);
+    a.add(FAMILY, QUALIFIERS[0], v1);
+    a.add(FAMILY, QUALIFIERS[1], v2);
+    a.setReturnResults(false);
+    assertNullResult(t.append(a));
+
+    a = new Append(ROW);
+    a.add(FAMILY, QUALIFIERS[0], v2);
+    a.add(FAMILY, QUALIFIERS[1], v1);
+    Result r = t.append(a);
+    assertEquals(0, Bytes.compareTo(Bytes.add(v1,v2), r.getValue(FAMILY, QUALIFIERS[0])));
+    assertEquals(0, Bytes.compareTo(Bytes.add(v2,v1), r.getValue(FAMILY, QUALIFIERS[1])));
+  }
  
   @Test
   public void testIncrement() throws Exception {
@@ -4151,13 +4256,13 @@ public class TestFromClientSide {
     }
     executorService.shutdownNow();
   }
-  
-  
+
+
   @Test
   public void testCheckAndPut() throws IOException {
     final byte [] anotherrow = Bytes.toBytes("anotherrow");
     final byte [] value2 = Bytes.toBytes("abcd");
-    
+
     HTable table = TEST_UTIL.createTable(Bytes.toBytes("testCheckAndPut"),
       new byte [][] {FAMILY});
     Put put1 = new Put(ROW);
@@ -4166,7 +4271,7 @@ public class TestFromClientSide {
     // row doesn't exist, so using non-null value should be considered "not match".
     boolean ok = table.checkAndPut(ROW, FAMILY, QUALIFIER, VALUE, put1);
     assertEquals(ok, false);
-    
+
     // row doesn't exist, so using "null" to check for existence should be considered "match".
     ok = table.checkAndPut(ROW, FAMILY, QUALIFIER, null, put1);
     assertEquals(ok, true);
@@ -4174,24 +4279,168 @@ public class TestFromClientSide {
     // row now exists, so using "null" to check for existence should be considered "not match".
     ok = table.checkAndPut(ROW, FAMILY, QUALIFIER, null, put1);
     assertEquals(ok, false);
-    
+
     Put put2 = new Put(ROW);
     put2.add(FAMILY, QUALIFIER, value2);
-    
+
     // row now exists, use the matching value to check
     ok = table.checkAndPut(ROW, FAMILY, QUALIFIER, VALUE, put2);
     assertEquals(ok, true);
 
     Put put3 = new Put(anotherrow);
     put3.add(FAMILY, QUALIFIER, VALUE);
-    
-    // try to do CheckAndPut on different rows       
+
+    // try to do CheckAndPut on different rows
     try {
         ok = table.checkAndPut(ROW, FAMILY, QUALIFIER, value2, put3);
         fail("trying to check and modify different rows should have failed.");
-      } catch(Exception e) {}      
-    
-  }  
-  
-}
+    } catch(Exception e) {}
 
+  }
+
+  /**
+  * Test ScanMetrics
+  * @throws Exception
+  */
+  @Test
+  public void testScanMetrics() throws Exception {
+    byte [] TABLENAME = Bytes.toBytes("testScanMetrics");
+
+    Configuration conf = TEST_UTIL.getConfiguration();
+    TEST_UTIL.createTable(TABLENAME, FAMILY);
+
+    // Set up test table:
+    // Create table:
+    HTable ht = new HTable(conf, TABLENAME);
+
+    // Create multiple regions for this table
+    int numOfRegions = TEST_UTIL.createMultiRegions(ht, FAMILY);
+
+    Scan scan1 = new Scan();
+    for(Result result : ht.getScanner(scan1)) {
+    }
+
+    // by default, scan metrics collection is turned off
+    assertEquals(null, scan1.getAttribute(
+      Scan.SCAN_ATTRIBUTES_METRICS_DATA));
+
+    // turn on scan metrics
+    Scan scan = new Scan();
+    scan.setAttribute(Scan.SCAN_ATTRIBUTES_METRICS_ENABLE,
+      Bytes.toBytes(Boolean.TRUE));
+    for(Result result : ht.getScanner(scan)) {
+    }
+
+    byte[] serializedMetrics = scan.getAttribute(
+      Scan.SCAN_ATTRIBUTES_METRICS_DATA);
+
+    DataInputBuffer in = new DataInputBuffer();
+    in.reset(serializedMetrics, 0, serializedMetrics.length);
+    ScanMetrics scanMetrics = new ScanMetrics();
+    scanMetrics.readFields(in);
+    assertEquals(numOfRegions, scanMetrics.countOfRegions.getCurrentIntervalValue());
+  }
+
+  /**
+   * Tests that cache on write works all the way up from the client-side.
+   *
+   * Performs inserts, flushes, and compactions, verifying changes in the block
+   * cache along the way.
+   *
+   * @throws Exception
+   */
+  @Test
+  public void testCacheOnWriteEvictOnClose() throws Exception {
+    byte [] tableName = Bytes.toBytes("testCOWEOCfromClient");
+    byte [] data = Bytes.toBytes("data");
+    HTable table = TEST_UTIL.createTable(tableName, new byte [][] {FAMILY});
+    // get the block cache and region
+    String regionName = table.getRegionLocations().firstKey().getEncodedName();
+    HRegion region = TEST_UTIL.getRSForFirstRegionInTable(
+        tableName).getFromOnlineRegions(regionName);
+    Store store = region.getStores().values().iterator().next();
+    CacheConfig cacheConf = store.getCacheConfig();
+    cacheConf.setCacheDataOnWrite(true);
+    cacheConf.setEvictOnClose(true);
+    BlockCache cache = cacheConf.getBlockCache();
+
+    // establish baseline stats
+    long startBlockCount = cache.getBlockCount();
+    long startBlockHits = cache.getStats().getHitCount();
+    long startBlockMiss = cache.getStats().getMissCount();
+    // insert data
+    Put put = new Put(ROW);
+    put.add(FAMILY, QUALIFIER, data);
+    table.put(put);
+    assertTrue(Bytes.equals(table.get(new Get(ROW)).value(), data));
+    // data was in memstore so don't expect any changes
+    assertEquals(startBlockCount, cache.getBlockCount());
+    assertEquals(startBlockHits, cache.getStats().getHitCount());
+    assertEquals(startBlockMiss, cache.getStats().getMissCount());
+    // flush the data
+    System.out.println("Flushing cache");
+    region.flushcache();
+    // expect one more block in cache, no change in hits/misses
+    long expectedBlockCount = startBlockCount + 1;
+    long expectedBlockHits = startBlockHits;
+    long expectedBlockMiss = startBlockMiss;
+    assertEquals(expectedBlockCount, cache.getBlockCount());
+    assertEquals(expectedBlockHits, cache.getStats().getHitCount());
+    assertEquals(expectedBlockMiss, cache.getStats().getMissCount());
+    // read the data and expect same blocks, one new hit, no misses
+    assertTrue(Bytes.equals(table.get(new Get(ROW)).value(), data));
+    assertEquals(expectedBlockCount, cache.getBlockCount());
+    assertEquals(++expectedBlockHits, cache.getStats().getHitCount());
+    assertEquals(expectedBlockMiss, cache.getStats().getMissCount());
+    // insert a second column, read the row, no new blocks, one new hit
+    byte [] QUALIFIER2 = Bytes.add(QUALIFIER, QUALIFIER);
+    byte [] data2 = Bytes.add(data, data);
+    put = new Put(ROW);
+    put.add(FAMILY, QUALIFIER2, data2);
+    table.put(put);
+    Result r = table.get(new Get(ROW));
+    assertTrue(Bytes.equals(r.getValue(FAMILY, QUALIFIER), data));
+    assertTrue(Bytes.equals(r.getValue(FAMILY, QUALIFIER2), data2));
+    assertEquals(expectedBlockCount, cache.getBlockCount());
+    assertEquals(++expectedBlockHits, cache.getStats().getHitCount());
+    assertEquals(expectedBlockMiss, cache.getStats().getMissCount());
+    // flush, one new block
+    System.out.println("Flushing cache");
+    region.flushcache();
+    assertEquals(++expectedBlockCount, cache.getBlockCount());
+    assertEquals(expectedBlockHits, cache.getStats().getHitCount());
+    assertEquals(expectedBlockMiss, cache.getStats().getMissCount());
+    // compact, net minus on block, two hits, no misses
+    System.out.println("Compacting");
+    assertEquals(2, store.getNumberOfstorefiles());
+    store.triggerMajorCompaction();
+    region.compactStores();
+    waitForStoreFileCount(store, 1, 10000); // wait 10 seconds max
+    assertEquals(1, store.getNumberOfstorefiles());
+    assertEquals(--expectedBlockCount, cache.getBlockCount());
+    expectedBlockHits += 2;
+    assertEquals(expectedBlockMiss, cache.getStats().getMissCount());
+    assertEquals(expectedBlockHits, cache.getStats().getHitCount());
+    // read the row, same blocks, one hit no miss
+    r = table.get(new Get(ROW));
+    assertTrue(Bytes.equals(r.getValue(FAMILY, QUALIFIER), data));
+    assertTrue(Bytes.equals(r.getValue(FAMILY, QUALIFIER2), data2));
+    assertEquals(expectedBlockCount, cache.getBlockCount());
+    assertEquals(++expectedBlockHits, cache.getStats().getHitCount());
+    assertEquals(expectedBlockMiss, cache.getStats().getMissCount());
+    // no cache misses!
+    assertEquals(startBlockMiss, cache.getStats().getMissCount());
+  }
+
+  private void waitForStoreFileCount(Store store, int count, int timeout)
+  throws InterruptedException {
+    long start = System.currentTimeMillis();
+    while (start + timeout > System.currentTimeMillis() &&
+        store.getNumberOfstorefiles() != count) {
+      Thread.sleep(100);
+    }
+    System.out.println("start=" + start + ", now=" +
+        System.currentTimeMillis() + ", cur=" + store.getNumberOfstorefiles());
+    assertEquals(count, store.getNumberOfstorefiles());
+  }
+}

@@ -147,6 +147,9 @@ public class HFile {
   static volatile AtomicLong writeOps = new AtomicLong();
   static volatile AtomicLong writeTimeNano = new AtomicLong();
 
+  // for test purpose
+  public static volatile AtomicLong dataBlockReadCnt = new AtomicLong(0);
+
   public static final long getReadOps() {
     return readOps.getAndSet(0);
   }
@@ -176,6 +179,8 @@ public class HFile {
     /** @return the path to this {@link HFile} */
     Path getPath();
 
+    String getColumnFamilyName();
+
     void appendMetaBlock(String bloomFilterMetaKey, Writable metaWriter);
 
     /**
@@ -185,11 +190,17 @@ public class HFile {
     void addInlineBlockWriter(InlineBlockWriter bloomWriter);
 
     /**
-     * Store Bloom filter in the file. This does not deal with Bloom filter
+     * Store general Bloom filter in the file. This does not deal with Bloom filter
      * internals but is necessary, since Bloom filters are stored differently
      * in HFile version 1 and version 2.
      */
-    void addBloomFilter(BloomFilterWriter bfw);
+    void addGeneralBloomFilter(BloomFilterWriter bfw);
+
+    /**
+     * Store delete family Bloom filter in the file, which is only supported in
+     * HFile V2.
+     */
+    void addDeleteFamilyBloomFilter(BloomFilterWriter bfw) throws IOException;
   }
 
   /**
@@ -198,8 +209,12 @@ public class HFile {
    */
   public static abstract class WriterFactory {
     protected Configuration conf;
+    protected CacheConfig cacheConf;
 
-    WriterFactory(Configuration conf) { this.conf = conf; }
+    WriterFactory(Configuration conf, CacheConfig cacheConf) {
+      this.conf = conf;
+      this.cacheConf = cacheConf;
+    }
 
     public abstract Writer createWriter(FileSystem fs, Path path)
         throws IOException;
@@ -231,125 +246,128 @@ public class HFile {
   }
 
   /**
-   * Returns the factory to be used to create {@link HFile} writers. Should
-   * always be {@link HFileWriterV2#WRITER_FACTORY_V2} in production, but
-   * can also be {@link HFileWriterV1#WRITER_FACTORY_V1} in testing.
+   * Returns the factory to be used to create {@link HFile} writers.
    */
   public static final WriterFactory getWriterFactory(Configuration conf) {
+    return HFile.getWriterFactory(conf, new CacheConfig(conf));
+  }
+
+  /**
+   * Returns the factory to be used to create {@link HFile} writers
+   */
+  public static final WriterFactory getWriterFactory(Configuration conf,
+      CacheConfig cacheConf) {
     int version = getFormatVersion(conf);
-    LOG.debug("Using HFile format version " + version);
     switch (version) {
     case 1:
-      return new HFileWriterV1.WriterFactoryV1(conf);
+      return new HFileWriterV1.WriterFactoryV1(conf, cacheConf);
     case 2:
-      return new HFileWriterV2.WriterFactoryV2(conf);
+      return new HFileWriterV2.WriterFactoryV2(conf, cacheConf);
     default:
       throw new IllegalArgumentException("Cannot create writer for HFile " +
           "format version " + version);
     }
   }
 
-  /**
-   * Configuration key to evict all blocks of a given file from the block cache
-   * when the file is closed.
-   */
-  public static final String EVICT_BLOCKS_ON_CLOSE_KEY =
-      "hbase.rs.evictblocksonclose";
-
-  /**
-   * Configuration key to cache data blocks on write. There are separate
-   * switches for Bloom blocks and non-root index blocks.
-   */
-  public static final String CACHE_BLOCKS_ON_WRITE_KEY =
-      "hbase.rs.cacheblocksonwrite";
+  /** An abstraction used by the block index */
+  public interface CachingBlockReader {
+    HFileBlock readBlock(long offset, long onDiskBlockSize,
+        boolean cacheBlock, final boolean pread, final boolean isCompaction)
+        throws IOException;
+  }
 
   /** An interface used by clients to open and iterate an {@link HFile}. */
-  public interface Reader extends Closeable {
-
+  public interface Reader extends Closeable, CachingBlockReader {
     /**
      * Returns this reader's "name". Usually the last component of the path.
      * Needs to be constant as the file is being moved to support caching on
      * write.
      */
-     String getName();
+    String getName();
 
-     String getColumnFamilyName();
+    String getColumnFamilyName();
 
-     RawComparator<byte []> getComparator();
+    RawComparator<byte []> getComparator();
 
-     HFileScanner getScanner(boolean cacheBlocks,
+    HFileScanner getScanner(boolean cacheBlocks,
         final boolean pread, final boolean isCompaction);
 
-     ByteBuffer getMetaBlock(String metaBlockName,
+    ByteBuffer getMetaBlock(String metaBlockName,
         boolean cacheBlock) throws IOException;
 
-     HFileBlock readBlock(long offset, int onDiskBlockSize,
-         boolean cacheBlock, final boolean pread, final boolean isCompaction)
-         throws IOException;
+    Map<byte[], byte[]> loadFileInfo() throws IOException;
 
-     Map<byte[], byte[]> loadFileInfo() throws IOException;
+    byte[] getLastKey();
 
-     byte[] getLastKey();
+    byte[] midkey() throws IOException;
 
-     byte[] midkey() throws IOException;
+    long length();
 
-     long length();
+    long getEntries();
 
-     long getEntries();
+    byte[] getFirstKey();
 
-     byte[] getFirstKey();
+    long indexSize();
 
-     long indexSize();
+    byte[] getFirstRowKey();
 
-     byte[] getFirstRowKey();
+    byte[] getLastRowKey();
 
-     byte[] getLastRowKey();
+    FixedFileTrailer getTrailer();
 
-     FixedFileTrailer getTrailer();
+    HFileBlockIndex.BlockIndexReader getDataBlockIndexReader();
 
-     HFileBlockIndex.BlockIndexReader getDataBlockIndexReader();
+    HFileScanner getScanner(boolean cacheBlocks, boolean pread);
 
-     HFileScanner getScanner(boolean cacheBlocks, boolean pread);
-
-     Compression.Algorithm getCompressionAlgorithm();
+    Compression.Algorithm getCompressionAlgorithm();
 
     /**
-     * Retrieves Bloom filter metadata as appropriate for each {@link HFile}
-     * version. Knows nothing about how that metadata is structured.
+     * Retrieves general Bloom filter metadata as appropriate for each
+     * {@link HFile} version.
+     * Knows nothing about how that metadata is structured.
      */
-     DataInput getBloomFilterMetadata() throws IOException;
+    DataInput getGeneralBloomFilterMetadata() throws IOException;
+
+    /**
+     * Retrieves delete family Bloom filter metadata as appropriate for each
+     * {@link HFile}  version.
+     * Knows nothing about how that metadata is structured.
+     */
+    DataInput getDeleteBloomFilterMetadata() throws IOException;
+
+    Path getPath();
+
+    /** Close method with optional evictOnClose */
+    void close(boolean evictOnClose) throws IOException;
   }
 
   private static Reader pickReaderVersion(Path path, FSDataInputStream fsdis,
-      long size, boolean closeIStream, BlockCache blockCache,
-      boolean inMemory, boolean evictOnClose) throws IOException {
+      long size, boolean closeIStream, CacheConfig cacheConf)
+  throws IOException {
     FixedFileTrailer trailer = FixedFileTrailer.readFromStream(fsdis, size);
     switch (trailer.getVersion()) {
     case 1:
       return new HFileReaderV1(path, trailer, fsdis, size, closeIStream,
-          blockCache, inMemory, evictOnClose);
+          cacheConf);
     case 2:
       return new HFileReaderV2(path, trailer, fsdis, size, closeIStream,
-          blockCache, inMemory, evictOnClose);
+          cacheConf);
     default:
       throw new IOException("Cannot instantiate reader for HFile version " +
           trailer.getVersion());
     }
   }
 
-  public static Reader createReader(
-      FileSystem fs, Path path, BlockCache blockCache, boolean inMemory,
-      boolean evictOnClose) throws IOException {
+  public static Reader createReader(FileSystem fs, Path path,
+      CacheConfig cacheConf) throws IOException {
     return pickReaderVersion(path, fs.open(path),
-        fs.getFileStatus(path).getLen(), true, blockCache, inMemory,
-        evictOnClose);
+        fs.getFileStatus(path).getLen(), true, cacheConf);
   }
 
   public static Reader createReader(Path path, FSDataInputStream fsdis,
-      long size, BlockCache blockache, boolean inMemory, boolean evictOnClose)
+      long size, CacheConfig cacheConf)
       throws IOException {
-    return pickReaderVersion(path, fsdis, size, false, blockache, inMemory,
-        evictOnClose);
+    return pickReaderVersion(path, fsdis, size, false, cacheConf);
   }
 
   /*

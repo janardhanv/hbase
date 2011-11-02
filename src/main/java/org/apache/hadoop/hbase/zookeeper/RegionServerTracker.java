@@ -30,7 +30,6 @@ import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.Abortable;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.master.ServerManager;
-import org.apache.hadoop.hbase.zookeeper.ZKUtil.NodeAndData;
 import org.apache.zookeeper.KeeperException;
 
 /**
@@ -41,7 +40,7 @@ import org.apache.zookeeper.KeeperException;
  * listening for changes in the RS node list and watching each node.
  *
  * <p>If an RS node gets deleted, this automatically handles calling of
- * {@link ServerManager#expireServer(org.apache.hadoop.hbase.HServerInfo)}.
+ * {@link ServerManager#expireServer(ServerName)}
  */
 public class RegionServerTracker extends ZooKeeperListener {
   private static final Log LOG = LogFactory.getLog(RegionServerTracker.class);
@@ -75,7 +74,7 @@ public class RegionServerTracker extends ZooKeeperListener {
     synchronized(this.regionServers) {
       this.regionServers.clear();
       for (String n: servers) {
-        ServerName sn = new ServerName(ZKUtil.getNodeName(n));
+        ServerName sn = ServerName.parseServerName(ZKUtil.getNodeName(n));
         this.regionServers.add(sn);
       }
     }
@@ -93,7 +92,7 @@ public class RegionServerTracker extends ZooKeeperListener {
       String serverName = ZKUtil.getNodeName(path);
       LOG.info("RegionServer ephemeral node deleted, processing expiration [" +
         serverName + "]");
-      ServerName sn = new ServerName(serverName);
+      ServerName sn = ServerName.parseServerName(serverName);
       if (!serverManager.isServerOnline(sn)) {
         LOG.info(serverName.toString() + " is not online");
         return;
@@ -121,7 +120,6 @@ public class RegionServerTracker extends ZooKeeperListener {
   /**
    * Gets the online servers.
    * @return list of online servers
-   * @throws KeeperException
    */
   public List<ServerName> getOnlineServers() {
     synchronized (this.regionServers) {

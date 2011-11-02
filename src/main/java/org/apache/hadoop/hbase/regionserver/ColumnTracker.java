@@ -19,6 +19,8 @@
  */
 package org.apache.hadoop.hbase.regionserver;
 
+import java.io.IOException;
+
 import org.apache.hadoop.hbase.regionserver.ScanQueryMatcher.MatchCode;
 
 /**
@@ -45,10 +47,14 @@ public interface ColumnTracker {
    * @param offset
    * @param length
    * @param ttl The timeToLive to enforce.
+   * @param type The type of the KeyValue
    * @return The match code instance.
+   * @throws IOException in case there is an internal consistency problem
+   *      caused by a data corruption.
    */
-  public ScanQueryMatcher.MatchCode checkColumn(byte [] bytes, int offset,
-      int length, long ttl);
+  public ScanQueryMatcher.MatchCode checkColumn(byte[] bytes, int offset,
+      int length, long ttl, byte type)
+      throws IOException;
 
   /**
    * Updates internal variables in between files

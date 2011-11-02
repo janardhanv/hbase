@@ -32,16 +32,16 @@ import org.apache.hadoop.hbase.util.Bytes;
  * and its promoted data type is also a Long value. For computing aggregation
  * function, this class is used to find the datatype of the cell value. Client
  * is supposed to instantiate it and passed along as a parameter. See
- * {@link TestAggregateProtocol} methods for its sample usage.
+ * TestAggregateProtocol methods for its sample usage.
  * Its methods handle null arguments gracefully. 
  */
 public class LongColumnInterpreter implements ColumnInterpreter<Long, Long> {
 
   public Long getValue(byte[] colFamily, byte[] colQualifier, KeyValue kv)
       throws IOException {
-    if (kv == null || kv.getValue().length != Bytes.SIZEOF_LONG)
+    if (kv == null || kv.getValueLength() != Bytes.SIZEOF_LONG)
       return null;
-    return Bytes.toLong(kv.getValue());
+    return Bytes.toLong(kv.getBuffer(), kv.getValueOffset());
   }
 
    @Override

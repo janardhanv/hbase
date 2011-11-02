@@ -49,6 +49,7 @@ import org.apache.hadoop.hbase.MiniHBaseCluster;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTable;
 import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.ResultScanner;
 import org.apache.hadoop.hbase.client.Scan;
@@ -56,6 +57,7 @@ import org.apache.hadoop.hbase.regionserver.HRegion;
 import org.apache.hadoop.hbase.regionserver.HRegionServer;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.JVMClusterUtil;
 import org.apache.hadoop.hdfs.DFSClient;
 import org.apache.hadoop.hdfs.MiniDFSCluster;
 import org.apache.hadoop.hdfs.protocol.DatanodeInfo;
@@ -76,11 +78,11 @@ public class TestLogRolling  {
   private HLog log;
   private String tableName;
   private byte[] value;
-  private static FileSystem fs;
-  private static MiniDFSCluster dfsCluster;
-  private static HBaseAdmin admin;
-  private static MiniHBaseCluster cluster;
-  private final static HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
+  private FileSystem fs;
+  private MiniDFSCluster dfsCluster;
+  private HBaseAdmin admin;
+  private MiniHBaseCluster cluster;
+  private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
 
  // verbose logging on classes that are touched in these tests
  {
@@ -99,19 +101,16 @@ public class TestLogRolling  {
    * @throws Exception
    */
   public TestLogRolling()  {
-    // start one regionserver and a minidfs.
-    super();
-      this.server = null;
-      this.log = null;
-      this.tableName = null;
-      this.value = null;
+    this.server = null;
+    this.log = null;
+    this.tableName = null;
 
-      String className = this.getClass().getName();
-      StringBuilder v = new StringBuilder(className);
-      while (v.length() < 1000) {
-        v.append(className);
-      }
-      value = Bytes.toBytes(v.toString());
+    String className = this.getClass().getName();
+    StringBuilder v = new StringBuilder(className);
+    while (v.length() < 1000) {
+      v.append(className);
+    }
+    this.value = Bytes.toBytes(v.toString());
   }
 
   // Need to override this setup so we can edit the config before it gets sent
@@ -174,8 +173,7 @@ public class TestLogRolling  {
   }
 
   @After
-  public void tearDown() throws IOException  {
-    TEST_UTIL.cleanupTestDir();
+  public void tearDown() throws Exception  {
     TEST_UTIL.shutdownMiniCluster();
   }
 
@@ -251,6 +249,17 @@ public class TestLogRolling  {
     } catch (InterruptedException e) {
       // continue
     }
+  }
+
+  void validateData(HTable table, int rownum) throws IOException {
+    String row = "row" + String.format("%1$04d", rownum);
+    Get get = new Get(Bytes.toBytes(row));
+    get.addFamily(HConstants.CATALOG_FAMILY);
+    Result result = table.get(get);
+    assertTrue(result.size() == 1);
+    assertTrue(Bytes.equals(value,
+                result.getValue(HConstants.CATALOG_FAMILY, null)));
+    LOG.info("Validated row " + row);
   }
 
   void batchWriteAndWait(HTable table, int start, boolean expect, int timeout)
@@ -462,26 +471,27 @@ public class TestLogRolling  {
 
     // roll all datanodes in the pipeline
     dfsCluster.restartDataNodes();
-    Thread.sleep(10000);
+    Thread.sleep(1000);
     dfsCluster.waitActive();
     LOG.info("Data Nodes restarted");
+    validateData(table, 1002);
 
-    //this.log.sync();
     // this write should succeed, but trigger a log roll
     writeData(table, 1003);
     long newFilenum = log.getFilenum();
 
     assertTrue("Missing datanode should've triggered a log roll",
         newFilenum > oldFilenum && newFilenum > curTime);
+    validateData(table, 1003);
 
-    //this.log.sync();
     writeData(table, 1004);
 
     // roll all datanode again
     dfsCluster.restartDataNodes();
-    Thread.sleep(10000);
+    Thread.sleep(1000);
     dfsCluster.waitActive();
     LOG.info("Data Nodes restarted");
+    validateData(table, 1004);
 
     // this write should succeed, but trigger a log roll
     writeData(table, 1005);
@@ -535,6 +545,12 @@ public class TestLogRolling  {
       }
     } finally {
       scanner.close();
+    }
+
+    // verify that no region servers aborted
+    for (JVMClusterUtil.RegionServerThread rsThread:
+        TEST_UTIL.getHBaseCluster().getRegionServerThreads()) {
+      assertFalse(rsThread.getRegionServer().isAborted());
     }
   }
 }

@@ -25,10 +25,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.Set;
 
 import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
@@ -41,31 +41,29 @@ import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerLoad;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MasterNotRunningException;
-import org.apache.hadoop.hbase.NotAllMetaRegionsOnlineException;
 import org.apache.hadoop.hbase.Server;
 import org.apache.hadoop.hbase.ServerName;
 import org.apache.hadoop.hbase.TableDescriptors;
-import org.apache.hadoop.hbase.TableExistsException;
 import org.apache.hadoop.hbase.TableNotDisabledException;
 import org.apache.hadoop.hbase.TableNotFoundException;
 import org.apache.hadoop.hbase.UnknownRegionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
-import org.apache.hadoop.hbase.catalog.MetaEditor;
 import org.apache.hadoop.hbase.catalog.MetaReader;
-import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.client.HConnectionManager;
 import org.apache.hadoop.hbase.client.MetaScanner;
-import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
+import org.apache.hadoop.hbase.client.Result;
 import org.apache.hadoop.hbase.coprocessor.CoprocessorHost;
 import org.apache.hadoop.hbase.executor.ExecutorService;
 import org.apache.hadoop.hbase.executor.ExecutorService.ExecutorType;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.ipc.HBaseRPC;
 import org.apache.hadoop.hbase.ipc.HBaseServer;
 import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HMasterRegionInterface;
 import org.apache.hadoop.hbase.ipc.RequestContext;
 import org.apache.hadoop.hbase.ipc.RpcServer;
-import org.apache.hadoop.hbase.master.RegionPlan;
+import org.apache.hadoop.hbase.master.handler.CreateTableHandler;
 import org.apache.hadoop.hbase.master.handler.DeleteTableHandler;
 import org.apache.hadoop.hbase.master.handler.DisableTableHandler;
 import org.apache.hadoop.hbase.master.handler.EnableTableHandler;
@@ -73,18 +71,16 @@ import org.apache.hadoop.hbase.master.handler.ModifyTableHandler;
 import org.apache.hadoop.hbase.master.handler.TableAddFamilyHandler;
 import org.apache.hadoop.hbase.master.handler.TableDeleteFamilyHandler;
 import org.apache.hadoop.hbase.master.handler.TableModifyFamilyHandler;
-import org.apache.hadoop.hbase.master.handler.CreateTableHandler;
 import org.apache.hadoop.hbase.master.metrics.MasterMetrics;
+import org.apache.hadoop.hbase.master.RegionPlan;
 import org.apache.hadoop.hbase.monitoring.MemoryBoundedLogMessageBuffer;
 import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.monitoring.TaskMonitor;
-import org.apache.hadoop.hbase.regionserver.HRegion;
-import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.replication.regionserver.Replication;
 import org.apache.hadoop.hbase.security.User;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.FSTableDescriptors;
-import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.HasThread;
 import org.apache.hadoop.hbase.util.InfoServer;
 import org.apache.hadoop.hbase.util.Pair;
 import org.apache.hadoop.hbase.util.Sleeper;
@@ -117,7 +113,7 @@ import org.apache.zookeeper.Watcher;
  * @see HMasterRegionInterface
  * @see Watcher
  */
-public class HMaster extends Thread
+public class HMaster extends HasThread
 implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   private static final Log LOG = LogFactory.getLog(HMaster.class.getName());
 
@@ -183,7 +179,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   // If 'true', the balancer is 'on'.  If 'false', the balancer will not run.
   private volatile boolean balanceSwitch = true;
 
-  private Thread catalogJanitorChore;
+  private CatalogJanitor catalogJanitorChore;
   private LogCleaner logCleaner;
 
   private MasterCoprocessorHost cpHost;
@@ -205,8 +201,11 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
    */
   public HMaster(final Configuration conf)
   throws IOException, KeeperException, InterruptedException {
-    this.conf = conf;
-
+    this.conf = new Configuration(conf);
+    // Disable the block cache on the master
+    this.conf.setFloat(CacheConfig.HFILE_BLOCK_CACHE_SIZE_KEY, 0.0f);
+    // Set how many times to retry talking to another server over HConnection.
+    HConnectionManager.setServerSideHConnectionRetries(this.conf, LOG);
     // Server to handle client requests.
     String hostname = DNS.getDefaultHost(
       conf.get("hbase.master.dns.interface", "default"),
@@ -284,7 +283,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
    * Main processing loop for the HMaster.
    * <ol>
    * <li>Block until becoming active master
-   * <li>Finish initialization via {@link #finishInitialization()}
+   * <li>Finish initialization via finishInitialization(MonitoredTask)
    * <li>Enter loop until we are stopped
    * <li>Stop services and perform cleanup once stopped
    * </ol>
@@ -354,7 +353,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   }
 
   /**
-   * Initilize all ZK based system trackers.
+   * Initialize all ZK based system trackers.
    * @throws IOException
    * @throws InterruptedException
    */
@@ -472,7 +471,9 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     // Update meta with new HRI if required. i.e migrate all HRI with HTD to
     // HRI with out HTD in meta and update the status in ROOT. This must happen
     // before we assign all user regions or else the assignment will fail.
-    updateMetaWithNewHRI();
+    // TODO: Remove this when we do 0.94.
+    org.apache.hadoop.hbase.catalog.MetaMigrationRemovingHTD.
+      updateMetaWithNewHRI(this);
 
     // Fixup assignment manager status
     status.setStatus("Starting assignment manager");
@@ -485,8 +486,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     // been assigned.
     status.setStatus("Starting balancer and catalog janitor");
     this.balancerChore = getAndStartBalancerChore(this);
-    this.catalogJanitorChore =
-      Threads.setDaemonThreadRunning(new CatalogJanitor(this, this));
+    this.catalogJanitorChore = new CatalogJanitor(this, this);
+    Threads.setDaemonThreadRunning(catalogJanitorChore.getThread());
 
     status.markComplete("Initialization successful");
     LOG.info("Master has completed initialization");
@@ -500,45 +501,6 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
         LOG.error("Coprocessor postStartMaster() hook failed", ioe);
       }
     }
-  }
-
-  public boolean isMetaHRIUpdated()
-      throws IOException {
-    boolean metaUpdated = false;
-    Get get = new Get(HRegionInfo.FIRST_META_REGIONINFO.getRegionName());
-    get.addColumn(HConstants.CATALOG_FAMILY,
-        HConstants.META_MIGRATION_QUALIFIER);
-    Result r =
-        catalogTracker.waitForRootServerConnectionDefault().get(
-        HRegionInfo.ROOT_REGIONINFO.getRegionName(), get);
-    if (r != null && r.getBytes() != null)
-    {
-      byte[] metaMigrated = r.getValue(HConstants.CATALOG_FAMILY,
-          HConstants.META_MIGRATION_QUALIFIER);
-      String migrated = Bytes.toString(metaMigrated);
-      metaUpdated = new Boolean(migrated).booleanValue();
-    } else {
-      LOG.info("metaUpdated = NULL.");
-    }
-    LOG.info("Meta updated status = " + metaUpdated);
-    return metaUpdated;
-  }
-
-
-  boolean updateMetaWithNewHRI() throws IOException {
-    if (!isMetaHRIUpdated()) {
-      LOG.info("Meta has HRI with HTDs. Updating meta now.");
-      try {
-        MetaEditor.migrateRootAndMeta(this);
-        LOG.info("ROOT and Meta updated with new HRI.");
-        return true;
-      } catch (IOException e) {
-        throw new RuntimeException("Update ROOT/Meta with new HRI failed." +
-            "Master startup aborted.");
-      }
-    }
-    LOG.info("ROOT/Meta already up-to date with new HRI.");
-    return true;
   }
 
   /**
@@ -561,6 +523,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     if (!catalogTracker.verifyRootRegionLocation(timeout)) {
       this.assignmentManager.assignRoot();
       this.catalogTracker.waitForRoot();
+      //This guarantees that the transition has completed
+      this.assignmentManager.waitForAssignment(HRegionInfo.ROOT_REGIONINFO);
       assigned++;
     } else {
       // Region already assigned.  We didnt' assign it.  Add to in-memory state.
@@ -671,7 +635,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       new LogCleaner(conf.getInt("hbase.master.cleaner.interval", 60 * 1000),
          this, conf, getMasterFileSystem().getFileSystem(),
          getMasterFileSystem().getOldLogDir());
-         Threads.setDaemonThreadRunning(logCleaner, n + ".oldLogCleaner");
+         Threads.setDaemonThreadRunning(logCleaner.getThread(), n + ".oldLogCleaner");
 
    // Put up info server.
    int port = this.conf.getInt("hbase.master.info.port", 60010);
@@ -721,7 +685,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
         master.balance();
       }
     };
-    return Threads.setDaemonThreadRunning(chore);
+    return Threads.setDaemonThreadRunning(chore.getThread());
   }
 
   private void stopChores() {
@@ -765,7 +729,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   @Override
   public void regionServerReport(final byte [] sn, final HServerLoad hsl)
   throws IOException {
-    this.serverManager.regionServerReport(new ServerName(sn), hsl);
+    this.serverManager.regionServerReport(ServerName.parseVersionedServerName(sn), hsl);
     if (hsl != null && this.metrics != null) {
       // Up our metrics.
       this.metrics.incrementRequests(hsl.getTotalNumberOfRequests());
@@ -774,9 +738,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
 
   @Override
   public void reportRSFatalError(byte [] sn, String errorText) {
-    ServerName serverName = new ServerName(sn);
-    String msg = "Region server " + serverName + " reported a fatal error:\n"
-        + errorText;
+    String msg = "Region server " + Bytes.toString(sn) +
+      " reported a fatal error:\n" + errorText;
     LOG.error(msg);
     rsFatals.add(msg);
   }
@@ -924,7 +887,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
   }
 
   /**
-   * Switch for the background {@link CatalogJanitor} thread.
+   * Switch for the background CatalogJanitor thread.
    * Used for testing.  The thread will continue to run.  It will just be a noop
    * if disabled.
    * @param b If false, the catalog janitor won't do anything.
@@ -1026,6 +989,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
            Bytes.equals(tableName, HConstants.META_TABLE_NAME);
   }
 
+  @Override
   public void deleteTable(final byte [] tableName) throws IOException {
     if (cpHost != null) {
       cpHost.preDeleteTable(tableName);
@@ -1037,16 +1001,13 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
     }
   }
 
-  /**
-   * Get the number of regions of the table that have been updated by the alter.
-   *
-   * @return Pair indicating the number of regions updated Pair.getFirst is the
-   *         regions that are yet to be updated Pair.getSecond is the total number
-   *         of regions of the table
-   */
   public Pair<Integer, Integer> getAlterStatus(byte[] tableName)
   throws IOException {
-    return this.assignmentManager.getReopenStatus(tableName);
+    try {
+      return this.assignmentManager.getReopenStatus(tableName);
+    } catch (InterruptedException e) {
+      throw new IOException("Interrupted", e);
+    }
   }
 
   public void addColumn(byte [] tableName, HColumnDescriptor column)
@@ -1131,7 +1092,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
           if (data == null || data.size() <= 0) {
             return true;
           }
-          Pair<HRegionInfo, ServerName> pair = MetaReader.metaRowToRegionPair(data);
+          Pair<HRegionInfo, ServerName> pair = MetaReader.parseCatalogResult(data);
           if (pair == null) {
             return false;
           }
@@ -1191,7 +1152,8 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       this.fileSystemManager.getClusterId(),
       this.serverManager.getOnlineServers(),
       this.serverManager.getDeadServers(),
-      this.assignmentManager.getRegionsInTransition());
+      this.assignmentManager.getRegionsInTransition(),
+      this.getCoprocessors());
   }
 
   public String getClusterId() {
@@ -1207,6 +1169,15 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
    */
   public static String getLoadedCoprocessors() {
     return CoprocessorHost.getLoadedCoprocessors().toString();
+  }
+
+  /**
+   * @return array of coprocessor SimpleNames.
+   */
+  public String[] getCoprocessors() {
+    Set<String> masterCoprocessors =
+        getCoprocessorHost().getCoprocessors();
+    return masterCoprocessors.toArray(new String[0]);
   }
 
   @Override
@@ -1255,7 +1226,7 @@ implements HMasterInterface, HMasterRegionInterface, MasterServices, Server {
       // process RIT if any
       // TODO: Why does this not call AssignmentManager.joinCluster?  Otherwise
       // we are not processing dead servers if any.
-      this.assignmentManager.processRegionsInTransition();
+      this.assignmentManager.processDeadServersAndRegionsInTransition();
       return true;
     } finally {
       status.cleanup();

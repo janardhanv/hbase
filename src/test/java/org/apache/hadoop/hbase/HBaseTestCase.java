@@ -54,8 +54,10 @@ import org.apache.hadoop.hdfs.MiniDFSCluster;
 public abstract class HBaseTestCase extends TestCase {
   private static final Log LOG = LogFactory.getLog(HBaseTestCase.class);
 
-  /** configuration parameter name for test directory */
-  public static final String TEST_DIRECTORY_KEY = "test.build.data";
+  /** configuration parameter name for test directory
+   * @deprecated see HBaseTestingUtility#TEST_DIRECTORY_KEY
+   **/
+  private static final String TEST_DIRECTORY_KEY = "test.build.data";
 
 /*
   protected final static byte [] fam1 = Bytes.toBytes("colfamily1");
@@ -153,20 +155,27 @@ public abstract class HBaseTestCase extends TestCase {
     super.tearDown();
   }
 
-  protected Path getUnitTestdir(String testName) {
-    return new Path(
-        conf.get(TEST_DIRECTORY_KEY, "target/test/data"), testName);
-  }
+  /**
+   * @see HBaseTestingUtility#getBaseTestDir
+   * @param testName
+   * @return directory to use for this test
+   */
+    protected Path getUnitTestdir(String testName) {
+      return new Path(
+          System.getProperty(
+            HBaseTestingUtility.BASE_TEST_DIRECTORY_KEY,
+            HBaseTestingUtility.DEFAULT_BASE_TEST_DIRECTORY
+            ),
+        testName
+      );
+    }
 
   protected HRegion createNewHRegion(HTableDescriptor desc, byte [] startKey,
       byte [] endKey)
   throws IOException {
     FileSystem filesystem = FileSystem.get(conf);
-    Path rootdir = filesystem.makeQualified(
-        new Path(conf.get(HConstants.HBASE_DIR)));
-    filesystem.mkdirs(rootdir);
     HRegionInfo hri = new HRegionInfo(desc.getName(), startKey, endKey);
-    return HRegion.createHRegion(hri, rootdir, conf, desc);
+    return HRegion.createHRegion(hri, testDir, conf, desc);
   }
 
   protected HRegion openClosedRegion(final HRegion closedRegion)
@@ -198,7 +207,7 @@ public abstract class HBaseTestCase extends TestCase {
   protected HTableDescriptor createTableDescriptor(final String name,
       final int versions) {
     return createTableDescriptor(name, HColumnDescriptor.DEFAULT_MIN_VERSIONS,
-        versions, HConstants.FOREVER);
+        versions, HConstants.FOREVER, HColumnDescriptor.DEFAULT_KEEP_DELETED);
   }
 
   /**
@@ -209,21 +218,21 @@ public abstract class HBaseTestCase extends TestCase {
    * @return Column descriptor.
    */
   protected HTableDescriptor createTableDescriptor(final String name,
-      final int minVersions, final int versions, final int ttl) {
+      final int minVersions, final int versions, final int ttl, boolean keepDeleted) {
     HTableDescriptor htd = new HTableDescriptor(name);
     htd.addFamily(new HColumnDescriptor(fam1, minVersions, versions,
-      HColumnDescriptor.DEFAULT_COMPRESSION, false, false,
-      HColumnDescriptor.DEFAULT_BLOCKSIZE, ttl,
-      HColumnDescriptor.DEFAULT_BLOOMFILTER,
-      HConstants.REPLICATION_SCOPE_LOCAL));
+        keepDeleted, HColumnDescriptor.DEFAULT_COMPRESSION, false, false,
+        HColumnDescriptor.DEFAULT_BLOCKSIZE, ttl,
+        HColumnDescriptor.DEFAULT_BLOOMFILTER,
+        HConstants.REPLICATION_SCOPE_LOCAL));
     htd.addFamily(new HColumnDescriptor(fam2, minVersions, versions,
-        HColumnDescriptor.DEFAULT_COMPRESSION, false, false,
+        keepDeleted, HColumnDescriptor.DEFAULT_COMPRESSION, false, false,
         HColumnDescriptor.DEFAULT_BLOCKSIZE, ttl,
         HColumnDescriptor.DEFAULT_BLOOMFILTER,
         HConstants.REPLICATION_SCOPE_LOCAL));
     htd.addFamily(new HColumnDescriptor(fam3, minVersions, versions,
-        HColumnDescriptor.DEFAULT_COMPRESSION, false, false,
-        HColumnDescriptor.DEFAULT_BLOCKSIZE,  ttl,
+        keepDeleted, HColumnDescriptor.DEFAULT_COMPRESSION, false, false,
+        HColumnDescriptor.DEFAULT_BLOCKSIZE, ttl,
         HColumnDescriptor.DEFAULT_BLOOMFILTER,
         HConstants.REPLICATION_SCOPE_LOCAL));
     return htd;

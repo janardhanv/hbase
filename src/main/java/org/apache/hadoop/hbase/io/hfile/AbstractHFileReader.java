@@ -77,24 +77,12 @@ public abstract class AbstractHFileReader implements HFile.Reader {
   /** Size of this file. */
   protected final long fileSize;
 
-  /** Block cache to use. */
-  protected final BlockCache blockCache;
+  /** Block cache configuration. */
+  protected final CacheConfig cacheConf;
 
   protected AtomicLong cacheHits = new AtomicLong();
   protected AtomicLong blockLoads = new AtomicLong();
   protected AtomicLong metaLoads = new AtomicLong();
-
-  /**
-   * Whether file is from in-memory store (comes from column family
-   * configuration).
-   */
-  protected boolean inMemory = false;
-
-  /**
-   * Whether blocks of file should be evicted from the block cache when the
-   * file is being closed
-   */
-  protected final boolean evictOnClose;
 
   /** Path of file */
   protected final Path path;
@@ -107,22 +95,46 @@ public abstract class AbstractHFileReader implements HFile.Reader {
   /** Prefix of the form cf.<column_family_name> for statistics counters. */
   private final String cfStatsPrefix;
 
+  // various metrics that we want to track on a per-cf basis
+  public String fsReadTimeNanoMetric = "";
+  public String compactionReadTimeNanoMetric = "";
+
+  public String fsBlockReadCntMetric = "";
+  public String compactionBlockReadCntMetric = "";
+
+  public String fsBlockReadCacheHitCntMetric = "";
+  public String compactionBlockReadCacheHitCntMetric = "";
+
+  public String fsMetaBlockReadCntMetric = "";
+  public String fsMetaBlockReadCacheHitCntMetric = "";
+
   protected AbstractHFileReader(Path path, FixedFileTrailer trailer,
       final FSDataInputStream fsdis, final long fileSize,
       final boolean closeIStream,
-      final BlockCache blockCache, final boolean inMemory,
-      final boolean evictOnClose) {
+      final CacheConfig cacheConf) {
     this.trailer = trailer;
     this.compressAlgo = trailer.getCompressionCodec();
-    this.blockCache = blockCache;
+    this.cacheConf = cacheConf;
     this.fileSize = fileSize;
     this.istream = fsdis;
     this.closeIStream = closeIStream;
-    this.inMemory = inMemory;
-    this.evictOnClose = evictOnClose;
     this.path = path;
     this.name = path.getName();
     cfStatsPrefix = "cf." + parseCfNameFromPath(path.toString());
+
+    fsReadTimeNanoMetric = cfStatsPrefix + ".fsReadNano";
+    compactionReadTimeNanoMetric = cfStatsPrefix + ".compactionReadNano";
+
+    fsBlockReadCntMetric = cfStatsPrefix + ".fsBlockReadCnt";
+    fsBlockReadCacheHitCntMetric = cfStatsPrefix + ".fsBlockReadCacheHitCnt";
+
+    compactionBlockReadCntMetric = cfStatsPrefix + ".compactionBlockReadCnt";
+    compactionBlockReadCacheHitCntMetric = cfStatsPrefix
+        + ".compactionBlockReadCacheHitCnt";
+
+    fsMetaBlockReadCntMetric = cfStatsPrefix + ".fsMetaBlockReadCnt";
+    fsMetaBlockReadCacheHitCntMetric = cfStatsPrefix
+        + ".fsMetaBlockReadCacheHitCnt";
   }
 
   @SuppressWarnings("serial")
@@ -167,7 +179,7 @@ public abstract class AbstractHFileReader implements HFile.Reader {
     return "reader=" + path.toString() +
         (!isFileInfoLoaded()? "":
           ", compression=" + compressAlgo.getName() +
-          ", inMemory=" + inMemory +
+          ", cacheConf=" + cacheConf +
           ", firstKey=" + toStringFirstKey() +
           ", lastKey=" + toStringLastKey()) +
           ", avgKeyLen=" + avgKeyLen +
@@ -213,7 +225,7 @@ public abstract class AbstractHFileReader implements HFile.Reader {
   }
 
   /**
-   * TODO left from {@HFile} version 1: move this to StoreFile after Ryan's
+   * TODO left from {@link HFile} version 1: move this to StoreFile after Ryan's
    * patch goes in to eliminate {@link KeyValue} here.
    *
    * @return the first row key, or null if the file is empty.
@@ -227,7 +239,7 @@ public abstract class AbstractHFileReader implements HFile.Reader {
   }
 
   /**
-   * TODO left from {@HFile} version 1: move this to StoreFile after
+   * TODO left from {@link HFile} version 1: move this to StoreFile after
    * Ryan's patch goes in to eliminate {@link KeyValue} here.
    *
    * @return the last row key, or null if the file is empty.
@@ -349,6 +361,10 @@ public abstract class AbstractHFileReader implements HFile.Reader {
   /** For testing */
   HFileBlock.FSReader getUncachedBlockReader() {
     return fsBlockReader;
+  }
+
+  public Path getPath() {
+    return path;
   }
 
 }

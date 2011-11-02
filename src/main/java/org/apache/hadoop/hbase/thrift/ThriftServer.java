@@ -47,7 +47,6 @@ import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.ServerName;
@@ -198,12 +197,12 @@ public class ThriftServer {
      * Constructs an HBaseHandler object.
      * @throws IOException
      */
-    HBaseHandler()
+    protected HBaseHandler()
     throws IOException {
       this(HBaseConfiguration.create());
     }
 
-    HBaseHandler(final Configuration c)
+    protected HBaseHandler(final Configuration c)
     throws IOException {
       this.conf = c;
       admin = new HBaseAdmin(conf);
@@ -277,17 +276,19 @@ public class ThriftServer {
     public List<TRegionInfo> getTableRegions(ByteBuffer tableName)
     throws IOError {
       try{
-        List<HRegionInfo> HRegions = this.admin.getTableRegions(tableName.array());
+        List<HRegionInfo> hris = this.admin.getTableRegions(tableName.array());
         List<TRegionInfo> regions = new ArrayList<TRegionInfo>();
 
-        for (HRegionInfo regionInfo : HRegions){
-          TRegionInfo region = new TRegionInfo();
-          region.startKey = ByteBuffer.wrap(regionInfo.getStartKey());
-          region.endKey = ByteBuffer.wrap(regionInfo.getEndKey());
-          region.id = regionInfo.getRegionId();
-          region.name = ByteBuffer.wrap(regionInfo.getRegionName());
-          region.version = regionInfo.getVersion();
-          regions.add(region);
+        if (hris != null) {
+          for (HRegionInfo regionInfo : hris){
+            TRegionInfo region = new TRegionInfo();
+            region.startKey = ByteBuffer.wrap(regionInfo.getStartKey());
+            region.endKey = ByteBuffer.wrap(regionInfo.getEndKey());
+            region.id = regionInfo.getRegionId();
+            region.name = ByteBuffer.wrap(regionInfo.getRegionName());
+            region.version = regionInfo.getVersion();
+            regions.add(region);
+          }
         }
         return regions;
       } catch (IOException e){
@@ -319,7 +320,7 @@ public class ThriftServer {
           get.addColumn(family, qualifier);
         }
         Result result = table.get(get);
-        return ThriftUtilities.cellFromHBase(result.sorted());
+        return ThriftUtilities.cellFromHBase(result.raw());
       } catch (IOException e) {
         throw new IOError(e.getMessage());
       }
@@ -347,7 +348,7 @@ public class ThriftServer {
         get.addColumn(family, qualifier);
         get.setMaxVersions(numVersions);
         Result result = table.get(get);
-        return ThriftUtilities.cellFromHBase(result.sorted());
+        return ThriftUtilities.cellFromHBase(result.raw());
       } catch (IOException e) {
         throw new IOError(e.getMessage());
       }
@@ -379,7 +380,7 @@ public class ThriftServer {
         get.setTimeRange(Long.MIN_VALUE, timestamp);
         get.setMaxVersions(numVersions);
         Result result = table.get(get);
-        return ThriftUtilities.cellFromHBase(result.sorted());
+        return ThriftUtilities.cellFromHBase(result.raw());
       } catch (IOException e) {
         throw new IOError(e.getMessage());
       }
@@ -598,9 +599,13 @@ public class ThriftServer {
             }
           } else {
             if(famAndQf.length == 1) {
-              put.add(famAndQf[0], new byte[0], getBytes(m.value));
+              put.add(famAndQf[0], HConstants.EMPTY_BYTE_ARRAY,
+                  m.value != null ? m.value.array()
+                      : HConstants.EMPTY_BYTE_ARRAY);
             } else {
-              put.add(famAndQf[0], famAndQf[1], getBytes(m.value));
+              put.add(famAndQf[0], famAndQf[1],
+                  m.value != null ? m.value.array()
+                      : HConstants.EMPTY_BYTE_ARRAY);
             }
           }
         }
@@ -643,9 +648,13 @@ public class ThriftServer {
             }
           } else {
             if(famAndQf.length == 1) {
-              put.add(famAndQf[0], new byte[0], getBytes(m.value));
+              put.add(famAndQf[0], HConstants.EMPTY_BYTE_ARRAY,
+                  m.value != null ? m.value.array()
+                      : HConstants.EMPTY_BYTE_ARRAY);
             } else {
-              put.add(famAndQf[0], famAndQf[1], getBytes(m.value));
+              put.add(famAndQf[0], famAndQf[1],
+                  m.value != null ? m.value.array()
+                      : HConstants.EMPTY_BYTE_ARRAY);
             }
           }
         }
@@ -909,7 +918,7 @@ public class ThriftServer {
       try {
         HTable table = getTable(getBytes(tableName));
         Result result = table.getRowOrBefore(getBytes(row), getBytes(family));
-        return ThriftUtilities.cellFromHBase(result.sorted());
+        return ThriftUtilities.cellFromHBase(result.raw());
       } catch (IOException e) {
         throw new IOError(e.getMessage());
       }
@@ -947,7 +956,7 @@ public class ThriftServer {
         value = startRowResult.getValue(HConstants.CATALOG_FAMILY,
                                         HConstants.SERVER_QUALIFIER);
         if (value != null && value.length > 0) {
-          ServerName sn = new ServerName(value);
+          ServerName sn = new ServerName(Bytes.toString(value), -1/*Any value works here for startcode*/);
           region.setServerName(Bytes.toBytes(sn.getHostname()));
           region.port = sn.getPort();
         }

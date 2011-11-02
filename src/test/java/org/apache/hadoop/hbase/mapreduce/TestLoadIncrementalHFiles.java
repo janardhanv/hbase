@@ -19,10 +19,11 @@
  */
 package org.apache.hadoop.hbase.mapreduce;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
-import java.util.Arrays;
 import java.util.TreeMap;
 
 import org.apache.hadoop.conf.Configuration;
@@ -34,14 +35,13 @@ import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.HBaseAdmin;
 import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.Compression;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileScanner;
 import org.apache.hadoop.hbase.regionserver.StoreFile.BloomType;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.junit.Test;
-
-import static org.junit.Assert.*;
+import org.junit.*;
 
 /**
  * Test cases for the "load" half of the HFileOutputFormat bulk load
@@ -49,8 +49,6 @@ import static org.junit.Assert.*;
  * tests in TestHFileOutputFormat
  */
 public class TestLoadIncrementalHFiles {
-
-  private static final byte[] TABLE = Bytes.toBytes("mytable");
   private static final byte[] QUALIFIER = Bytes.toBytes("myqual");
   private static final byte[] FAMILY = Bytes.toBytes("myfam");
 
@@ -63,7 +61,17 @@ public class TestLoadIncrementalHFiles {
   public static String COMPRESSION =
     Compression.Algorithm.NONE.getName();
 
-  private HBaseTestingUtility util = new HBaseTestingUtility();
+  private static HBaseTestingUtility util = new HBaseTestingUtility();
+
+  @BeforeClass
+  public static void setUpBeforeClass() throws Exception {
+    util.startMiniCluster();
+  }
+
+  @AfterClass
+  public static void tearDownAfterClass() throws Exception {
+    util.shutdownMiniCluster();
+  }
 
   /**
    * Test case that creates some regions and loads
@@ -117,7 +125,7 @@ public class TestLoadIncrementalHFiles {
 
   private void runTest(String testName, BloomType bloomType, 
           byte[][][] hfileRanges) throws Exception {
-    Path dir = HBaseTestingUtility.getTestDir(testName);
+    Path dir = util.getDataTestDir(testName);
     FileSystem fs = util.getTestFileSystem();
     dir = dir.makeQualified(fs);
     Path familyDir = new Path(dir, Bytes.toString(FAMILY));
@@ -131,31 +139,27 @@ public class TestLoadIncrementalHFiles {
     }
     int expectedRows = hfileIdx * 1000;
 
+    final byte[] TABLE = Bytes.toBytes("mytable_"+testName);
 
-    util.startMiniCluster();
-    try {
-      HBaseAdmin admin = new HBaseAdmin(util.getConfiguration());
-      HTableDescriptor htd = new HTableDescriptor(TABLE);
-      HColumnDescriptor familyDesc = new HColumnDescriptor(FAMILY);
-      familyDesc.setBloomFilterType(bloomType);
-      htd.addFamily(familyDesc);
-      admin.createTable(htd, SPLIT_KEYS);
+    HBaseAdmin admin = new HBaseAdmin(util.getConfiguration());
+    HTableDescriptor htd = new HTableDescriptor(TABLE);
+    HColumnDescriptor familyDesc = new HColumnDescriptor(FAMILY);
+    familyDesc.setBloomFilterType(bloomType);
+    htd.addFamily(familyDesc);
+    admin.createTable(htd, SPLIT_KEYS);
 
-      HTable table = new HTable(util.getConfiguration(), TABLE);
-      util.waitTableAvailable(TABLE, 30000);
-      LoadIncrementalHFiles loader = new LoadIncrementalHFiles(
-          util.getConfiguration());
-      loader.doBulkLoad(dir, table);
+    HTable table = new HTable(util.getConfiguration(), TABLE);
+    util.waitTableAvailable(TABLE, 30000);
+    LoadIncrementalHFiles loader = new LoadIncrementalHFiles(
+      util.getConfiguration());
+    loader.doBulkLoad(dir, table);
 
-      assertEquals(expectedRows, util.countRows(table));
-    } finally {
-      util.shutdownMiniCluster();
-    }
+    assertEquals(expectedRows, util.countRows(table));
   }
 
   @Test
   public void testSplitStoreFile() throws IOException {
-    Path dir = HBaseTestingUtility.getTestDir("testSplitHFile");
+    Path dir = util.getDataTestDir("testSplitHFile");
     FileSystem fs = util.getTestFileSystem();
     Path testIn = new Path(dir, "testhfile");
     HColumnDescriptor familyDesc = new HColumnDescriptor(FAMILY);
@@ -179,7 +183,7 @@ public class TestLoadIncrementalHFiles {
   private int verifyHFile(Path p) throws IOException {
     Configuration conf = util.getConfiguration();
     HFile.Reader reader = HFile.createReader(
-        p.getFileSystem(conf), p, null, false, false);
+        p.getFileSystem(conf), p, new CacheConfig(conf));
     reader.loadFileInfo();
     HFileScanner scanner = reader.getScanner(false, false);
     scanner.seekTo();
@@ -203,7 +207,8 @@ public class TestLoadIncrementalHFiles {
       byte[] family, byte[] qualifier,
       byte[] startKey, byte[] endKey, int numRows) throws IOException
   {
-    HFile.Writer writer = HFile.getWriterFactory(conf).createWriter(fs, path,
+    HFile.Writer writer =
+      HFile.getWriterFactory(conf, new CacheConfig(conf)).createWriter(fs, path,
         BLOCKSIZE, COMPRESSION,
         KeyValue.KEY_COMPARATOR);
     long now = System.currentTimeMillis();

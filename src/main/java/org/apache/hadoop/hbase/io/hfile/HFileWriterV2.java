@@ -26,6 +26,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -42,6 +44,7 @@ import org.apache.hadoop.io.Writable;
  * Writes HFile format version 2.
  */
 public class HFileWriterV2 extends AbstractHFileWriter {
+  static final Log LOG = LogFactory.getLog(HFileWriterV2.class);
 
   /** Inline block writers for multi-level block index and compound Blooms. */
   private List<InlineBlockWriter> inlineBlockWriters =
@@ -65,19 +68,21 @@ public class HFileWriterV2 extends AbstractHFileWriter {
 
   static class WriterFactoryV2 extends HFile.WriterFactory {
 
-    WriterFactoryV2(Configuration conf) { super(conf); }
+    WriterFactoryV2(Configuration conf, CacheConfig cacheConf) {
+      super(conf, cacheConf);
+    }
 
     @Override
     public Writer createWriter(FileSystem fs, Path path)
         throws IOException {
-      return new HFileWriterV2(conf, fs, path);
+      return new HFileWriterV2(conf, cacheConf, fs, path);
     }
 
     @Override
     public Writer createWriter(FileSystem fs, Path path, int blockSize,
         Compression.Algorithm compress,
         final KeyComparator comparator) throws IOException {
-      return new HFileWriterV2(conf, fs, path, blockSize,
+      return new HFileWriterV2(conf, cacheConf, fs, path, blockSize,
           compress, comparator);
     }
 
@@ -85,7 +90,7 @@ public class HFileWriterV2 extends AbstractHFileWriter {
     public Writer createWriter(FileSystem fs, Path path, int blockSize,
         String compress, final KeyComparator comparator)
         throws IOException {
-      return new HFileWriterV2(conf, fs, path, blockSize,
+      return new HFileWriterV2(conf, cacheConf, fs, path, blockSize,
           compress, comparator);
     }
 
@@ -93,21 +98,24 @@ public class HFileWriterV2 extends AbstractHFileWriter {
     public Writer createWriter(final FSDataOutputStream ostream,
         final int blockSize, final String compress,
         final KeyComparator comparator) throws IOException {
-      return new HFileWriterV2(conf, ostream, blockSize, compress, comparator);
+      return new HFileWriterV2(conf, cacheConf, ostream, blockSize, compress,
+          comparator);
     }
 
     @Override
     public Writer createWriter(final FSDataOutputStream ostream,
         final int blockSize, final Compression.Algorithm compress,
         final KeyComparator c) throws IOException {
-      return new HFileWriterV2(conf, ostream, blockSize, compress, c);
+      return new HFileWriterV2(conf, cacheConf, ostream, blockSize, compress,
+          c);
     }
   }
 
   /** Constructor that uses all defaults for compression and block size. */
-  public HFileWriterV2(Configuration conf, FileSystem fs, Path path)
+  public HFileWriterV2(Configuration conf, CacheConfig cacheConf,
+      FileSystem fs, Path path)
       throws IOException {
-    this(conf, fs, path, HFile.DEFAULT_BLOCKSIZE,
+    this(conf, cacheConf, fs, path, HFile.DEFAULT_BLOCKSIZE,
         HFile.DEFAULT_COMPRESSION_ALGORITHM, null);
   }
 
@@ -115,38 +123,38 @@ public class HFileWriterV2 extends AbstractHFileWriter {
    * Constructor that takes a path, creates and closes the output stream. Takes
    * compression algorithm name as string.
    */
-  public HFileWriterV2(Configuration conf, FileSystem fs, Path path,
-      int blockSize, String compressAlgoName,
+  public HFileWriterV2(Configuration conf, CacheConfig cacheConf, FileSystem fs,
+      Path path, int blockSize, String compressAlgoName,
       final KeyComparator comparator) throws IOException {
-    this(conf, fs, path, blockSize,
+    this(conf, cacheConf, fs, path, blockSize,
         compressionByName(compressAlgoName), comparator);
   }
 
   /** Constructor that takes a path, creates and closes the output stream. */
-  public HFileWriterV2(Configuration conf, FileSystem fs, Path path,
-      int blockSize, Compression.Algorithm compressAlgo,
+  public HFileWriterV2(Configuration conf, CacheConfig cacheConf, FileSystem fs,
+      Path path, int blockSize, Compression.Algorithm compressAlgo,
       final KeyComparator comparator) throws IOException {
-    super(conf, createOutputStream(conf, fs, path), path,
+    super(cacheConf, createOutputStream(conf, fs, path), path,
         blockSize, compressAlgo, comparator);
     finishInit(conf);
   }
 
   /** Constructor that takes a stream. */
-  public HFileWriterV2(final Configuration conf,
+  public HFileWriterV2(final Configuration conf, final CacheConfig cacheConf,
       final FSDataOutputStream outputStream, final int blockSize,
       final String compressAlgoName, final KeyComparator comparator)
       throws IOException {
-    this(conf, outputStream, blockSize,
+    this(conf, cacheConf, outputStream, blockSize,
         Compression.getCompressionAlgorithmByName(compressAlgoName),
         comparator);
   }
 
   /** Constructor that takes a stream. */
-  public HFileWriterV2(final Configuration conf,
+  public HFileWriterV2(final Configuration conf, final CacheConfig cacheConf,
       final FSDataOutputStream outputStream, final int blockSize,
       final Compression.Algorithm compress, final KeyComparator comparator)
       throws IOException {
-    super(conf, outputStream, null, blockSize, compress, comparator);
+    super(cacheConf, outputStream, null, blockSize, compress, comparator);
     finishInit(conf);
   }
 
@@ -159,15 +167,18 @@ public class HFileWriterV2 extends AbstractHFileWriter {
     fsBlockWriter = new HFileBlock.Writer(compressAlgo);
 
     // Data block index writer
+    boolean cacheIndexesOnWrite = cacheConf.shouldCacheIndexesOnWrite();
     dataBlockIndexWriter = new HFileBlockIndex.BlockIndexWriter(fsBlockWriter,
-        cacheIndexBlocksOnWrite ? blockCache : null,
-        cacheIndexBlocksOnWrite ? name : null);
+        cacheIndexesOnWrite ? cacheConf.getBlockCache(): null,
+        cacheIndexesOnWrite ? name : null);
     dataBlockIndexWriter.setMaxChunkSize(
         HFileBlockIndex.getMaxChunkSize(conf));
     inlineBlockWriters.add(dataBlockIndexWriter);
 
     // Meta data block index writer
     metaBlockIndexWriter = new HFileBlockIndex.BlockIndexWriter();
+
+    LOG.debug("Initialized with " + cacheConf);
   }
 
   /**
@@ -208,9 +219,11 @@ public class HFileWriterV2 extends AbstractHFileWriter {
     HFile.writeTimeNano.addAndGet(System.nanoTime() - startTimeNs);
     HFile.writeOps.incrementAndGet();
 
-    if (cacheDataBlocksOnWrite) {
-      blockCache.cacheBlock(HFile.getBlockCacheKey(name, lastDataBlockOffset),
-          fsBlockWriter.getBlockForCaching());
+    if (cacheConf.shouldCacheDataOnWrite()) {
+      HFileBlock blockForCaching = fsBlockWriter.getBlockForCaching();
+      blockForCaching.setColumnFamilyName(this.getColumnFamilyName());
+      cacheConf.getBlockCache().cacheBlock(
+          HFile.getBlockCacheKey(name, lastDataBlockOffset), blockForCaching);
     }
   }
 
@@ -228,8 +241,10 @@ public class HFileWriterV2 extends AbstractHFileWriter {
 
         if (cacheThisBlock) {
           // Cache this block on write.
-          blockCache.cacheBlock(HFile.getBlockCacheKey(name, offset),
-              fsBlockWriter.getBlockForCaching());
+          HFileBlock cBlock = fsBlockWriter.getBlockForCaching();
+          cBlock.setColumnFamilyName(this.getColumnFamilyName());
+          cacheConf.getBlockCache().cacheBlock(
+              HFile.getBlockCacheKey(name, offset), cBlock);
         }
       }
     }
@@ -242,7 +257,8 @@ public class HFileWriterV2 extends AbstractHFileWriter {
    */
   private void newBlock() throws IOException {
     // This is where the next block begins.
-    fsBlockWriter.startWriting(BlockType.DATA, cacheDataBlocksOnWrite);
+    fsBlockWriter.startWriting(BlockType.DATA,
+        cacheConf.shouldCacheDataOnWrite());
     firstKeyInBlock = null;
   }
 
@@ -370,7 +386,7 @@ public class HFileWriterV2 extends AbstractHFileWriter {
         long offset = outputStream.getPos();
         // write the metadata content
         DataOutputStream dos = fsBlockWriter.startWriting(BlockType.META,
-            cacheDataBlocksOnWrite);
+            cacheConf.shouldCacheDataOnWrite());
         metaData.get(i).write(dos);
 
         fsBlockWriter.writeHeaderAndData(outputStream);
@@ -424,19 +440,32 @@ public class HFileWriterV2 extends AbstractHFileWriter {
   @Override
   public void addInlineBlockWriter(InlineBlockWriter ibw) {
     inlineBlockWriters.add(ibw);
-    if (blockCache == null && ibw.cacheOnWrite())
-      initBlockCache();
   }
 
   @Override
-  public void addBloomFilter(final BloomFilterWriter bfw) {
+  public void addGeneralBloomFilter(final BloomFilterWriter bfw) {
+    this.addBloomFilter(bfw, BlockType.GENERAL_BLOOM_META);
+  }
+
+  @Override
+  public void addDeleteFamilyBloomFilter(final BloomFilterWriter bfw) {
+    this.addBloomFilter(bfw, BlockType.DELETE_FAMILY_BLOOM_META);
+  }
+
+  private void addBloomFilter(final BloomFilterWriter bfw,
+      final BlockType blockType) {
     if (bfw.getKeyCount() <= 0)
       return;
 
+    if (blockType != BlockType.GENERAL_BLOOM_META &&
+        blockType != BlockType.DELETE_FAMILY_BLOOM_META) {
+      throw new RuntimeException("Block Type: " + blockType.toString() +
+          "is not supported");
+    }
     additionalLoadOnOpenData.add(new BlockWritable() {
       @Override
       public BlockType getBlockType() {
-        return BlockType.BLOOM_META;
+        return blockType;
       }
 
       @Override

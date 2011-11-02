@@ -210,8 +210,8 @@ public class RegionCoprocessorHost
    * {@link org.apache.hadoop.hbase.regionserver.RegionCoprocessorHost#postOpen()} are such hooks.
    *
    * See also {@link org.apache.hadoop.hbase.master.MasterCoprocessorHost#handleCoprocessorThrowable()}
-   * @param env: The coprocessor that threw the exception.
-   * @param e: The exception that was thrown.
+   * @param env The coprocessor that threw the exception.
+   * @param e The exception that was thrown.
    */
   private void handleCoprocessorThrowableNoRethrow(
       final CoprocessorEnvironment env, final Throwable e) {
@@ -566,7 +566,6 @@ public class RegionCoprocessorHost
   /**
    * @param get the Get request
    * @param results the result set
-   * @return the possibly transformed result set to use
    * @exception IOException Exception
    */
   public void postGet(final Get get, final List<KeyValue> results)
@@ -640,12 +639,13 @@ public class RegionCoprocessorHost
   }
 
   /**
-   * @param familyMap map of family to edits for the given family.
+   * @param put The Put object
+   * @param edit The WALEdit object.
    * @param writeToWAL true if the change should be written to the WAL
    * @return true if default processing should be bypassed
    * @exception IOException Exception
    */
-  public boolean prePut(final Map<byte[], List<KeyValue>> familyMap,
+  public boolean prePut(Put put, WALEdit edit,
       final boolean writeToWAL) throws IOException {
     boolean bypass = false;
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
@@ -653,7 +653,7 @@ public class RegionCoprocessorHost
       if (env.getInstance() instanceof RegionObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         try {
-          ((RegionObserver)env.getInstance()).prePut(ctx, familyMap, writeToWAL);
+          ((RegionObserver)env.getInstance()).prePut(ctx, put, edit, writeToWAL);
         } catch (Throwable e) {
           handleCoprocessorThrowable(env, e);
         }
@@ -667,18 +667,19 @@ public class RegionCoprocessorHost
   }
 
   /**
-   * @param familyMap map of family to edits for the given family.
+   * @param put The Put object
+   * @param edit The WALEdit object.
    * @param writeToWAL true if the change should be written to the WAL
    * @exception IOException Exception
    */
-  public void postPut(final Map<byte[], List<KeyValue>> familyMap,
+  public void postPut(Put put, WALEdit edit,
       final boolean writeToWAL) throws IOException {
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
     for (RegionEnvironment env: coprocessors) {
       if (env.getInstance() instanceof RegionObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         try {
-          ((RegionObserver)env.getInstance()).postPut(ctx, familyMap, writeToWAL);
+          ((RegionObserver)env.getInstance()).postPut(ctx, put, edit, writeToWAL);
         } catch (Throwable e) {
           handleCoprocessorThrowable(env, e);
         }
@@ -690,12 +691,13 @@ public class RegionCoprocessorHost
   }
 
   /**
-   * @param familyMap map of family to edits for the given family.
+   * @param delete The Delete object
+   * @param edit The WALEdit object.
    * @param writeToWAL true if the change should be written to the WAL
    * @return true if default processing should be bypassed
    * @exception IOException Exception
    */
-  public boolean preDelete(final Map<byte[], List<KeyValue>> familyMap,
+  public boolean preDelete(Delete delete, WALEdit edit,
       final boolean writeToWAL) throws IOException {
     boolean bypass = false;
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
@@ -703,7 +705,7 @@ public class RegionCoprocessorHost
       if (env.getInstance() instanceof RegionObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         try {
-          ((RegionObserver)env.getInstance()).preDelete(ctx, familyMap, writeToWAL);
+          ((RegionObserver)env.getInstance()).preDelete(ctx, delete, edit, writeToWAL);
         } catch (Throwable e) {
           handleCoprocessorThrowable(env, e);
         }
@@ -717,18 +719,19 @@ public class RegionCoprocessorHost
   }
 
   /**
-   * @param familyMap map of family to edits for the given family.
+   * @param delete The Delete object
+   * @param edit The WALEdit object.
    * @param writeToWAL true if the change should be written to the WAL
    * @exception IOException Exception
    */
-  public void postDelete(final Map<byte[], List<KeyValue>> familyMap,
+  public void postDelete(Delete delete, WALEdit edit,
       final boolean writeToWAL) throws IOException {
     ObserverContext<RegionCoprocessorEnvironment> ctx = null;
     for (RegionEnvironment env: coprocessors) {
       if (env.getInstance() instanceof RegionObserver) {
         ctx = ObserverContext.createAndPrepare(env, ctx);
         try {
-          ((RegionObserver)env.getInstance()).postDelete(ctx, familyMap, writeToWAL);
+          ((RegionObserver)env.getInstance()).postDelete(ctx, delete, edit, writeToWAL);
         } catch (Throwable e) {
           handleCoprocessorThrowable(env, e);
         }
@@ -943,6 +946,34 @@ public class RegionCoprocessorHost
   }
 
   /**
+   * @param append append object
+   * @return result to return to client if default operation should be
+   * bypassed, null otherwise
+   * @throws IOException if an error occurred on the coprocessor
+   */
+  public Result preAppend(Append append)
+      throws IOException {
+    boolean bypass = false;
+    Result result = new Result();
+    ObserverContext<RegionCoprocessorEnvironment> ctx = null;
+    for (RegionEnvironment env: coprocessors) {
+      if (env.getInstance() instanceof RegionObserver) {
+        ctx = ObserverContext.createAndPrepare(env, ctx);
+        try {
+          ((RegionObserver)env.getInstance()).preAppend(ctx, append, result);
+        } catch (Throwable e) {
+          handleCoprocessorThrowable(env, e);
+        }
+        bypass |= ctx.shouldBypass();
+        if (ctx.shouldComplete()) {
+          break;
+        }
+      }
+    }
+    return bypass ? result : null;
+  }
+
+  /**
    * @param increment increment object
    * @return result to return to client if default operation should be
    * bypassed, null otherwise
@@ -968,6 +999,29 @@ public class RegionCoprocessorHost
       }
     }
     return bypass ? result : null;
+  }
+
+  /**
+   * @param append Append object
+   * @param result the result returned by postAppend
+   * @throws IOException if an error occurred on the coprocessor
+   */
+  public void postAppend(final Append append, Result result)
+      throws IOException {
+    ObserverContext<RegionCoprocessorEnvironment> ctx = null;
+    for (RegionEnvironment env: coprocessors) {
+      if (env.getInstance() instanceof RegionObserver) {
+        ctx = ObserverContext.createAndPrepare(env, ctx);
+        try {
+          ((RegionObserver)env.getInstance()).postAppend(ctx, append, result);
+        } catch (Throwable e) {
+          handleCoprocessorThrowable(env, e);
+        }
+        if (ctx.shouldComplete()) {
+          break;
+        }
+      }
+    }
   }
 
   /**

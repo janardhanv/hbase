@@ -266,8 +266,13 @@ module Hbase
 
     #----------------------------------------------------------------------------------------------
     # Truncates table (deletes all records by recreating the table)
-    def truncate(table_name)
-      h_table = org.apache.hadoop.hbase.client.HTable.new(table_name)
+    def truncate(table_name, conf = nil)
+      h_table = nil
+      unless conf
+        h_table = org.apache.hadoop.hbase.client.HTable.new(table_name)
+      else
+        h_table = org.apache.hadoop.hbase.client.HTable.new(conf, table_name)
+      end
       table_description = h_table.getTableDescriptor()
       yield 'Disabling table...' if block_given?
       disable(table_name)
@@ -403,6 +408,10 @@ module Hbase
         for k, v in status.getRegionsInTransition()
           puts("    %s" % [v])
         end
+        master_coprocs = java.util.Arrays.toString(@admin.getMasterCoprocessors())
+        if master_coprocs != nil
+          puts("master coprocessors: %s" % master_coprocs)
+        end
         puts("%d live servers" % [ status.getServersSize() ])
         for server in status.getServers()
           puts("    %s:%d %d" % \
@@ -480,6 +489,7 @@ module Hbase
       family.setBlocksize(JInteger.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::BLOCKSIZE])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::BLOCKSIZE)
       family.setMaxVersions(JInteger.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::VERSIONS])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::VERSIONS)
       family.setMinVersions(JInteger.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::MIN_VERSIONS])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::MIN_VERSIONS)
+      family.setKeepDeletedRows(JBoolean.valueOf(arg[org.apache.hadoop.hbase.HColumnDescriptor::KEEP_DELETED_CELLS])) if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::KEEP_DELETED_CELLS)
       if arg.include?(org.apache.hadoop.hbase.HColumnDescriptor::BLOOMFILTER)
         bloomtype = arg[org.apache.hadoop.hbase.HColumnDescriptor::BLOOMFILTER].upcase
         unless org.apache.hadoop.hbase.regionserver.StoreFile::BloomType.constants.include?(bloomtype)      

@@ -22,16 +22,14 @@ package org.apache.hadoop.hbase.regionserver;
 import java.io.DataInput;
 import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.lang.management.ManagementFactory;
-import java.lang.management.MemoryUsage;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.Map;
-import java.util.Random;
 import java.util.SortedSet;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -42,29 +40,28 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HDFSBlocksDistribution;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.KeyValue.KVComparator;
 import org.apache.hadoop.hbase.client.Scan;
 import org.apache.hadoop.hbase.io.HalfStoreFileReader;
 import org.apache.hadoop.hbase.io.Reference;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.io.hfile.BlockCache;
+import org.apache.hadoop.hbase.io.hfile.BlockType;
 import org.apache.hadoop.hbase.io.hfile.Compression;
-import org.apache.hadoop.hbase.io.hfile.DoubleBlockCache;
 import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileScanner;
 import org.apache.hadoop.hbase.io.hfile.HFileWriterV1;
-import org.apache.hadoop.hbase.io.hfile.LruBlockCache;
 import org.apache.hadoop.hbase.util.BloomFilter;
 import org.apache.hadoop.hbase.util.BloomFilterFactory;
 import org.apache.hadoop.hbase.util.BloomFilterWriter;
 import org.apache.hadoop.hbase.util.Bytes;
-import org.apache.hadoop.hbase.util.DirectMemoryUtils;
 import org.apache.hadoop.hbase.util.FSUtils;
 import org.apache.hadoop.hbase.util.Writables;
 import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.WritableUtils;
-import org.apache.hadoop.util.StringUtils;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
@@ -73,7 +70,7 @@ import com.google.common.collect.Ordering;
 /**
  * A Store data file.  Stores usually have one or more of these files.  They
  * are produced by flushing the memstore to disk.  To
- * create, call {@link #createWriter(FileSystem, Path, int, Configuration)}
+ * create, call {@link #createWriter(FileSystem, Path, int, Configuration, CacheConfig)}
  * and append data. Be sure to add any metadata before calling close on the
  * Writer (Use the appendMetadata convenience methods). On close, a StoreFile
  * is sitting in the Filesystem.  To refer to it, create a StoreFile instance
@@ -116,18 +113,22 @@ public class StoreFile {
   static final byte[] BLOOM_FILTER_TYPE_KEY =
       Bytes.toBytes("BLOOM_FILTER_TYPE");
 
+  /** Delete Family Count in FileInfo */
+  public static final byte[] DELETE_FAMILY_COUNT =
+      Bytes.toBytes("DELETE_FAMILY_COUNT");
+
   /** Last Bloom filter key in FileInfo */
   private static final byte[] LAST_BLOOM_KEY = Bytes.toBytes("LAST_BLOOM_KEY");
 
   /** Key for Timerange information in metadata*/
   public static final byte[] TIMERANGE_KEY = Bytes.toBytes("TIMERANGE");
 
+  /** Key for timestamp of earliest-put in metadata*/
+  public static final byte[] EARLIEST_PUT_TS = Bytes.toBytes("EARLIEST_PUT_TS");
+
   // Make default block size for StoreFiles 8k while testing.  TODO: FIX!
   // Need to make it 8k for testing.
   public static final int DEFAULT_BLOCKSIZE_SMALL = 8 * 1024;
-
-
-  private static BlockCache hfileBlockCache = null;
 
   private final FileSystem fs;
 
@@ -140,11 +141,8 @@ public class StoreFile {
   // If this StoreFile references another, this is the other files path.
   private Path referencePath;
 
-  // Should the block cache be used or not.
-  private boolean blockcache;
-
-  // Is this from an in-memory store
-  private boolean inMemory;
+  // Block cache configuration and reference.
+  private final CacheConfig cacheConf;
 
   // HDFS blocks distribuion information
   private HDFSBlocksDistribution hdfsBlocksDistribution;
@@ -174,15 +172,16 @@ public class StoreFile {
    * this files id.  Group 2 the referenced region name, etc.
    */
   private static final Pattern REF_NAME_PARSER =
-    Pattern.compile("^(\\d+)(?:\\.(.+))?$");
+    Pattern.compile("^([0-9a-f]+)(?:\\.(.+))?$");
 
   // StoreFile.Reader
   private volatile Reader reader;
 
-  // Used making file ids.
-  private final static Random rand = new Random();
-  private final Configuration conf;
-  private final BloomType bloomType;
+  /**
+   * Bloom filter type specified in column family configuration. Does not
+   * necessarily correspond to the Bloom filter type present in the HFile.
+   */
+  private final BloomType cfBloomType;
 
   // the last modification time stamp
   private long modificationTimeStamp = 0L;
@@ -195,33 +194,34 @@ public class StoreFile {
    * @param p  The path of the file.
    * @param blockcache  <code>true</code> if the block cache is enabled.
    * @param conf  The current configuration.
-   * @param bt The bloom type to use for this store file
+   * @param cacheConf  The cache configuration and block cache reference.
+   * @param cfBloomType The bloom type to use for this store file as specified
+   *          by column family configuration. This may or may not be the same
+   *          as the Bloom filter type actually present in the HFile, because
+   *          column family configuration might change. If this is
+   *          {@link BloomType#NONE}, the existing Bloom filter is ignored.
    * @throws IOException When opening the reader fails.
    */
   StoreFile(final FileSystem fs,
             final Path p,
-            final boolean blockcache,
             final Configuration conf,
-            final BloomType bt,
-            final boolean inMemory)
+            final CacheConfig cacheConf,
+            final BloomType cfBloomType)
       throws IOException {
-    this.conf = conf;
     this.fs = fs;
     this.path = p;
-    this.blockcache = blockcache;
-    this.inMemory = inMemory;
+    this.cacheConf = cacheConf;
     if (isReference(p)) {
       this.reference = Reference.read(fs, p);
       this.referencePath = getReferredToFile(this.path);
     }
-    // ignore if the column family config says "no bloom filter"
-    // even if there is one in the hfile.
-    if (BloomFilterFactory.isBloomEnabled(conf)) {
-      this.bloomType = bt;
+
+    if (BloomFilterFactory.isGeneralBloomEnabled(conf)) {
+      this.cfBloomType = cfBloomType;
     } else {
       LOG.info("Ignoring bloom filter check for file " + path + ": " +
-          "bloomType=" + bt + " (disabled in config)");
-      this.bloomType = BloomType.NONE;
+          "cfBloomType=" + cfBloomType + " (disabled in config)");
+      this.cfBloomType = BloomType.NONE;
     }
 
     // cache the modification time stamp of this store file
@@ -358,52 +358,6 @@ public class StoreFile {
   }
 
   /**
-   * Returns the block cache or <code>null</code> in case none should be used.
-   *
-   * @param conf  The current configuration.
-   * @return The block cache or <code>null</code>.
-   */
-  public static synchronized BlockCache getBlockCache(Configuration conf) {
-    if (hfileBlockCache != null) return hfileBlockCache;
-
-    float cachePercentage = conf.getFloat(HFILE_BLOCK_CACHE_SIZE_KEY, 0.2f);
-    // There should be a better way to optimize this. But oh well.
-    if (cachePercentage == 0L) return null;
-    if (cachePercentage > 1.0) {
-      throw new IllegalArgumentException(HFILE_BLOCK_CACHE_SIZE_KEY +
-        " must be between 0.0 and 1.0, not > 1.0");
-    }
-
-    // Calculate the amount of heap to give the heap.
-    MemoryUsage mu = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
-    long cacheSize = (long)(mu.getMax() * cachePercentage);
-    int blockSize = conf.getInt("hbase.offheapcache.minblocksize", HFile.DEFAULT_BLOCKSIZE);
-    boolean enableOffHeapCache = conf.getBoolean("hbase.offheapcache.enable", false);
-    long offHeapCacheSize = enableOffHeapCache ?
-      (long) (conf.getFloat("hbase.offheapcache.percentage",
-          (float) 0.95) * DirectMemoryUtils.getDirectMemorySize()) :
-      0;
-    LOG.info("Allocating LruBlockCache with maximum size " +
-      StringUtils.humanReadableInt(cacheSize));
-    if(offHeapCacheSize <= 0) {
-      hfileBlockCache = new LruBlockCache(cacheSize, DEFAULT_BLOCKSIZE_SMALL);
-    } else {
-      LOG.info("Allocating OffHeapCache with maximum size " +
-          StringUtils.humanReadableInt(offHeapCacheSize));
-      hfileBlockCache = new DoubleBlockCache(cacheSize, offHeapCacheSize, DEFAULT_BLOCKSIZE_SMALL, blockSize, conf);
-    }
-    return hfileBlockCache;
-  }
-
-  /**
-   * @return the blockcache
-   */
-  public BlockCache getBlockCache() {
-    return blockcache ? getBlockCache(conf) : null;
-  }
-
-
-  /**
    * @return the cached value of HDFS blocks distribution. The cached value is
    * calculated when store file is opened.
    */
@@ -448,7 +402,7 @@ public class StoreFile {
    * helper function to compute HDFS blocks distribution of a given file.
    * For reference file, it is an estimate
    * @param fs  The FileSystem
-   * @param o  The path of the file
+   * @param p  The path of the file
    * @return HDFS blocks distribution
    */
   static public HDFSBlocksDistribution computeHDFSBlockDistribution(
@@ -492,17 +446,16 @@ public class StoreFile {
     }
     if (isReference()) {
       this.reader = new HalfStoreFileReader(this.fs, this.referencePath,
-          getBlockCache(), this.reference);
+          this.cacheConf, this.reference);
     } else {
-      this.reader = new Reader(this.fs, this.path, getBlockCache(),
-          this.inMemory,
-          this.conf.getBoolean(HFile.EVICT_BLOCKS_ON_CLOSE_KEY, true));
+      this.reader = new Reader(this.fs, this.path, this.cacheConf);
     }
 
     computeHDFSBlockDistribution();
 
-    // Load up indices and fileinfo.
+    // Load up indices and fileinfo. This also loads Bloom filter type.
     metadataMap = Collections.unmodifiableMap(this.reader.loadFileInfo());
+
     // Read in our metadata.
     byte [] b = metadataMap.get(MAX_SEQ_ID_KEY);
     if (b != null) {
@@ -534,9 +487,22 @@ public class StoreFile {
       this.majorCompaction = new AtomicBoolean(false);
     }
 
-    if (this.bloomType != BloomType.NONE) {
-      this.reader.loadBloomfilter();
+    BloomType hfileBloomType = reader.getBloomFilterType();
+    if (cfBloomType != BloomType.NONE) {
+      reader.loadBloomfilter(BlockType.GENERAL_BLOOM_META);
+      if (hfileBloomType != cfBloomType) {
+        LOG.info("HFile Bloom filter type for "
+            + reader.getHFileReader().getName() + ": " + hfileBloomType
+            + ", but " + cfBloomType + " specified in column family "
+            + "configuration");
+      }
+    } else if (hfileBloomType != BloomType.NONE) {
+      LOG.info("Bloom filter turned off by CF config for "
+          + reader.getHFileReader().getName());
     }
+
+    // load delete family bloom filter
+    reader.loadBloomfilter(BlockType.DELETE_FAMILY_BLOOM_META);
 
     try {
       byte [] timerangeBytes = metadataMap.get(TIMERANGE_KEY);
@@ -565,7 +531,6 @@ public class StoreFile {
 
   /**
    * @return Current reader.  Must call createReader first else returns null.
-   * @throws IOException
    * @see #createReader()
    */
   public Reader getReader() {
@@ -573,11 +538,13 @@ public class StoreFile {
   }
 
   /**
+   * @param evictOnClose 
    * @throws IOException
    */
-  public synchronized void closeReader() throws IOException {
+  public synchronized void closeReader(boolean evictOnClose)
+  throws IOException {
     if (this.reader != null) {
-      this.reader.close();
+      this.reader.close(evictOnClose);
       this.reader = null;
     }
   }
@@ -587,7 +554,7 @@ public class StoreFile {
    * @throws IOException
    */
   public void deleteReader() throws IOException {
-    closeReader();
+    closeReader(true);
     this.fs.delete(getPath(), true);
   }
 
@@ -648,9 +615,10 @@ public class StoreFile {
    * @throws IOException
    */
   public static Writer createWriter(final FileSystem fs, final Path dir,
-      final int blocksize, Configuration conf) throws IOException {
-    return createWriter(fs, dir, blocksize, null, null, conf, BloomType.NONE,
-        0);
+      final int blocksize, Configuration conf, CacheConfig cacheConf)
+  throws IOException {
+    return createWriter(fs, dir, blocksize, null, null, conf, cacheConf,
+        BloomType.NONE, 0);
   }
 
   /**
@@ -663,6 +631,7 @@ public class StoreFile {
    * @param algorithm Pass null to get default.
    * @param c Pass null to get default.
    * @param conf HBase system configuration. used with bloom filters
+   * @param cacheConf Cache configuration and reference.
    * @param bloomType column family setting for bloom filters
    * @param maxKeyCount estimated maximum number of keys we expect to add
    * @return HFile.Writer
@@ -674,6 +643,7 @@ public class StoreFile {
                                               final Compression.Algorithm algorithm,
                                               final KeyValue.KVComparator c,
                                               final Configuration conf,
+                                              final CacheConfig cacheConf,
                                               BloomType bloomType,
                                               long maxKeyCount)
       throws IOException {
@@ -682,13 +652,14 @@ public class StoreFile {
       fs.mkdirs(dir);
     }
     Path path = getUniqueFile(fs, dir);
-    if (!BloomFilterFactory.isBloomEnabled(conf)) {
+    if (!BloomFilterFactory.isGeneralBloomEnabled(conf)) {
       bloomType = BloomType.NONE;
     }
 
     return new Writer(fs, path, blocksize,
         algorithm == null? HFile.DEFAULT_COMPRESSION_ALGORITHM: algorithm,
-        conf, c == null ? KeyValue.COMPARATOR: c, bloomType, maxKeyCount);
+        conf, cacheConf, c == null ? KeyValue.COMPARATOR: c, bloomType,
+        maxKeyCount);
   }
 
   /**
@@ -702,7 +673,7 @@ public class StoreFile {
       throw new IOException("Expecting " + dir.toString() +
         " to be a directory");
     }
-    return fs.getFileStatus(dir).isDir()? getRandomFilename(fs, dir): dir;
+    return getRandomFilename(fs, dir);
   }
 
   /**
@@ -729,14 +700,8 @@ public class StoreFile {
                                 final Path dir,
                                 final String suffix)
       throws IOException {
-    long id = -1;
-    Path p = null;
-    do {
-      id = Math.abs(rand.nextLong());
-      p = new Path(dir, Long.toString(id) +
-        ((suffix == null || suffix.length() <= 0)? "": suffix));
-    } while(fs.exists(p));
-    return p;
+    return new Path(dir, UUID.randomUUID().toString().replaceAll("-", "")
+        + (suffix == null ? "" : suffix));
   }
 
   /**
@@ -778,12 +743,16 @@ public class StoreFile {
    * local because it is an implementation detail of the HBase regionserver.
    */
   public static class Writer {
-    private final BloomFilterWriter bloomFilterWriter;
+    private final BloomFilterWriter generalBloomFilterWriter;
+    private final BloomFilterWriter deleteFamilyBloomFilterWriter;
     private final BloomType bloomType;
     private byte[] lastBloomKey;
     private int lastBloomKeyOffset, lastBloomKeyLen;
     private KVComparator kvComparator;
     private KeyValue lastKv = null;
+    private long earliestPutTs = HConstants.LATEST_TIMESTAMP;
+    private KeyValue lastDeleteFamilyKV = null;
+    private long deleteFamilyCnt = 0;
 
     TimeRangeTracker timeRangeTracker = new TimeRangeTracker();
     /* isTimeRangeTrackerSet keeps track if the timeRange has already been set
@@ -810,23 +779,40 @@ public class StoreFile {
      */
     public Writer(FileSystem fs, Path path, int blocksize,
         Compression.Algorithm compress, final Configuration conf,
+        CacheConfig cacheConf,
         final KVComparator comparator, BloomType bloomType, long maxKeys)
         throws IOException {
-      writer = HFile.getWriterFactory(conf).createWriter(
+      writer = HFile.getWriterFactory(conf, cacheConf).createWriter(
           fs, path, blocksize,
           compress, comparator.getRawComparator());
 
       this.kvComparator = comparator;
 
-      bloomFilterWriter = BloomFilterFactory.createBloomAtWrite(conf,
-          bloomType, (int) Math.min(maxKeys, Integer.MAX_VALUE), writer);
-      if (bloomFilterWriter != null) {
+      generalBloomFilterWriter = BloomFilterFactory.createGeneralBloomAtWrite(
+          conf, cacheConf, bloomType,
+          (int) Math.min(maxKeys, Integer.MAX_VALUE), writer);
+
+      if (generalBloomFilterWriter != null) {
         this.bloomType = bloomType;
-        LOG.info("Bloom filter type for " + path + ": " + this.bloomType +
-            ", "+ bloomFilterWriter.getClass().getSimpleName());
+        LOG.info("Bloom filter type for " + path + ": " + this.bloomType + ", "
+            + generalBloomFilterWriter.getClass().getSimpleName());
       } else {
         // Not using Bloom filters.
         this.bloomType = BloomType.NONE;
+      }
+
+      // initialize delete family Bloom filter when there is NO RowCol Bloom
+      // filter
+      if (this.bloomType != BloomType.ROWCOL) {
+        this.deleteFamilyBloomFilterWriter = BloomFilterFactory
+            .createDeleteBloomAtWrite(conf, cacheConf,
+                (int) Math.min(maxKeys, Integer.MAX_VALUE), writer);
+      } else {
+        deleteFamilyBloomFilterWriter = null;
+      }
+      if (deleteFamilyBloomFilterWriter != null) {
+        LOG.info("Delete Family Bloom filter type for " + path + ": "
+            + deleteFamilyBloomFilterWriter.getClass().getSimpleName());
       }
     }
 
@@ -842,14 +828,15 @@ public class StoreFile {
       writer.appendFileInfo(MAX_SEQ_ID_KEY, Bytes.toBytes(maxSequenceId));
       writer.appendFileInfo(MAJOR_COMPACTION_KEY,
           Bytes.toBytes(majorCompaction));
-      appendTimeRangeMetadata();
+      appendTrackedTimestampsToMetadata();
     }
 
     /**
-     * Add TimestampRange to Metadata
+     * Add TimestampRange and earliest put timestamp to Metadata
      */
-    public void appendTimeRangeMetadata() throws IOException {
+    public void appendTrackedTimestampsToMetadata() throws IOException {
       appendFileInfo(TIMERANGE_KEY,WritableUtils.toByteArray(timeRangeTracker));
+      appendFileInfo(EARLIEST_PUT_TS, Bytes.toBytes(earliestPutTs));
     }
 
     /**
@@ -862,31 +849,23 @@ public class StoreFile {
     }
 
     /**
+     * Record the earlest Put timestamp.
+     *
      * If the timeRangeTracker is not set,
      * update TimeRangeTracker to include the timestamp of this key
      * @param kv
-     * @throws IOException
      */
-    public void includeInTimeRangeTracker(final KeyValue kv) {
+    public void trackTimestamps(final KeyValue kv) {
+      if (KeyValue.Type.Put.getCode() == kv.getType()) {
+        earliestPutTs = Math.min(earliestPutTs, kv.getTimestamp());
+      }
       if (!isTimeRangeTrackerSet) {
         timeRangeTracker.includeTimestamp(kv);
       }
     }
 
-    /**
-     * If the timeRangeTracker is not set,
-     * update TimeRangeTracker to include the timestamp of this key
-     * @param key
-     * @throws IOException
-     */
-    public void includeInTimeRangeTracker(final byte [] key) {
-      if (!isTimeRangeTrackerSet) {
-        timeRangeTracker.includeTimestamp(key);
-      }
-    }
-
-    public void append(final KeyValue kv) throws IOException {
-      if (this.bloomFilterWriter != null) {
+    private void appendGeneralBloomfilter(final KeyValue kv) throws IOException {
+      if (this.generalBloomFilterWriter != null) {
         // only add to the bloom filter on a new, unique key
         boolean newKey = true;
         if (this.lastKv != null) {
@@ -899,6 +878,9 @@ public class StoreFile {
             break;
           case NONE:
             newKey = false;
+            break;
+          default:
+            throw new IOException("Invalid Bloom filter type: " + bloomType);
           }
         }
         if (newKey) {
@@ -923,18 +905,19 @@ public class StoreFile {
             // merge(row, qualifier)
             // TODO: could save one buffer copy in case of compound Bloom
             // filters when this involves creating a KeyValue
-            bloomKey = bloomFilterWriter.createBloomKey(kv.getBuffer(),
+            bloomKey = generalBloomFilterWriter.createBloomKey(kv.getBuffer(),
                 kv.getRowOffset(), kv.getRowLength(), kv.getBuffer(),
                 kv.getQualifierOffset(), kv.getQualifierLength());
             bloomKeyOffset = 0;
             bloomKeyLen = bloomKey.length;
             break;
           default:
-            throw new IOException("Invalid Bloom filter type: " + bloomType);
+            throw new IOException("Invalid Bloom filter type: " + bloomType +
+                " (ROW or ROWCOL expected)");
           }
-          bloomFilterWriter.add(bloomKey, bloomKeyOffset, bloomKeyLen);
+          generalBloomFilterWriter.add(bloomKey, bloomKeyOffset, bloomKeyLen);
           if (lastBloomKey != null
-              && bloomFilterWriter.getComparator().compare(bloomKey,
+              && generalBloomFilterWriter.getComparator().compare(bloomKey,
                   bloomKeyOffset, bloomKeyLen, lastBloomKey,
                   lastBloomKeyOffset, lastBloomKeyLen) <= 0) {
             throw new IOException("Non-increasing Bloom keys: "
@@ -949,33 +932,67 @@ public class StoreFile {
           this.lastKv = kv;
         }
       }
+    }
+
+    private void appendDeleteFamilyBloomFilter(final KeyValue kv)
+        throws IOException {
+      if (!kv.isDeleteFamily()) {
+        return;
+      }
+
+      // increase the number of delete family in the store file
+      deleteFamilyCnt++;
+      if (null != this.deleteFamilyBloomFilterWriter) {
+        boolean newKey = true;
+        if (lastDeleteFamilyKV != null) {
+          newKey = !kvComparator.matchingRows(kv, lastDeleteFamilyKV);
+        }
+        if (newKey) {
+          this.deleteFamilyBloomFilterWriter.add(kv.getBuffer(),
+              kv.getRowOffset(), kv.getRowLength());
+          this.lastDeleteFamilyKV = kv;
+        }
+      }
+    }
+
+    public void append(final KeyValue kv) throws IOException {
+      appendGeneralBloomfilter(kv);
+      appendDeleteFamilyBloomFilter(kv);
       writer.append(kv);
-      includeInTimeRangeTracker(kv);
+      trackTimestamps(kv);
     }
 
     public Path getPath() {
       return this.writer.getPath();
     }
 
-    boolean hasBloom() {
-      return this.bloomFilterWriter != null;
+    boolean hasGeneralBloom() {
+      return this.generalBloomFilterWriter != null;
     }
 
     /**
      * For unit testing only.
+     *
      * @return the Bloom filter used by this writer.
      */
-    BloomFilterWriter getBloomWriter() {
-      return bloomFilterWriter;
+    BloomFilterWriter getGeneralBloomWriter() {
+      return generalBloomFilterWriter;
     }
 
-    public void close() throws IOException {
-      // Make sure we wrote something to the Bloom filter before adding it.
-      boolean haveBloom = bloomFilterWriter != null &&
-          bloomFilterWriter.getKeyCount() > 0;
+    private boolean closeBloomFilter(BloomFilterWriter bfw) throws IOException {
+      boolean haveBloom = (bfw != null && bfw.getKeyCount() > 0);
       if (haveBloom) {
-        bloomFilterWriter.compactBloom();
-        writer.addBloomFilter(bloomFilterWriter);
+        bfw.compactBloom();
+      }
+      return haveBloom;
+    }
+
+    private boolean closeGeneralBloomFilter() throws IOException {
+      boolean hasGeneralBloom = closeBloomFilter(generalBloomFilterWriter);
+
+      // add the general Bloom filter writer and append file info
+      if (hasGeneralBloom) {
+        writer.addGeneralBloomFilter(generalBloomFilterWriter);
         writer.appendFileInfo(BLOOM_FILTER_TYPE_KEY,
             Bytes.toBytes(bloomType.toString()));
         if (lastBloomKey != null) {
@@ -984,15 +1001,37 @@ public class StoreFile {
                   + lastBloomKeyLen));
         }
       }
+      return hasGeneralBloom;
+    }
+
+    private boolean closeDeleteFamilyBloomFilter() throws IOException {
+      boolean hasDeleteFamilyBloom = closeBloomFilter(deleteFamilyBloomFilterWriter);
+
+      // add the delete family Bloom filter writer
+      if (hasDeleteFamilyBloom) {
+        writer.addDeleteFamilyBloomFilter(deleteFamilyBloomFilterWriter);
+      }
+
+      // append file info about the number of delete family kvs
+      // even if there is no delete family Bloom.
+      writer.appendFileInfo(DELETE_FAMILY_COUNT,
+          Bytes.toBytes(this.deleteFamilyCnt));
+
+      return hasDeleteFamilyBloom;
+    }
+
+    public void close() throws IOException {
+      boolean hasGeneralBloom = this.closeGeneralBloomFilter();
+      boolean hasDeleteFamilyBloom = this.closeDeleteFamilyBloomFilter();
+
       writer.close();
 
       // Log final Bloom filter statistics. This needs to be done after close()
       // because compound Bloom filters might be finalized as part of closing.
-      if (haveBloom && bloomFilterWriter.getMaxKeys() > 0) {
-        StoreFile.LOG.info("Bloom added to HFile ("
-            + getPath() + "): " +
-            bloomFilterWriter.toString().replace("\n", "; "));
-      }
+      StoreFile.LOG.info((hasGeneralBloom ? "" : "NO ") + "General Bloom and "
+          + (hasDeleteFamilyBloom ? "" : "NO ") + "DeleteFamily"
+          + " was added to HFile (" + getPath() + ") ");
+
     }
 
     public void appendFileInfo(byte[] key, byte[] value) throws IOException {
@@ -1006,17 +1045,27 @@ public class StoreFile {
   public static class Reader {
     static final Log LOG = LogFactory.getLog(Reader.class.getName());
 
-    protected BloomFilter bloomFilter = null;
+    protected BloomFilter generalBloomFilter = null;
+    protected BloomFilter deleteFamilyBloomFilter = null;
     protected BloomType bloomFilterType;
     private final HFile.Reader reader;
     protected TimeRangeTracker timeRangeTracker = null;
     protected long sequenceID = -1;
+    private final String bloomAccessedMetric;
+    private final String bloomSkippedMetric;
     private byte[] lastBloomKey;
+    private long deleteFamilyCnt = -1;
 
-    public Reader(FileSystem fs, Path path, BlockCache blockCache,
-        boolean inMemory, boolean evictOnClose)
+    public Reader(FileSystem fs, Path path, CacheConfig cacheConf)
         throws IOException {
-      reader = HFile.createReader(fs, path, blockCache, inMemory, evictOnClose);
+      reader = HFile.createReader(fs, path, cacheConf);
+
+      // prepare the text (key) for the metrics
+      bloomAccessedMetric = reader.getColumnFamilyName() +
+          ".keyMaybeInBloomCnt";
+      bloomSkippedMetric = reader.getColumnFamilyName() +
+          ".keyNotInBloomCnt";
+
       bloomFilterType = BloomType.NONE;
     }
 
@@ -1025,6 +1074,8 @@ public class StoreFile {
      */
     Reader() {
       this.reader = null;
+      bloomAccessedMetric = "";
+      bloomSkippedMetric = "";
     }
 
     public RawComparator<byte []> getComparator() {
@@ -1032,14 +1083,32 @@ public class StoreFile {
     }
 
     /**
-     * Get a scanner to scan over this StoreFile.
+     * Get a scanner to scan over this StoreFile. Do not use
+     * this overload if using this scanner for compactions.
      *
      * @param cacheBlocks should this scanner cache blocks?
      * @param pread use pread (for highly concurrent small readers)
      * @return a scanner
      */
-    public StoreFileScanner getStoreFileScanner(boolean cacheBlocks, boolean pread) {
-      return new StoreFileScanner(this, getScanner(cacheBlocks, pread));
+    public StoreFileScanner getStoreFileScanner(boolean cacheBlocks,
+                                               boolean pread) {
+      return getStoreFileScanner(cacheBlocks, pread, false);
+    }
+
+    /**
+     * Get a scanner to scan over this StoreFile.
+     *
+     * @param cacheBlocks should this scanner cache blocks?
+     * @param pread use pread (for highly concurrent small readers)
+     * @param isCompaction is scanner being used for compaction?
+     * @return a scanner
+     */
+    public StoreFileScanner getStoreFileScanner(boolean cacheBlocks,
+                                               boolean pread,
+                                               boolean isCompaction) {
+      return new StoreFileScanner(this,
+                                 getScanner(cacheBlocks, pread,
+                                            isCompaction));
     }
 
     /**
@@ -1053,11 +1122,30 @@ public class StoreFile {
      */
     @Deprecated
     public HFileScanner getScanner(boolean cacheBlocks, boolean pread) {
-      return reader.getScanner(cacheBlocks, pread);
+      return getScanner(cacheBlocks, pread, false);
     }
 
-    public void close() throws IOException {
-      reader.close();
+    /**
+     * Warning: Do not write further code which depends on this call. Instead
+     * use getStoreFileScanner() which uses the StoreFileScanner class/interface
+     * which is the preferred way to scan a store with higher level concepts.
+     *
+     * @param cacheBlocks
+     *          should we cache the blocks?
+     * @param pread
+     *          use pread (for concurrent small readers)
+     * @param isCompaction
+     *          is scanner being used for compaction?
+     * @return the underlying HFileScanner
+     */
+    @Deprecated
+    public HFileScanner getScanner(boolean cacheBlocks, boolean pread,
+        boolean isCompaction) {
+      return reader.getScanner(cacheBlocks, pread, isCompaction);
+    }
+
+    public void close(boolean evictOnClose) throws IOException {
+      reader.close(evictOnClose);
     }
 
     public boolean shouldSeek(Scan scan, final SortedSet<byte[]> columns) {
@@ -1077,39 +1165,131 @@ public class StoreFile {
       }
     }
 
+    /**
+     * Checks whether the given scan passes the Bloom filter (if present). Only
+     * checks Bloom filters for single-row or single-row-column scans. Bloom
+     * filter checking for multi-gets is implemented as part of the store
+     * scanner system (see {@link StoreFileScanner#seekExactly}) and uses
+     * the lower-level API {@link #passesGeneralBloomFilter(byte[], int, int, byte[],
+     * int, int)}.
+     *
+     * @param scan the scan specification. Used to determine the row, and to
+     *          check whether this is a single-row ("get") scan.
+     * @param columns the set of columns. Only used for row-column Bloom
+     *          filters.
+     * @return true if the scan with the given column set passes the Bloom
+     *         filter, or if the Bloom filter is not applicable for the scan.
+     *         False if the Bloom filter is applicable and the scan fails it.
+     */
     private boolean passesBloomFilter(Scan scan,
         final SortedSet<byte[]> columns) {
-      if (!scan.isGetScan())
-        return true;
-
-      BloomFilter bloomFilter = this.bloomFilter;
-      if (bloomFilter == null) {
+      // Multi-column non-get scans will use Bloom filters through the
+      // lower-level API function that this function calls.
+      if (!scan.isGetScan()) {
         return true;
       }
 
-      // Empty file?
-      if (reader.getTrailer().getEntryCount() == 0)
-        return false;
-
       byte[] row = scan.getStartRow();
-      byte[] key;
       switch (this.bloomFilterType) {
         case ROW:
-          key = row;
-          break;
+          return passesGeneralBloomFilter(row, 0, row.length, null, 0, 0);
 
         case ROWCOL:
           if (columns != null && columns.size() == 1) {
             byte[] column = columns.first();
-            key = bloomFilter.createBloomKey(row, 0, row.length,
-                column, 0, column.length);
-            break;
+            return passesGeneralBloomFilter(row, 0, row.length, column, 0,
+                column.length);
           }
+
+          // For multi-column queries the Bloom filter is checked from the
+          // seekExact operation.
           return true;
 
         default:
           return true;
+      }      
+    }
+
+    public boolean passesDeleteFamilyBloomFilter(byte[] row, int rowOffset,
+        int rowLen) {
+      // Cache Bloom filter as a local variable in case it is set to null by
+      // another thread on an IO error.
+      BloomFilter bloomFilter = this.deleteFamilyBloomFilter;
+
+      // Empty file or there is no delete family at all
+      if (reader.getTrailer().getEntryCount() == 0 || deleteFamilyCnt == 0) {
+        return false;
       }
+
+      if (bloomFilter == null) {
+        return true;
+      }
+
+      try {
+        if (!bloomFilter.supportsAutoLoading()) {
+          return true;
+        }
+        return bloomFilter.contains(row, rowOffset, rowLen, null);
+      } catch (IllegalArgumentException e) {
+        LOG.error("Bad Delete Family bloom filter data -- proceeding without",
+            e);
+        setDeleteFamilyBloomFilterFaulty();
+      }
+
+      return true;
+    }
+
+    /**
+     * A method for checking Bloom filters. Called directly from
+     * StoreFileScanner in case of a multi-column query.
+     *
+     * @param row
+     * @param rowOffset
+     * @param rowLen
+     * @param col
+     * @param colOffset
+     * @param colLen
+     * @return True if passes
+     */
+    public boolean passesGeneralBloomFilter(byte[] row, int rowOffset,
+        int rowLen, byte[] col, int colOffset, int colLen) {
+      if (generalBloomFilter == null)
+        return true;
+
+      byte[] key;
+      switch (bloomFilterType) { 
+        case ROW:
+          if (col != null) {
+            throw new RuntimeException("Row-only Bloom filter called with " +
+                "column specified");
+          }
+          if (rowOffset != 0 || rowLen != row.length) {
+              throw new AssertionError("For row-only Bloom filters the row "
+                  + "must occupy the whole array");
+          }
+          key = row;
+          break;
+
+        case ROWCOL:
+          key = generalBloomFilter.createBloomKey(row, rowOffset, rowLen, col,
+              colOffset, colLen);
+          break;
+
+        default:
+          return true;
+      }
+
+      // Cache Bloom filter as a local variable in case it is set to null by
+      // another thread on an IO error.
+      BloomFilter bloomFilter = this.generalBloomFilter;
+
+      if (bloomFilter == null) {
+        return true;
+      }
+
+      // Empty file
+      if (reader.getTrailer().getEntryCount() == 0)
+        return false;
 
       try {
         boolean shouldCheckBloom;
@@ -1146,24 +1326,28 @@ public class StoreFile {
               exists = false;
             } else {
               exists =
-                  this.bloomFilter.contains(key, 0, key.length, bloom) ||
-                  this.bloomFilter.contains(rowBloomKey, 0, rowBloomKey.length,
+                  bloomFilter.contains(key, 0, key.length, bloom) ||
+                  bloomFilter.contains(rowBloomKey, 0, rowBloomKey.length,
                       bloom);
             }
           } else {
             exists = !keyIsAfterLast
-                && this.bloomFilter.contains(key, 0, key.length, bloom);
+                && bloomFilter.contains(key, 0, key.length, bloom);
           }
 
+          if (exists)
+            HRegion.incrNumericMetric(bloomAccessedMetric, 1);
+          else
+            HRegion.incrNumericMetric(bloomSkippedMetric, 1);
           return exists;
         }
       } catch (IOException e) {
         LOG.error("Error reading bloom filter data -- proceeding without",
             e);
-        setBloomFilterFaulty();
+        setGeneralBloomFilterFaulty();
       } catch (IllegalArgumentException e) {
         LOG.error("Bad bloom filter data -- proceeding without", e);
-        setBloomFilterFaulty();
+        setGeneralBloomFilterFaulty();
       }
 
       return true;
@@ -1178,34 +1362,71 @@ public class StoreFile {
       }
 
       lastBloomKey = fi.get(LAST_BLOOM_KEY);
+      byte[] cnt = fi.get(DELETE_FAMILY_COUNT);
+      if (cnt != null) {
+        deleteFamilyCnt = Bytes.toLong(cnt);
+      }
 
       return fi;
     }
 
     public void loadBloomfilter() {
-      if (this.bloomFilter != null) {
-        return; // already loaded
-      }
+      this.loadBloomfilter(BlockType.GENERAL_BLOOM_META);
+      this.loadBloomfilter(BlockType.DELETE_FAMILY_BLOOM_META);
+    }
 
+    private void loadBloomfilter(BlockType blockType) {
       try {
-        DataInput bloomMeta = reader.getBloomFilterMetadata();
-        if (bloomMeta != null) {
-          if (bloomFilterType == BloomType.NONE) {
-            throw new IOException(
-                "valid bloom filter type not found in FileInfo");
-          }
+        if (blockType == BlockType.GENERAL_BLOOM_META) {
+          if (this.generalBloomFilter != null)
+            return; // Bloom has been loaded
 
-          bloomFilter = BloomFilterFactory.createFromMeta(bloomMeta, reader);
-          LOG.info("Loaded " + bloomFilterType + " " +
-              bloomFilter.getClass().getSimpleName() + " metadata for " +
-              reader.getName());
+          DataInput bloomMeta = reader.getGeneralBloomFilterMetadata();
+          if (bloomMeta != null) {
+            // sanity check for NONE Bloom filter
+            if (bloomFilterType == BloomType.NONE) {
+              throw new IOException(
+                  "valid bloom filter type not found in FileInfo");
+            } else {
+              generalBloomFilter = BloomFilterFactory.createFromMeta(bloomMeta,
+                  reader);
+              LOG.info("Loaded " + bloomFilterType.toString() + " ("
+                  + generalBloomFilter.getClass().getSimpleName()
+                  + ") metadata for " + reader.getName());
+            }
+          }
+        } else if (blockType == BlockType.DELETE_FAMILY_BLOOM_META) {
+          if (this.deleteFamilyBloomFilter != null)
+            return; // Bloom has been loaded
+
+          DataInput bloomMeta = reader.getDeleteBloomFilterMetadata();
+          if (bloomMeta != null) {
+            deleteFamilyBloomFilter = BloomFilterFactory.createFromMeta(
+                bloomMeta, reader);
+            LOG.info("Loaded Delete Family Bloom ("
+                + deleteFamilyBloomFilter.getClass().getSimpleName()
+                + ") metadata for " + reader.getName());
+          }
+        } else {
+          throw new RuntimeException("Block Type: " + blockType.toString()
+              + "is not supported for Bloom filter");
         }
       } catch (IOException e) {
-        LOG.error("Error reading bloom filter meta -- proceeding without", e);
-        this.bloomFilter = null;
+        LOG.error("Error reading bloom filter meta for " + blockType
+            + " -- proceeding without", e);
+        setBloomFilterFaulty(blockType);
       } catch (IllegalArgumentException e) {
-        LOG.error("Bad bloom filter meta -- proceeding without", e);
-        this.bloomFilter = null;
+        LOG.error("Bad bloom filter meta " + blockType
+            + " -- proceeding without", e);
+        setBloomFilterFaulty(blockType);
+      }
+    }
+
+    private void setBloomFilterFaulty(BlockType blockType) {
+      if (blockType == BlockType.GENERAL_BLOOM_META) {
+        setGeneralBloomFilterFaulty();
+      } else if (blockType == BlockType.DELETE_FAMILY_BLOOM_META) {
+        setDeleteFamilyBloomFilterFaulty();
       }
     }
 
@@ -1217,12 +1438,16 @@ public class StoreFile {
      * @return an estimate of the number of Bloom filter entries in this file
      */
     public long getFilterEntries() {
-      return bloomFilter != null ? bloomFilter.getKeyCount()
+      return generalBloomFilter != null ? generalBloomFilter.getKeyCount()
           : reader.getEntries();
     }
 
-    public void setBloomFilterFaulty() {
-      bloomFilter = null;
+    public void setGeneralBloomFilterFaulty() {
+      generalBloomFilter = null;
+    }
+
+    public void setDeleteFamilyBloomFilterFaulty() {
+      this.deleteFamilyBloomFilter = null;
     }
 
     public byte[] getLastKey() {
@@ -1245,12 +1470,20 @@ public class StoreFile {
       return reader.getEntries();
     }
 
+    public long getDeleteFamilyCnt() {
+      return deleteFamilyCnt;
+    }
+
     public byte[] getFirstKey() {
       return reader.getFirstKey();
     }
 
     public long indexSize() {
       return reader.indexSize();
+    }
+
+    public String getColumnFamilyName() {
+      return reader.getColumnFamilyName();
     }
 
     public BloomType getBloomFilterType() {
@@ -1265,8 +1498,8 @@ public class StoreFile {
       this.sequenceID = sequenceID;
     }
 
-    BloomFilter getBloomFilter() {
-      return bloomFilter;
+    BloomFilter getGeneralBloomFilter() {
+      return generalBloomFilter;
     }
 
     long getUncompressedDataIndexSize() {
@@ -1274,9 +1507,9 @@ public class StoreFile {
     }
 
     public long getTotalBloomSize() {
-      if (bloomFilter == null)
+      if (generalBloomFilter == null)
         return 0;
-      return bloomFilter.getByteSize();
+      return generalBloomFilter.getByteSize();
     }
 
     public int getHFileVersion() {
@@ -1285,6 +1518,15 @@ public class StoreFile {
 
     HFile.Reader getHFileReader() {
       return reader;
+    }
+
+    void disableBloomFilterForTesting() {
+      generalBloomFilter = null;
+      this.deleteFamilyBloomFilter = null;
+    }
+
+    public long getMaxTimestamp() {
+      return timeRangeTracker.maximumTimestamp;
     }
   }
 

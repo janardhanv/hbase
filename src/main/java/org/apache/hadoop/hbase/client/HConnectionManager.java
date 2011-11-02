@@ -131,8 +131,10 @@ import org.apache.zookeeper.KeeperException;
  */
 @SuppressWarnings("serial")
 public class HConnectionManager {
-  // A LRU Map of HConnectionKey -> HConnection (TableServer).
-  private static final Map<HConnectionKey, HConnectionImplementation> HBASE_INSTANCES;
+  // An LRU Map of HConnectionKey -> HConnection (TableServer).  All
+  // access must be synchronized.  This map is not private because tests
+  // need to be able to tinker with it.
+  static final Map<HConnectionKey, HConnectionImplementation> HBASE_INSTANCES;
 
   public static final int MAX_CACHED_HBASE_INSTANCES;
 
@@ -209,10 +211,7 @@ public class HConnectionManager {
    * This will then close connection to
    * the zookeeper ensemble and let go of all resources.
    *
-   * @param conf
-   *          configuration whose identity is used to find {@link HConnection}
-   *          instance.
-   *          .
+   * @param connection
    */
   public static void deleteStaleConnection(HConnection connection) {
     deleteConnection(connection, true, true);
@@ -303,7 +302,7 @@ public class HConnectionManager {
    * of a {@link HConnection} instance based on the given {@link Configuration}.
    *
    * <p>
-   * If you find yourself wanting to use a {@link Connection} for a relatively
+   * If you find yourself wanting to use a {@link HConnection} for a relatively
    * short duration of time, and do not want to deal with the hassle of creating
    * and cleaning up that resource, then you should consider using this
    * convenience class.
@@ -912,7 +911,7 @@ public class HConnectionManager {
               deleteCachedLocation(tableName, row);
             }
 
-          // Query the root or meta region for the location of the meta region
+            // Query the root or meta region for the location of the meta region
             regionInfoRow = server.getClosestRowBefore(
             metaLocation.getRegionInfo().getRegionName(), metaKey,
             HConstants.CATALOG_FAMILY);
@@ -979,8 +978,8 @@ public class HConnectionManager {
             if (LOG.isDebugEnabled()) {
               LOG.debug("locateRegionInMeta parentTable=" +
                 Bytes.toString(parentTable) + ", metaLocation=" +
-                ((metaLocation == null)? "null": metaLocation) + ", attempt=" +
-                tries + " of " +
+                ((metaLocation == null)? "null": "{" + metaLocation + "}") +
+                ", attempt=" + tries + " of " +
                 this.numRetries + " failed; retrying after sleep of " +
                 getPauseTime(tries) + " because: " + e.getMessage());
             }
@@ -1218,7 +1217,7 @@ public class HConnectionManager {
             } catch (RemoteException e) {
               LOG.warn("RemoteException connecting to RS", e);
               // Throw what the RemoteException was carrying.
-              throw RemoteExceptionHandler.decodeRemoteException(e);
+              throw e.unwrapRemoteException();
             }
           }
         }
@@ -1250,19 +1249,22 @@ public class HConnectionManager {
 
     public <T> T getRegionServerWithRetries(ServerCallable<T> callable)
     throws IOException, RuntimeException {
-      List<Throwable> exceptions = new ArrayList<Throwable>();
+      List<RetriesExhaustedException.ThrowableWithExtraContext> exceptions =
+        new ArrayList<RetriesExhaustedException.ThrowableWithExtraContext>();
       for(int tries = 0; tries < numRetries; tries++) {
         try {
-          callable.instantiateServer(tries != 0);
           callable.beforeCall();
+          callable.connect(tries != 0);
           return callable.call();
         } catch (Throwable t) {
           callable.shouldRetry(t);
           t = translateException(t);
-          exceptions.add(t);
+          RetriesExhaustedException.ThrowableWithExtraContext qt =
+            new RetriesExhaustedException.ThrowableWithExtraContext(t,
+              System.currentTimeMillis(), callable.toString());
+          exceptions.add(qt);
           if (tries == numRetries - 1) {
-            throw new RetriesExhaustedException(callable.getServerName(),
-                callable.getRegionName(), callable.getRow(), tries, exceptions);
+            throw new RetriesExhaustedException(tries, exceptions);
           }
         } finally {
           callable.afterCall();
@@ -1271,7 +1273,7 @@ public class HConnectionManager {
           Thread.sleep(getPauseTime(tries));
         } catch (InterruptedException e) {
           Thread.currentThread().interrupt();
-          throw new IOException("Giving up trying to get region server: thread is interrupted.");
+          throw new IOException("Giving up after tries=" + tries, e);
         }
       }
       return null;
@@ -1280,8 +1282,8 @@ public class HConnectionManager {
     public <T> T getRegionServerWithoutRetries(ServerCallable<T> callable)
         throws IOException, RuntimeException {
       try {
-        callable.instantiateServer(false);
         callable.beforeCall();
+        callable.connect(false);
         return callable.call();
       } catch (Throwable t) {
         Throwable t2 = translateException(t);
@@ -1306,7 +1308,7 @@ public class HConnectionManager {
                  return server.multi(multi);
                }
                @Override
-               public void instantiateServer(boolean reload) throws IOException {
+               public void connect(boolean reload) throws IOException {
                  server =
                    connection.getHRegionConnection(loc.getHostname(), loc.getPort());
                }
@@ -1316,7 +1318,7 @@ public class HConnectionManager {
      };
    }
 
-    public void processBatch(List<Row> list,
+    public void processBatch(List<? extends Row> list,
         final byte[] tableName,
         ExecutorService pool,
         Object[] results) throws IOException, InterruptedException {
@@ -1412,11 +1414,8 @@ public class HConnectionManager {
         throw new IllegalArgumentException(
             "argument results must be the same size as argument list");
       }
-      if (list.size() == 0) {
+      if (list.isEmpty()) {
         return;
-      }
-      if (LOG.isDebugEnabled()) {
-        LOG.debug("expecting "+results.length+" results");
       }
 
       // Keep track of the most recent servers for any given item for better
@@ -1564,31 +1563,6 @@ public class HConnectionManager {
         throw new RetriesExhaustedWithDetailsException(exceptions,
             actions,
             addresses);
-      }
-    }
-
-    /**
-     * @deprecated Use HConnectionManager::processBatch instead.
-     */
-    public void processBatchOfPuts(List<Put> list,
-        final byte[] tableName,
-        ExecutorService pool) throws IOException {
-      Object[] results = new Object[list.size()];
-      try {
-        processBatch((List) list, tableName, pool, results);
-      } catch (InterruptedException e) {
-        throw new IOException(e);
-      } finally {
-
-        // mutate list so that it is empty for complete success, or contains only failed records
-        // results are returned in the same order as the requests in list
-        // walk the list backwards, so we can remove from list without impacting the indexes of earlier members
-        for (int i = results.length - 1; i>=0; i--) {
-          if (results[i] instanceof Result) {
-            // successful Puts are removed from the list here.
-            list.remove(i);
-          }
-        }
       }
     }
 
@@ -1821,6 +1795,25 @@ public class HConnectionManager {
       }
       return hTableDescriptor;
     }
+  }
 
+  /**
+   * Set the number of retries to use serverside when trying to communicate
+   * with another server over {@link HConnection}.  Used updating catalog
+   * tables, etc.  Call this method before we create any Connections.
+   * @param c The Configuration instance to set the retries into.
+   * @param log Used to log what we set in here.
+   */
+  public static void setServerSideHConnectionRetries(final Configuration c,
+      final Log log) {
+    int hcRetries = c.getInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER,
+      HConstants.DEFAULT_HBASE_CLIENT_RETRIES_NUMBER);
+    // Go big.  Multiply by 10.  If we can't get to meta after this many retries
+    // then something seriously wrong.
+    int serversideMultiplier =
+      c.getInt("hbase.client.serverside.retries.multiplier", 10);
+    int retries = hcRetries * serversideMultiplier;
+    c.setInt(HConstants.HBASE_CLIENT_RETRIES_NUMBER, retries);
+    log.debug("Set serverside HConnection retries=" + retries);
   }
 }

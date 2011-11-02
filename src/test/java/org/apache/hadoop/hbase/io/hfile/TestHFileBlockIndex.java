@@ -43,7 +43,6 @@ import org.apache.hadoop.hbase.HBaseTestingUtility;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.io.hfile.HFileBlockIndex.BlockIndexReader;
 import org.apache.hadoop.hbase.io.hfile.HFileBlockIndex.BlockIndexChunk;
-import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ClassSize;
 
@@ -112,7 +111,7 @@ public class TestHFileBlockIndex {
 
   @Test
   public void testBlockIndex() throws IOException {
-    path = new Path(HBaseTestingUtility.getTestDir(), "block_index_" + compr);
+    path = new Path(TEST_UTIL.getDataTestDir(), "block_index_" + compr);
     writeWholeIndex();
     readIndex();
   }
@@ -121,37 +120,36 @@ public class TestHFileBlockIndex {
    * A wrapper around a block reader which only caches the results of the last
    * operation. Not thread-safe.
    */
-  private static class BlockReaderWrapper implements HFileBlock.BasicReader {
+  private static class BlockReaderWrapper implements HFile.CachingBlockReader {
 
-    private HFileBlock.BasicReader realReader;
+    private HFileBlock.FSReader realReader;
     private long prevOffset;
     private long prevOnDiskSize;
-    private long prevUncompressedSize;
     private boolean prevPread;
     private HFileBlock prevBlock;
 
     public int hitCount = 0;
     public int missCount = 0;
 
-    public BlockReaderWrapper(HFileBlock.BasicReader realReader) {
+    public BlockReaderWrapper(HFileBlock.FSReader realReader) {
       this.realReader = realReader;
     }
 
     @Override
-    public HFileBlock readBlockData(long offset, long onDiskSize,
-        int uncompressedSize, boolean pread) throws IOException {
+    public HFileBlock readBlock(long offset, long onDiskSize,
+        boolean cacheBlock, boolean pread, boolean isCompaction)
+        throws IOException {
       if (offset == prevOffset && onDiskSize == prevOnDiskSize &&
-          uncompressedSize == prevUncompressedSize && pread == prevPread) {
+          pread == prevPread) {
         hitCount += 1;
         return prevBlock;
       }
 
       missCount += 1;
       prevBlock = realReader.readBlockData(offset, onDiskSize,
-          uncompressedSize, pread);
+          -1, pread);
       prevOffset = offset;
       prevOnDiskSize = onDiskSize;
-      prevUncompressedSize = uncompressedSize;
       prevPread = pread;
 
       return prevBlock;
@@ -182,7 +180,8 @@ public class TestHFileBlockIndex {
     for (byte[] key : keys) {
       assertTrue(key != null);
       assertTrue(indexReader != null);
-      HFileBlock b = indexReader.seekToDataBlock(key, 0, key.length, null);
+      HFileBlock b = indexReader.seekToDataBlock(key, 0, key.length, null,
+          true, true, false);
       if (Bytes.BYTES_RAWCOMPARATOR.compare(key, firstKeyInFile) < 0) {
         assertTrue(b == null);
         ++i;
@@ -457,9 +456,10 @@ public class TestHFileBlockIndex {
    */
   @Test
   public void testHFileWriterAndReader() throws IOException {
-    Path hfilePath = new Path(HBaseTestingUtility.getTestDir(),
+    Path hfilePath = new Path(TEST_UTIL.getDataTestDir(),
         "hfile_for_block_index");
-    BlockCache blockCache = StoreFile.getBlockCache(conf);
+    CacheConfig cacheConf = new CacheConfig(conf);
+    BlockCache blockCache = cacheConf.getBlockCache();
 
     for (int testI = 0; testI < INDEX_CHUNK_SIZES.length; ++testI) {
       int indexBlockSize = INDEX_CHUNK_SIZES[testI];
@@ -477,7 +477,8 @@ public class TestHFileBlockIndex {
 
       // Write the HFile
       {
-        HFile.Writer writer = HFile.getWriterFactory(conf).createWriter(fs,
+        HFile.Writer writer =
+          HFile.getWriterFactory(conf, cacheConf).createWriter(fs,
             hfilePath, SMALL_BLOCK_SIZE, compr, KeyValue.KEY_COMPARATOR);
         Random rand = new Random(19231737);
 
@@ -504,8 +505,7 @@ public class TestHFileBlockIndex {
       }
 
       // Read the HFile
-      HFile.Reader reader = HFile.createReader(fs, hfilePath, blockCache,
-          false, true);
+      HFile.Reader reader = HFile.createReader(fs, hfilePath, cacheConf);
       assertEquals(expectedNumLevels,
           reader.getTrailer().getNumDataIndexLevels());
 

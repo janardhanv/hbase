@@ -55,7 +55,7 @@ import org.mockito.Mockito;
 public class TestSplitTransaction {
   private static final HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
   private final Path testdir =
-    HBaseTestingUtility.getTestDir(this.getClass().getName());
+    TEST_UTIL.getDataTestDir(this.getClass().getName());
   private HRegion parent;
   private HLog wal;
   private FileSystem fs;
@@ -94,9 +94,11 @@ public class TestSplitTransaction {
     // Start transaction.
     SplitTransaction st = prepareGOOD_SPLIT_ROW();
     SplitTransaction spiedUponSt = spy(st);
-    Mockito.doThrow(new MockedFailedDaughterOpen()).
-      when(spiedUponSt).openDaughterRegion((Server)Mockito.anyObject(),
-        (RegionServerServices)Mockito.anyObject(), (HRegion)Mockito.anyObject());
+    Mockito
+        .doThrow(new MockedFailedDaughterOpen())
+        .when(spiedUponSt)
+        .openDaughterRegion((Server) Mockito.anyObject(),
+            (HRegion) Mockito.anyObject());
 
     // Run the execute.  Look at what it returns.
     boolean expectedException = false;

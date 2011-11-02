@@ -7,6 +7,25 @@
          xmlns:m="http://www.w3.org/1998/Math/MathML"
          xmlns:html="http://www.w3.org/1999/xhtml"
          xmlns:db="http://docbook.org/ns/docbook">
+<!--
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+-->
   <title>Troubleshooting and Debugging HBase</title>
     <section xml:id="trouble.general">
       <title>General Guidelines</title>
@@ -793,6 +812,13 @@ ERROR org.apache.hadoop.hbase.regionserver.HRegionServer: ZooKeeper session expi
              <para>Questions on HBase and Amazon EC2 come up frequently on the HBase dist-list. Search for old threads using <link xlink:href="http://search-hadoop.com/">Search Hadoop</link>
              </para>
           </section>
+          <section xml:id="trouble.ec2.connection">
+             <title>Remote Java Connection into EC2 Cluster Not Working</title>
+             <para>
+             See Andrew's answer here, up on the user list: <link xlink:href="http://search-hadoop.com/m/sPdqNFAwyg2">Remote Java client connection into EC2 instance</link>.
+             </para>
+          </section>
+          
     </section>
     
   </chapter>

@@ -40,7 +40,6 @@ import org.apache.hadoop.hbase.HColumnDescriptor;
 import org.apache.hadoop.hbase.HConstants;
 import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HRegionLocation;
-import org.apache.hadoop.hbase.HServerAddress;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.MasterNotRunningException;
 import org.apache.hadoop.hbase.NotServingRegionException;
@@ -54,7 +53,6 @@ import org.apache.hadoop.hbase.ZooKeeperConnectionException;
 import org.apache.hadoop.hbase.catalog.CatalogTracker;
 import org.apache.hadoop.hbase.catalog.MetaReader;
 import org.apache.hadoop.hbase.client.MetaScanner.MetaScannerVisitor;
-import org.apache.hadoop.hbase.coprocessor.ObserverContext;
 import org.apache.hadoop.hbase.ipc.HMasterInterface;
 import org.apache.hadoop.hbase.ipc.HRegionInterface;
 import org.apache.hadoop.hbase.regionserver.wal.FailedLogCloseException;
@@ -138,7 +136,6 @@ public class HBaseAdmin implements Abortable, Closeable {
     CatalogTracker ct = null;
     try {
       ct = new CatalogTracker(this.conf);
-
       ct.start();
     } catch (InterruptedException e) {
       // Let it out as an IOE for now until we redo all so tolerate IEs
@@ -958,44 +955,12 @@ public class HBaseAdmin implements Abortable, Closeable {
    * Asynchronous operation.
    *
    * @param tableName name of table
-   * @param columnName name of column to be modified
-   * @param descriptor new column descriptor to use
-   * @throws IOException if a remote or network exception occurs
-   * @deprecated The <code>columnName</code> is redundant. Use {@link #addColumn(String, HColumnDescriptor)}
-   */
-  public void modifyColumn(final String tableName, final String columnName,
-      HColumnDescriptor descriptor)
-  throws IOException {
-    modifyColumn(tableName,  descriptor);
-  }
-
-  /**
-   * Modify an existing column family on a table.
-   * Asynchronous operation.
-   *
-   * @param tableName name of table
    * @param descriptor new column descriptor to use
    * @throws IOException if a remote or network exception occurs
    */
   public void modifyColumn(final String tableName, HColumnDescriptor descriptor)
   throws IOException {
     modifyColumn(Bytes.toBytes(tableName), descriptor);
-  }
-
-  /**
-   * Modify an existing column family on a table.
-   * Asynchronous operation.
-   *
-   * @param tableName name of table
-   * @param columnName name of column to be modified
-   * @param descriptor new column descriptor to use
-   * @throws IOException if a remote or network exception occurs
-   * @deprecated The <code>columnName</code> is redundant. Use {@link #modifyColumn(byte[], HColumnDescriptor)}
-   */
-  public void modifyColumn(final byte [] tableName, final byte [] columnName,
-    HColumnDescriptor descriptor)
-  throws IOException {
-    modifyColumn(tableName, descriptor);
   }
 
   /**
@@ -1311,24 +1276,6 @@ public class HBaseAdmin implements Abortable, Closeable {
   }
 
   /**
-   * Tries to assign a region. Region could be reassigned to the same server.
-   * 
-   * @param regionName
-   *          Region name to assign.
-   * @param force
-   *          True to force assign.
-   * @throws MasterNotRunningException
-   * @throws ZooKeeperConnectionException
-   * @throws IOException
-   * @deprecated The <code>force</code> is unused.Use {@link #assign(byte[])}
-   */
-  public void assign(final byte[] regionName, final boolean force)
-      throws MasterNotRunningException, ZooKeeperConnectionException,
-      IOException {
-    getMaster().assign(regionName, force);
-  }
-  
-  /**
    * @param regionName
    *          Region name to assign.
    * @throws MasterNotRunningException
@@ -1527,18 +1474,6 @@ public class HBaseAdmin implements Abortable, Closeable {
   }
 
   /**
-   * Stop the designated regionserver.
-   * @throws IOException if a remote or network exception occurs
-   * @deprecated Use {@link #stopRegionServer(String)}
-   */
-  public synchronized void stopRegionServer(final HServerAddress hsa)
-  throws IOException {
-    HRegionInterface rs =
-      this.connection.getHRegionConnection(hsa);
-    rs.stop("Called by admin client " + this.connection.toString());
-  }
-
-  /**
    * Stop the designated regionserver
    * @param hostnamePort Hostname and port delimited by a <code>:</code> as in
    * <code>example.org:1234</code>
@@ -1597,19 +1532,19 @@ public class HBaseAdmin implements Abortable, Closeable {
    * get the regions of a given table.
    *
    * @param tableName the name of the table
-   * @return Ordered list of {@link HRegionInfo}.   * 
+   * @return Ordered list of {@link HRegionInfo}.
    * @throws IOException
    */  
   public List<HRegionInfo> getTableRegions(final byte[] tableName)
   throws IOException {
     CatalogTracker ct = getCatalogTracker();
-    List<HRegionInfo> Regions;
+    List<HRegionInfo> Regions = null;
     try {
       Regions = MetaReader.getTableRegions(ct, tableName, true);
     } finally {
       cleanupCatalogTracker(ct);
     }
-    return Regions;	  
+    return Regions;
   }
   
   public void close() throws IOException {
@@ -1648,5 +1583,14 @@ public class HBaseAdmin implements Abortable, Closeable {
     HRegionInterface rs = this.connection.getHRegionConnection(
         sn.getHostname(), sn.getPort());
     return rs.rollHLogWriter();
+  }
+
+  public String[] getMasterCoprocessors() {
+    try {
+      return getClusterStatus().getMasterCoprocessors();
+    } catch (IOException e) {
+      LOG.error("Could not getClusterStatus()",e);
+      return null;
+    }
   }
 }

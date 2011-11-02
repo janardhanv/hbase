@@ -26,6 +26,8 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileSystem;
@@ -33,7 +35,6 @@ import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.fs.permission.FsPermission;
 import org.apache.hadoop.hbase.KeyValue.KeyComparator;
 import org.apache.hadoop.hbase.io.hfile.HFile.FileInfo;
-import org.apache.hadoop.hbase.regionserver.StoreFile;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.io.RawComparator;
 import org.apache.hadoop.io.Writable;
@@ -42,6 +43,8 @@ import org.apache.hadoop.io.Writable;
  * Common functionality needed by all versions of {@link HFile} writers.
  */
 public abstract class AbstractHFileWriter implements HFile.Writer {
+
+  private static final Log LOG = LogFactory.getLog(AbstractHFileWriter.class);
 
   /** Key previously appended. Becomes the last key in the file. */
   protected byte[] lastKeyBuffer = null;
@@ -91,25 +94,21 @@ public abstract class AbstractHFileWriter implements HFile.Writer {
   /** May be null if we were passed a stream. */
   protected final Path path;
 
-  /** Whether to cache key/value data blocks on write */
-  protected final boolean cacheDataBlocksOnWrite;
+  /** Prefix of the form cf.<column_family_name> for statistics counters. */
+  // Note that this is gotten from the path, which can be null, so this can
+  // remain unknown
+  public String cfStatsPrefix = "cf.unknown";
 
-  /** Whether to cache non-root index blocks on write */
-  protected final boolean cacheIndexBlocksOnWrite;
-
-  /** Block cache to optionally fill on write. */
-  protected BlockCache blockCache;
-
-  /** Configuration used for block cache initialization */
-  private Configuration conf;
+  /** Cache configuration for caching data on write. */
+  protected final CacheConfig cacheConf;
 
   /**
    * Name for this object used when logging or in toString. Is either
-   * the result of a toString on stream or else toString of passed file Path.
+   * the result of a toString on stream or else name of passed file Path.
    */
   protected final String name;
 
-  public AbstractHFileWriter(Configuration conf,
+  public AbstractHFileWriter(CacheConfig cacheConf,
       FSDataOutputStream outputStream, Path path, int blockSize,
       Compression.Algorithm compressAlgo, KeyComparator comparator) {
     this.outputStream = outputStream;
@@ -122,15 +121,28 @@ public abstract class AbstractHFileWriter implements HFile.Writer {
         : Bytes.BYTES_RAWCOMPARATOR;
 
     closeOutputStream = path != null;
+    this.cacheConf = cacheConf;
 
-    cacheDataBlocksOnWrite = conf.getBoolean(HFile.CACHE_BLOCKS_ON_WRITE_KEY,
-        false);
-    cacheIndexBlocksOnWrite = HFileBlockIndex.shouldCacheOnWrite(conf);
+    if (path != null)
+      cfStatsPrefix = "cf." + parseCfNameFromPath(path.toString());
+  }
 
-    this.conf = conf;
+  /**
+   * Parse the HFile path to figure out which table and column family it belongs
+   * to. This is used to maintain read statistics on a per-column-family basis.
+   *
+   * @param path
+   *          HFile path name
+   */
+  public static String parseCfNameFromPath(String path) {
+    String splits[] = path.split("/");
+    if (splits.length < 2) {
+      LOG.warn("Could not determine the table and column family of the "
+          + "HFile path " + path);
+      return "unknown";
+    }
 
-    if (cacheDataBlocksOnWrite || cacheIndexBlocksOnWrite)
-      initBlockCache();
+    return splits[splits.length - 2];
   }
 
   /**
@@ -238,6 +250,11 @@ public abstract class AbstractHFileWriter implements HFile.Writer {
   }
 
   @Override
+  public String getColumnFamilyName() {
+    return cfStatsPrefix;
+  }
+
+  @Override
   public String toString() {
     return "writer=" + (path != null ? path.toString() : null) + ", name="
         + name + ", compression=" + compressAlgo.getName();
@@ -275,13 +292,4 @@ public abstract class AbstractHFileWriter implements HFile.Writer {
         fs.getDefaultReplication(), fs.getDefaultBlockSize(),
         null);
   }
-
-  /** Initializes the block cache to use for cache-on-write */
-  protected void initBlockCache() {
-    if (blockCache == null) {
-      blockCache = StoreFile.getBlockCache(conf);
-      conf = null;  // This is all we need configuration for.
-    }
-  }
-
 }

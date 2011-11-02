@@ -22,6 +22,7 @@ package org.apache.hadoop.hbase.security;
 
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.util.Methods;
 import org.apache.hadoop.mapred.JobConf;
 import org.apache.hadoop.mapreduce.Job;
@@ -218,6 +219,17 @@ public abstract class User {
     private HadoopUser() {
       try {
         ugi = (UserGroupInformation) callStatic("getCurrentUGI");
+        if (ugi == null) {
+          // Secure Hadoop UGI will perform an implicit login if the current
+          // user is null.  Emulate the same behavior here for consistency
+          Configuration conf = HBaseConfiguration.create();
+          ugi = (UserGroupInformation) callStatic("login",
+              new Class[]{ Configuration.class }, new Object[]{ conf });
+          if (ugi != null) {
+            callStatic("setCurrentUser",
+                new Class[]{ UserGroupInformation.class }, new Object[]{ ugi });
+          }
+        }
       } catch (RuntimeException re) {
         throw re;
       } catch (Exception e) {

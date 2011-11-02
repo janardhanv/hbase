@@ -33,6 +33,7 @@ import org.apache.hadoop.fs.FSDataInputStream;
 import org.apache.hadoop.fs.FSDataOutputStream;
 
 import org.apache.hadoop.hbase.io.DoubleOutputStream;
+import org.apache.hadoop.hbase.io.hfile.HFileBlockInfo;
 import org.apache.hadoop.hbase.io.hfile.Compression.Algorithm;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.ClassSize;
@@ -73,7 +74,7 @@ import static org.apache.hadoop.hbase.io.hfile.Compression.Algorithm.NONE;
  * The version 2 block representation in the block cache is the same as above,
  * except that the data section is always uncompressed in the cache.
  */
-public class HFileBlock implements Cacheable {
+public class HFileBlock implements Cacheable, HFileBlockInfo {
 
   /** The size of a version 2 {@link HFile} block header */
   public static final int HEADER_SIZE = MAGIC_LENGTH + 2 * Bytes.SIZEOF_INT
@@ -154,6 +155,16 @@ public class HFileBlock implements Cacheable {
     if (fillHeader)
       overwriteHeader();
     this.offset = offset;
+  }
+
+  private String cfStatsPrefix = "cf.unknown";
+
+  public String getColumnFamilyName() {
+    return this.cfStatsPrefix;
+  }
+
+  public void setColumnFamilyName(String cfName) {
+    this.cfStatsPrefix = cfName;
   }
 
   /**
@@ -422,12 +433,11 @@ public class HFileBlock implements Cacheable {
 
     // If we are on heap, then we add the capacity of buf.
     if (buf != null) {
-      return ClassSize.align(ClassSize.OBJECT + 2 * ClassSize.REFERENCE + 3
+      return ClassSize.align(ClassSize.OBJECT + 3 * ClassSize.REFERENCE + 3
           * Bytes.SIZEOF_INT + 2 * Bytes.SIZEOF_LONG + BYTE_BUFFER_HEAP_SIZE)
           + ClassSize.align(buf.capacity());
     } else {
-
-      return ClassSize.align(ClassSize.OBJECT + 2 * ClassSize.REFERENCE + 3
+      return ClassSize.align(ClassSize.OBJECT + 3 * ClassSize.REFERENCE + 3
           * Bytes.SIZEOF_INT + 2 * Bytes.SIZEOF_LONG + BYTE_BUFFER_HEAP_SIZE);
     }
   }
@@ -485,10 +495,10 @@ public class HFileBlock implements Cacheable {
    * <ul>
    * <li>Construct an {@link HFileBlock.Writer}, providing a compression
    * algorithm
-   * <li>Call {@link Writer#startWriting(BlockType)} and get a data stream to
+   * <li>Call {@link Writer#startWriting(BlockType, boolean)} and get a data stream to
    * write to
    * <li>Write your data into the stream
-   * <li>Call {@link Writer#writeHeaderAndData()} as many times as you need to
+   * <li>Call {@link Writer#writeHeaderAndData(FSDataOutputStream)} as many times as you need to
    * store the serialized block into an external stream, or call
    * {@link Writer#getHeaderAndData()} to get it as a byte array.
    * <li>Repeat to write more blocks
@@ -576,8 +586,6 @@ public class HFileBlock implements Cacheable {
     private long prevOffset;
 
     /**
-     * @param blockType
-     *          block type to create
      * @param compressionAlgorithm
      *          compression algorithm to use
      */
@@ -707,7 +715,7 @@ public class HFileBlock implements Cacheable {
     }
 
     /**
-     * Similar to {@link #writeHeaderAndData(DataOutputStream)}, but records
+     * Similar to {@link #writeHeaderAndData(FSDataOutputStream)}, but records
      * the offset of this block so that it can be referenced in the next block
      * of the same type.
      *
@@ -854,7 +862,7 @@ public class HFileBlock implements Cacheable {
     }
 
     /**
-     * Similar to {@link #getUncompressedDataWithHeader()} but returns a byte
+     * Similar to {@link #getUncompressedBufferWithHeader()} but returns a byte
      * buffer.
      *
      * @return uncompressed block for caching on write in the form of a buffer
@@ -921,11 +929,9 @@ public class HFileBlock implements Cacheable {
     DataInputStream nextBlockAsStream(BlockType blockType) throws IOException;
   }
 
-  /**
-   * Just the basic ability to read blocks, providing optional hints of
-   * on-disk-size and/or uncompressed size.
-   */
-  public interface BasicReader {
+  /** A full-fledged reader with iteration ability. */
+  public interface FSReader {
+
     /**
      * Reads the block at the given offset in the file with the given on-disk
      * size and uncompressed size.
@@ -939,10 +945,6 @@ public class HFileBlock implements Cacheable {
      */
     HFileBlock readBlockData(long offset, long onDiskSize,
         int uncompressedSize, boolean pread) throws IOException;
-  }
-
-  /** A full-fledged reader with an iteration ability. */
-  public interface FSReader extends BasicReader {
 
     /**
      * Creates a block iterator over the given portion of the {@link HFile}.
@@ -1080,20 +1082,15 @@ public class HFileBlock implements Cacheable {
     /**
      * Decompresses data from the given stream using the configured compression
      * algorithm.
-     *
-     * @param boundedStream
+     * @param dest
+     * @param destOffset
+     * @param bufferedBoundedStream
      *          a stream to read compressed data from, bounded to the exact
      *          amount of compressed data
      * @param compressedSize
      *          compressed data size, header not included
      * @param uncompressedSize
      *          uncompressed data size, header not included
-     * @param header
-     *          the header to include before the decompressed data, or null.
-     *          Only the first {@link HFileBlock#HEADER_SIZE} bytes of the
-     *          buffer are included.
-     * @return the byte buffer containing the given header (optionally) and the
-     *         decompressed data
      * @throws IOException
      */
     protected void decompress(byte[] dest, int destOffset,
@@ -1451,7 +1448,6 @@ public class HFileBlock implements Cacheable {
           }
         }
       }
-
       b.offset = offset;
       return b;
     }

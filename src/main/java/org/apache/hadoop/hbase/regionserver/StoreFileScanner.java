@@ -24,9 +24,13 @@ import org.apache.commons.logging.Log;
 import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Scan;
+import org.apache.hadoop.hbase.io.hfile.HFile;
 import org.apache.hadoop.hbase.io.hfile.HFileScanner;
+import org.apache.hadoop.hbase.regionserver.StoreFile.Reader;
+import org.apache.hadoop.hbase.util.Bytes;
 
 import java.io.IOException;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -44,6 +48,19 @@ class StoreFileScanner implements KeyValueScanner {
   private final HFileScanner hfs;
   private KeyValue cur = null;
 
+  private boolean realSeekDone;
+  private boolean delayedReseek;
+  private KeyValue delayedSeekKV;
+
+  //The variable, realSeekDone, may cheat on store file scanner for the
+  // multi-column bloom-filter optimization.
+  // So this flag shows whether this storeFileScanner could do a reseek.
+  private boolean isReseekable = false;
+
+  private static final AtomicLong seekCount = new AtomicLong();
+
+  private ScanQueryMatcher matcher;
+
   /**
    * Implements a {@link KeyValueScanner} on top of the specified {@link HFileScanner}
    * @param hfs HFile scanner
@@ -58,14 +75,39 @@ class StoreFileScanner implements KeyValueScanner {
    * set of store files.
    */
   public static List<StoreFileScanner> getScannersForStoreFiles(
-      Collection<StoreFile> filesToCompact,
+      Collection<StoreFile> files,
       boolean cacheBlocks,
       boolean usePread) throws IOException {
-    List<StoreFileScanner> scanners =
-      new ArrayList<StoreFileScanner>(filesToCompact.size());
-    for (StoreFile file : filesToCompact) {
+    return getScannersForStoreFiles(files, cacheBlocks,
+                                   usePread, false);
+  }
+
+  /**
+   * Return an array of scanners corresponding to the given set of store files.
+   */
+  public static List<StoreFileScanner> getScannersForStoreFiles(
+      Collection<StoreFile> files, boolean cacheBlocks, boolean usePread,
+      boolean isCompaction) throws IOException {
+    return getScannersForStoreFiles(files, cacheBlocks, usePread, isCompaction,
+        null);
+  }
+
+  /**
+   * Return an array of scanners corresponding to the given set of store files,
+   * And set the ScanQueryMatcher for each store file scanner for further
+   * optimization
+   */
+  public static List<StoreFileScanner> getScannersForStoreFiles(
+      Collection<StoreFile> files, boolean cacheBlocks, boolean usePread,
+      boolean isCompaction, ScanQueryMatcher matcher) throws IOException {
+    List<StoreFileScanner> scanners = new ArrayList<StoreFileScanner>(
+        files.size());
+    for (StoreFile file : files) {
       StoreFile.Reader r = file.createReader();
-      scanners.add(r.getStoreFileScanner(cacheBlocks, usePread));
+      StoreFileScanner scanner = r.getStoreFileScanner(cacheBlocks, usePread,
+          isCompaction);
+      scanner.setScanQueryMatcher(matcher);
+      scanners.add(scanner);
     }
     return scanners;
   }
@@ -93,26 +135,38 @@ class StoreFileScanner implements KeyValueScanner {
   }
 
   public boolean seek(KeyValue key) throws IOException {
+    seekCount.incrementAndGet();
     try {
-      if(!seekAtOrAfter(hfs, key)) {
-        close();
-        return false;
+      try {
+        if(!seekAtOrAfter(hfs, key)) {
+          close();
+          return false;
+        }
+
+        this.isReseekable = true;
+        cur = hfs.getKeyValue();
+        return true;
+      } finally {
+        realSeekDone = true;
       }
-      cur = hfs.getKeyValue();
-      return true;
     } catch(IOException ioe) {
       throw new IOException("Could not seek " + this, ioe);
     }
   }
 
   public boolean reseek(KeyValue key) throws IOException {
+    seekCount.incrementAndGet();
     try {
-      if (!reseekAtOrAfter(hfs, key)) {
-        close();
-        return false;
+      try {
+        if (!reseekAtOrAfter(hfs, key)) {
+          close();
+          return false;
+        }
+        cur = hfs.getKeyValue();
+        return true;
+      } finally {
+        realSeekDone = true;
       }
-      cur = hfs.getKeyValue();
-      return true;
     } catch (IOException ioe) {
       throw new IOException("Could not seek " + this, ioe);
     }
@@ -167,4 +221,113 @@ class StoreFileScanner implements KeyValueScanner {
   public long getSequenceID() {
     return reader.getSequenceID();
   }
+
+  /**
+   * Pretend we have done a seek but don't do it yet, if possible. The hope is
+   * that we find requested columns in more recent files and won't have to seek
+   * in older files. Creates a fake key/value with the given row/column and the
+   * highest (most recent) possible timestamp we might get from this file. When
+   * users of such "lazy scanner" need to know the next KV precisely (e.g. when
+   * this scanner is at the top of the heap), they run {@link #enforceSeek()}.
+   * <p>
+   * Note that this function does guarantee that the current KV of this scanner
+   * will be advanced to at least the given KV. Because of this, it does have
+   * to do a real seek in cases when the seek timestamp is older than the
+   * highest timestamp of the file, e.g. when we are trying to seek to the next
+   * row/column and use OLDEST_TIMESTAMP in the seek key.
+   */
+  @Override
+  public boolean requestSeek(KeyValue kv, boolean forward, boolean useBloom)
+      throws IOException {
+    if (kv.getFamilyLength() == 0) {
+      useBloom = false;
+    }
+
+    boolean haveToSeek = true;
+    if (useBloom) {
+      // check ROWCOL Bloom filter first.
+      if (reader.getBloomFilterType() == StoreFile.BloomType.ROWCOL) {
+        haveToSeek = reader.passesGeneralBloomFilter(kv.getBuffer(),
+            kv.getRowOffset(), kv.getRowLength(), kv.getBuffer(),
+            kv.getQualifierOffset(), kv.getQualifierLength());
+      } else if (this.matcher != null && !matcher.hasNullColumnInQuery() &&
+          kv.isDeleteFamily()) {
+        // if there is no such delete family kv in the store file,
+        // then no need to seek.
+        haveToSeek = reader.passesDeleteFamilyBloomFilter(kv.getBuffer(),
+            kv.getRowOffset(), kv.getRowLength());
+      }
+    }
+
+    delayedReseek = forward;
+    delayedSeekKV = kv;
+
+    if (haveToSeek) {
+      // This row/column might be in this store file (or we did not use the
+      // Bloom filter), so we still need to seek.
+      realSeekDone = false;
+      long maxTimestampInFile = reader.getMaxTimestamp();
+      long seekTimestamp = kv.getTimestamp();
+      if (seekTimestamp > maxTimestampInFile) {
+        // Create a fake key that is not greater than the real next key.
+        // (Lower timestamps correspond to higher KVs.)
+        // To understand this better, consider that we are asked to seek to
+        // a higher timestamp than the max timestamp in this file. We know that
+        // the next point when we have to consider this file again is when we
+        // pass the max timestamp of this file (with the same row/column).
+        cur = kv.createFirstOnRowColTS(maxTimestampInFile);
+      } else {
+        // This will be the case e.g. when we need to seek to the next
+        // row/column, and we don't know exactly what they are, so we set the
+        // seek key's timestamp to OLDEST_TIMESTAMP to skip the rest of this
+        // row/column.
+        enforceSeek();
+      }
+      return cur != null;
+    }
+
+    // Multi-column Bloom filter optimization.
+    // Create a fake key/value, so that this scanner only bubbles up to the top
+    // of the KeyValueHeap in StoreScanner after we scanned this row/column in
+    // all other store files. The query matcher will then just skip this fake
+    // key/value and the store scanner will progress to the next column. This
+    // is obviously not a "real real" seek, but unlike the fake KV earlier in
+    // this method, we want this to be propagated to ScanQueryMatcher.
+    cur = kv.createLastOnRowCol();
+
+    realSeekDone = true;
+    return true;
+  }
+
+  Reader getReaderForTesting() {
+    return reader;
+  }
+
+  @Override
+  public boolean realSeekDone() {
+    return realSeekDone;
+  }
+
+  @Override
+  public void enforceSeek() throws IOException {
+    if (realSeekDone)
+      return;
+
+    if (delayedReseek && this.isReseekable) {
+      reseek(delayedSeekKV);
+    } else {
+      seek(delayedSeekKV);
+    }
+  }
+
+  public void setScanQueryMatcher(ScanQueryMatcher matcher) {
+    this.matcher = matcher;
+  }
+
+  // Test methods
+
+  static final long getSeekCount() {
+    return seekCount.get();
+  }
+
 }

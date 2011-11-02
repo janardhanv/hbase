@@ -56,6 +56,7 @@ import org.apache.hadoop.hbase.regionserver.wal.WALEdit;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.EnvironmentEdgeManager;
 import org.apache.hadoop.hbase.util.FSUtils;
+import org.apache.hadoop.hbase.util.Threads;
 import org.apache.hadoop.hbase.util.JVMClusterUtil.RegionServerThread;
 import org.apache.hadoop.hbase.zookeeper.ZKAssign;
 import org.apache.hadoop.hbase.zookeeper.ZKSplitLog;
@@ -82,11 +83,6 @@ public class TestDistributedLogSplitting {
   Configuration conf;
   HBaseTestingUtility TEST_UTIL;
 
-  @Before
-  public void before() throws Exception {
-
-  }
-
   private void startCluster(int num_rs) throws Exception{
     ZKSplitLog.Counters.resetCounters();
     LOG.info("Starting cluster");
@@ -98,11 +94,14 @@ public class TestDistributedLogSplitting {
     LOG.info("Waiting for active/ready master");
     cluster.waitForActiveAndReadyMaster();
     master = cluster.getMaster();
+    while (cluster.getLiveRegionServerThreads().size() < num_rs) {
+      Threads.sleep(1);
+    }
   }
 
   @After
   public void after() throws Exception {
-    cluster.shutdown();
+    TEST_UTIL.shutdownMiniCluster();
   }
 
   @Test (timeout=300000)
@@ -111,7 +110,7 @@ public class TestDistributedLogSplitting {
     final int NUM_REGIONS_TO_CREATE = 40;
     final int NUM_ROWS_PER_REGION = 100;
 
-    startCluster(NUM_RS);
+    startCluster(NUM_RS); // NUM_RS=6.
 
     ZooKeeperWatcher zkw = new ZooKeeperWatcher(conf,
         "distributed log splitting test", null);
@@ -361,20 +360,22 @@ public class TestDistributedLogSplitting {
     int n = hris.size();
     int[] counts = new int[n];
     int j = 0;
-    for (int i = 0; i < num_edits; i += 1) {
-      WALEdit e = new WALEdit();
-      byte [] row = Bytes.toBytes("r" + Integer.toString(i));
-      byte [] family = Bytes.toBytes("f");
-      byte [] qualifier = Bytes.toBytes("c" + Integer.toString(i));
-      e.add(new KeyValue(row, family, qualifier,
-          System.currentTimeMillis(), value));
-      // LOG.info("Region " + i + ": " + e);
-      j++;
-      log.append(hris.get(j % n), table, e, System.currentTimeMillis(), htd);
-      counts[j % n] += 1;
-      // if ((i % 8096) == 0) {
+    if (n > 0) {
+      for (int i = 0; i < num_edits; i += 1) {
+        WALEdit e = new WALEdit();
+        byte [] row = Bytes.toBytes("r" + Integer.toString(i));
+        byte [] family = Bytes.toBytes("f");
+        byte [] qualifier = Bytes.toBytes("c" + Integer.toString(i));
+        e.add(new KeyValue(row, family, qualifier,
+            System.currentTimeMillis(), value));
+        // LOG.info("Region " + i + ": " + e);
+        j++;
+        log.append(hris.get(j % n), table, e, System.currentTimeMillis(), htd);
+        counts[j % n] += 1;
+        // if ((i % 8096) == 0) {
         // log.sync();
-      //  }
+        //  }
+      }
     }
     log.sync();
     log.close();

@@ -28,12 +28,11 @@ import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HServerInfo;
 import org.apache.hadoop.hbase.NotServingRegionException;
 import org.apache.hadoop.hbase.Stoppable;
+import org.apache.hadoop.hbase.client.Append;
 import org.apache.hadoop.hbase.client.Delete;
 import org.apache.hadoop.hbase.client.Get;
 import org.apache.hadoop.hbase.client.Increment;
 import org.apache.hadoop.hbase.client.MultiAction;
-import org.apache.hadoop.hbase.client.MultiPut;
-import org.apache.hadoop.hbase.client.MultiPutResponse;
 import org.apache.hadoop.hbase.client.MultiResponse;
 import org.apache.hadoop.hbase.client.Put;
 import org.apache.hadoop.hbase.client.Result;
@@ -216,6 +215,19 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
   throws IOException;
 
   /**
+   * Appends values to one or more columns values in a row. Optionally
+   * Returns the updated keys after the append.
+   * <p>
+   * This operation does not appear atomic to readers. Appends are done
+   * under a row lock but readers do not take row locks.
+   * @param regionName region name
+   * @param append Append operation
+   * @return changed cells (maybe null)
+   */
+  public Result append(byte[] regionName, Append append)
+  throws IOException;
+
+  /**
    * Increments one or more columns values in a row.  Returns the
    * updated keys after the increment.
    * <p>
@@ -314,15 +326,6 @@ public interface HRegionInterface extends VersionedProtocol, Stoppable, Abortabl
    * @throws IOException
    */
   public <R> MultiResponse multi(MultiAction<R> multi) throws IOException;
-
-  /**
-   * Multi put for putting multiple regions worth of puts at once.
-   *
-   * @param puts the request
-   * @return the reply
-   * @throws IOException e
-   */
-  public MultiPutResponse multiPut(MultiPut puts) throws IOException;
 
   /**
    * Bulk load an HFile into an open region

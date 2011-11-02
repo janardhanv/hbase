@@ -130,6 +130,13 @@ public abstract class Mutation extends OperationWithAttributes {
   }
 
   /**
+   * Method for setting the put's familyMap
+   */
+  public void setFamilyMap(Map<byte [], List<KeyValue>> map) {
+    this.familyMap = map;
+  }
+
+  /**
    * Method to check if the familyMap is empty
    * @return true if empty, false otherwise
    */
@@ -194,5 +201,23 @@ public abstract class Mutation extends OperationWithAttributes {
       return HConstants.DEFAULT_CLUSTER_ID;
     }
     return new UUID(Bytes.toLong(attr,0), Bytes.toLong(attr, Bytes.SIZEOF_LONG));
+  }
+
+  /**
+   * @return the total number of KeyValues
+   */
+  public int size() {
+    int size = 0;
+    for(List<KeyValue> kvList : this.familyMap.values()) {
+      size += kvList.size();
+    }
+    return size;
+  }
+
+  /**
+   * @return the number of different families
+   */
+  public int numFamilies() {
+    return familyMap.size();
   }
 }

@@ -45,8 +45,9 @@ import org.apache.hadoop.io.compress.GzipCodec;
  * instead.</p>
  */
 public class TestHFilePerformance extends TestCase {
+  private static HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
   private static String ROOT_DIR =
-    HBaseTestingUtility.getTestDir("TestHFilePerformance").toString();
+    TEST_UTIL.getDataTestDir("TestHFilePerformance").toString();
   private FileSystem fs;
   private Configuration conf;
   private long startTimeEpoch;
@@ -157,7 +158,8 @@ public class TestHFilePerformance extends TestCase {
 
     if ("HFile".equals(fileType)){
         System.out.println("HFile write method: ");
-        HFile.Writer writer = HFile.getWriterFactory(conf).createWriter(fout,
+        HFile.Writer writer =
+          HFile.getWriterFactory(conf).createWriter(fout,
              minBlockSize, codecName, null);
 
         // Writing value in one shot.
@@ -237,7 +239,7 @@ public class TestHFilePerformance extends TestCase {
 
     if ("HFile".equals(fileType)){
         HFile.Reader reader = HFile.createReader(path, fs.open(path),
-          fs.getFileStatus(path).getLen(), null, false, false);
+          fs.getFileStatus(path).getLen(), new CacheConfig(conf));
         reader.loadFileInfo();
         switch (method) {
 

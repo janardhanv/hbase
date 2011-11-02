@@ -205,8 +205,16 @@ public class KeyValue implements Writable, HeapSize {
   private int length = 0;
 
   // the row cached
-  private byte [] rowCache = null;
+  private volatile byte [] rowCache = null;
 
+  /**
+   * @return True if a delete type, a {@link KeyValue.Type#Delete} or
+   * a {KeyValue.Type#DeleteFamily} or a {@link KeyValue.Type#DeleteColumn}
+   * KeyValue type.
+   */
+  public static boolean isDelete(byte t) {
+    return Type.Delete.getCode() <= t && t <= Type.DeleteFamily.getCode();
+  }
 
   /** Here be dragons **/
 
@@ -403,6 +411,82 @@ public class KeyValue implements Writable, HeapSize {
         timestamp, type, value, voffset, vlength);
     this.length = bytes.length;
     this.offset = 0;
+  }
+
+  /**
+   * Constructs an empty KeyValue structure, with specified sizes.
+   * This can be used to partially fill up KeyValues.
+   * <p>
+   * Column is split into two fields, family and qualifier.
+   * @param rlength row length
+   * @param flength family length
+   * @param qlength qualifier length
+   * @param timestamp version timestamp
+   * @param type key type
+   * @param vlength value length
+   * @throws IllegalArgumentException
+   */
+  public KeyValue(final int rlength,
+      final int flength,
+      final int qlength,
+      final long timestamp, final Type type,
+      final int vlength) {
+    this.bytes = createEmptyByteArray(rlength,
+        flength, qlength,
+        timestamp, type, vlength);
+    this.length = bytes.length;
+    this.offset = 0;
+  }
+
+  /**
+   * Create an empty byte[] representing a KeyValue
+   * All lengths are preset and can be filled in later.
+   * @param rlength
+   * @param flength
+   * @param qlength
+   * @param timestamp
+   * @param type
+   * @param vlength
+   * @return The newly created byte array.
+   */
+  static byte[] createEmptyByteArray(final int rlength, int flength,
+      int qlength, final long timestamp, final Type type, int vlength) {
+    if (rlength > Short.MAX_VALUE) {
+      throw new IllegalArgumentException("Row > " + Short.MAX_VALUE);
+    }
+    if (flength > Byte.MAX_VALUE) {
+      throw new IllegalArgumentException("Family > " + Byte.MAX_VALUE);
+    }
+    // Qualifier length
+    if (qlength > Integer.MAX_VALUE - rlength - flength) {
+      throw new IllegalArgumentException("Qualifier > " + Integer.MAX_VALUE);
+    }
+    // Key length
+    long longkeylength = KEY_INFRASTRUCTURE_SIZE + rlength + flength + qlength;
+    if (longkeylength > Integer.MAX_VALUE) {
+      throw new IllegalArgumentException("keylength " + longkeylength + " > " +
+        Integer.MAX_VALUE);
+    }
+    int keylength = (int)longkeylength;
+    // Value length
+    if (vlength > HConstants.MAXIMUM_VALUE_LENGTH) { // FindBugs INT_VACUOUS_COMPARISON
+      throw new IllegalArgumentException("Valuer > " +
+          HConstants.MAXIMUM_VALUE_LENGTH);
+    }
+
+    // Allocate right-sized byte array.
+    byte [] bytes = new byte[KEYVALUE_INFRASTRUCTURE_SIZE + keylength + vlength];
+    // Write the correct size markers
+    int pos = 0;
+    pos = Bytes.putInt(bytes, pos, keylength);
+    pos = Bytes.putInt(bytes, pos, vlength);
+    pos = Bytes.putShort(bytes, pos, (short)(rlength & 0x0000ffff));
+    pos += rlength;
+    pos = Bytes.putByte(bytes, pos, (byte)(flength & 0x0000ff));
+    pos += flength + qlength;
+    pos = Bytes.putLong(bytes, pos, timestamp);
+    pos = Bytes.putByte(bytes, pos, type.getCode());
+    return bytes;
   }
 
   /**
@@ -911,8 +995,11 @@ public class KeyValue implements Writable, HeapSize {
     if (rowCache == null) {
       int o = getRowOffset();
       short l = getRowLength();
-      rowCache = new byte[l];
-      System.arraycopy(getBuffer(), o, rowCache, 0, l);
+      // initialize and copy the data into a local variable
+      // in case multiple threads race here.
+      byte local[] = new byte[l];
+      System.arraycopy(getBuffer(), o, local, 0, l);
+      rowCache = local; // volatile assign
     }
     return rowCache;
   }
@@ -959,14 +1046,14 @@ public class KeyValue implements Writable, HeapSize {
    * KeyValue type.
    */
   public boolean isDelete() {
-    int t = getType();
-    return Type.Delete.getCode() <= t && t <= Type.DeleteFamily.getCode();
+    return KeyValue.isDelete(getType());
   }
 
   /**
    * @return True if this KV is a {@link KeyValue.Type#Delete} type.
    */
   public boolean isDeleteType() {
+    // TODO: Fix this method name vis-a-vis isDelete!
     return getType() == Type.Delete.getCode();
   }
 
@@ -1650,20 +1737,6 @@ public class KeyValue implements Writable, HeapSize {
   }
 
   /**
-   * @param row - row key (arbitrary byte array)
-   * @param c column - {@link #parseColumn(byte[])} is called to split
-   * the column.
-   * @param ts - timestamp
-   * @return First possible key on passed <code>row</code>, column and timestamp
-   * @deprecated
-   */
-  public static KeyValue createFirstOnRow(final byte [] row, final byte [] c,
-      final long ts) {
-    byte [][] split = parseColumn(c);
-    return new KeyValue(row, split[0], split[1], ts, Type.Maximum);
-  }
-
-  /**
    * Create a KeyValue for the specified row, family and qualifier that would be
    * smaller than all other possible KeyValues that have the same row,family,qualifier.
    * Used for seeking.
@@ -1675,6 +1748,21 @@ public class KeyValue implements Writable, HeapSize {
   public static KeyValue createFirstOnRow(final byte [] row, final byte [] family,
       final byte [] qualifier) {
     return new KeyValue(row, family, qualifier, HConstants.LATEST_TIMESTAMP, Type.Maximum);
+  }
+
+  /**
+   * Create a Delete Family KeyValue for the specified row and family that would
+   * be smaller than all other possible Delete Family KeyValues that have the
+   * same row and family.
+   * Used for seeking.
+   * @param row - row key (arbitrary byte array)
+   * @param family - family name
+   * @return First Delete Family possible key on passed <code>row</code>.
+   */
+  public static KeyValue createFirstDeleteFamilyOnRow(final byte [] row,
+      final byte [] family) {
+    return new KeyValue(row, family, null, HConstants.LATEST_TIMESTAMP,
+        Type.DeleteFamily);
   }
 
   /**
@@ -1737,6 +1825,37 @@ public class KeyValue implements Writable, HeapSize {
     return new KeyValue(row, roffset, rlength, family,
         foffset, flength, qualifier, qoffset, qlength,
         HConstants.OLDEST_TIMESTAMP, Type.Minimum, null, 0, 0);
+  }
+
+  /**
+   * Similar to {@link #createLastOnRow(byte[], int, int, byte[], int, int,
+   * byte[], int, int)} but creates the last key on the row/column of this KV
+   * (the value part of the returned KV is always empty). Used in creating
+   * "fake keys" for the multi-column Bloom filter optimization to skip the
+   * row/column we already know is not in the file.
+   * @return the last key on the row/column of the given key-value pair
+   */
+  public KeyValue createLastOnRowCol() {
+    return new KeyValue(
+        bytes, getRowOffset(), getRowLength(),
+        bytes, getFamilyOffset(), getFamilyLength(),
+        bytes, getQualifierOffset(), getQualifierLength(),
+        HConstants.OLDEST_TIMESTAMP, Type.Minimum, null, 0, 0);
+  }
+
+  /**
+   * Creates the first KV with the row/family/qualifier of this KV and the
+   * given timestamp. Uses the "maximum" KV type that guarantees that the new
+   * KV is the lowest possible for this combination of row, family, qualifier,
+   * and timestamp. This KV's own timestamp is ignored. While this function
+   * copies the value from this KV, it is normally used on key-only KVs.
+   */
+  public KeyValue createFirstOnRowColTS(long ts) {
+    return new KeyValue(
+        bytes, getRowOffset(), getRowLength(),
+        bytes, getFamilyOffset(), getFamilyLength(),
+        bytes, getQualifierOffset(), getQualifierLength(),
+        ts, Type.Maximum, bytes, getValueOffset(), getValueLength());
   }
 
   /**

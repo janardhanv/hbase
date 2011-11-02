@@ -318,24 +318,6 @@ public class Put extends Mutation
     return list;
   }
 
-  /**
-   * @return the number of different families included in this put
-   */
-  public int numFamilies() {
-    return familyMap.size();
-  }
-
-  /**
-   * @return the total number of KeyValues that will be added with this put
-   */
-  public int size() {
-    int size = 0;
-    for(List<KeyValue> kvList : this.familyMap.values()) {
-      size += kvList.size();
-    }
-    return size;
-  }
-
   //HeapSize
   public long heapSize() {
     long heapsize = OVERHEAD;
@@ -423,20 +405,5 @@ public class Put extends Mutation
       }
     }
     writeAttributes(out);
-  }
-
-  /**
-   * Add the specified column and value, with the specified timestamp as
-   * its version to this Put operation.
-   * @param column Old style column name with family and qualifier put together
-   * with a colon.
-   * @param ts version timestamp
-   * @param value column value
-   * @deprecated use {@link #add(byte[], byte[], long, byte[])} instead
-   * @return true
-   */
-  public Put add(byte [] column, long ts, byte [] value) {
-    byte [][] parts = KeyValue.parseColumn(column);
-    return add(parts[0], parts[1], ts, value);
   }
 }

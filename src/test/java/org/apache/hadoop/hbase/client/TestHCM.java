@@ -19,6 +19,10 @@
  */
 package org.apache.hadoop.hbase.client;
 
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
+import static org.junit.Assert.assertTrue;
+
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -27,6 +31,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.HBaseConfiguration;
 import org.apache.hadoop.hbase.HBaseTestingUtility;
@@ -38,12 +44,6 @@ import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-
-import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertNotNull;
-import static org.junit.Assert.assertTrue;
 
 /**
  * This class is for testing HCM features
@@ -105,15 +105,11 @@ public class TestHCM {
       //      to remove them, so the LRU strategy does not work.
       configuration.set("someotherkey", String.valueOf(_randy.nextInt()));
       last = connection;
-      LOG.info("Cache Size: "
-          + getHConnectionManagerCacheSize() + ", Valid Keys: "
-          + getValidKeyCount());
+      LOG.info("Cache Size: " + getHConnectionManagerCacheSize());
       Thread.sleep(100);
     }
     Assert.assertEquals(1,
       getHConnectionManagerCacheSize());
-    Assert.assertEquals(1,
-      getValidKeyCount());
   }
 
   private static int getHConnectionManagerCacheSize()
@@ -124,21 +120,6 @@ public class TestHCM {
     cacheField.setAccessible(true);
     Map<?, ?> cache = (Map<?, ?>) cacheField.get(null);
     return cache.size();
-  }
-
-  private static int getValidKeyCount() throws SecurityException,
-  NoSuchFieldException, IllegalArgumentException,
-  IllegalAccessException {
-    Field cacheField =
-      HConnectionManager.class.getDeclaredField("HBASE_INSTANCES");
-    cacheField.setAccessible(true);
-    Map<?, ?> cache = (Map<?, ?>) cacheField.get(null);
-    List<Object> keys = new ArrayList<Object>(cache.keySet());
-    Set<Object> values = new HashSet<Object>();
-    for (Object key : keys) {
-      values.add(cache.get(key));
-    }
-    return values.size();
   }
 
   /**
@@ -220,8 +201,7 @@ public class TestHCM {
 
       previousConnection = currentConnection;
       LOG.info("The current HConnectionManager#HBASE_INSTANCES cache size is: "
-          + getHConnectionManagerCacheSize()
-          + ", and the number of valid keys is: " + getValidKeyCount());
+          + getHConnectionManagerCacheSize());
       Thread.sleep(50);
     }
   }

@@ -185,10 +185,6 @@ public final class HConstants {
   /** The file name used to store HTD in HDFS  */
   public static final String TABLEINFO_NAME = ".tableinfo";
 
-  /** The metaupdated column qualifier */
-  public static final byte [] META_MIGRATION_QUALIFIER = Bytes.toBytes("metamigrated");
-
-
   /** Default maximum file size */
   public static final long DEFAULT_MAX_FILE_SIZE = 256 * 1024 * 1024;
 
@@ -224,11 +220,6 @@ public final class HConstants {
   // be the first to be reassigned if the server(s) they are being served by
   // should go down.
 
-
-  //
-  // New stuff.  Making a slow transition.
-  //
-
   /** The root table's name.*/
   public static final byte [] ROOT_TABLE_NAME = Bytes.toBytes("-ROOT-");
 
@@ -258,6 +249,22 @@ public final class HConstants {
 
   /** The upper-half split region column qualifier */
   public static final byte [] SPLITB_QUALIFIER = Bytes.toBytes("splitB");
+
+  /**
+   * The meta table version column qualifier.
+   * We keep current version of the meta table in this column in <code>-ROOT-</code>
+   * table: i.e. in the 'info:v' column.
+   */
+  public static final byte [] META_VERSION_QUALIFIER = Bytes.toBytes("v");
+
+  /**
+   * The current version of the meta table.
+   * Before this the meta had HTableDescriptor serialized into the HRegionInfo;
+   * i.e. pre-hbase 0.92.  There was no META_VERSION column in the root table
+   * in this case.  The presence of a version and its value being zero indicates
+   * meta is up-to-date.
+   */
+  public static final short META_VERSION = 0;
 
   // Other constants
 
@@ -441,13 +448,13 @@ public final class HConstants {
   public static int DEFAULT_HBASE_META_SCANNER_CACHING = 100;
 
   /**
-   * Parameter name for unique identifier for this {@link Configuration}
-   * instance. If there are two or more {@link Configuration} instances that,
+   * Parameter name for unique identifier for this {@link org.apache.hadoop.conf.Configuration}
+   * instance. If there are two or more {@link org.apache.hadoop.conf.Configuration} instances that,
    * for all intents and purposes, are the same except for their instance ids,
-   * then they will not be able to share the same {@link Connection} instance.
+   * then they will not be able to share the same {@link org.apache.hadoop.hbase.client.HConnection} instance.
    * On the other hand, even if the instance ids are the same, it could result
-   * in non-shared {@link Connection} instances if some of the other connection
-   * parameters differ.
+   * in non-shared {@link org.apache.hadoop.hbase.client.HConnection}
+   * instances if some of the other connection parameters differ.
    */
   public static String HBASE_CLIENT_INSTANCE_ID = "hbase.client.instance.id";
 

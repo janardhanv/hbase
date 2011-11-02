@@ -571,6 +571,9 @@ public class PerformanceEvaluation {
     TextOutputFormat.setOutputPath(job, new Path(inputDir,"outputs"));
 
     TableMapReduceUtil.addDependencyJars(job);
+    // Add a Class from the hbase.jar so it gets registered too.
+    TableMapReduceUtil.addDependencyJars(job.getConfiguration(),
+      org.apache.hadoop.hbase.util.Bytes.class);
     if (User.isSecurityEnabled()) {
       try {
         User.getCurrent().obtainAuthTokenForJob(job.getConfiguration(), job);

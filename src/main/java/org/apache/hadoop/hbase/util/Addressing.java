@@ -25,6 +25,7 @@ import java.net.InetSocketAddress;
  * Utility for network addresses, resolving and naming.
  */
 public class Addressing {
+  public static final String VALID_PORT_REGEX = "[\\d]+";
   public static final String HOSTNAME_PORT_SEPARATOR = ":";
 
   /**

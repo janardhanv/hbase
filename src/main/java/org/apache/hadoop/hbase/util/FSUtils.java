@@ -19,29 +19,6 @@
  */
 package org.apache.hadoop.hbase.util;
 
-import org.apache.commons.logging.Log;
-import org.apache.commons.logging.LogFactory;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.BlockLocation;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.PathFilter;
-import org.apache.hadoop.hbase.HConstants;
-import org.apache.hadoop.hbase.HDFSBlocksDistribution;
-import org.apache.hadoop.hbase.HRegionInfo;
-import org.apache.hadoop.hbase.HTableDescriptor;
-import org.apache.hadoop.hbase.RemoteExceptionHandler;
-import org.apache.hadoop.hbase.master.HMaster;
-import org.apache.hadoop.hbase.regionserver.HRegion;
-import org.apache.hadoop.hdfs.DistributedFileSystem;
-import org.apache.hadoop.hdfs.protocol.FSConstants;
-import org.apache.hadoop.io.SequenceFile;
-import org.apache.hadoop.util.ReflectionUtils;
-import org.apache.hadoop.util.StringUtils;
-
 import java.io.DataInputStream;
 import java.io.EOFException;
 import java.io.FileNotFoundException;
@@ -52,6 +29,30 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.BlockLocation;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.PathFilter;
+import org.apache.hadoop.fs.permission.FsPermission;
+import org.apache.hadoop.hbase.HConstants;
+import org.apache.hadoop.hbase.HDFSBlocksDistribution;
+import org.apache.hadoop.hbase.HRegionInfo;
+import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.hbase.RemoteExceptionHandler;
+import org.apache.hadoop.hbase.master.HMaster;
+import org.apache.hadoop.hbase.regionserver.HRegion;
+import org.apache.hadoop.hdfs.DistributedFileSystem;
+import org.apache.hadoop.hdfs.server.namenode.SafeModeException;
+import org.apache.hadoop.io.SequenceFile;
+import org.apache.hadoop.util.ReflectionUtils;
+import org.apache.hadoop.util.StringUtils;
 
 /**
  * Utility methods for interacting with the underlying file system.
@@ -151,21 +152,37 @@ public abstract class FSUtils {
   }
 
   /**
+   * Utility to check if provided FS is in safemode.
+   * @return true if dfs is in safemode, false otherwise.
+   *
+   */
+  private static boolean isInSafeMode(FileSystem fs, Path rootDir)
+      throws IOException {
+    // Refactored safe-mode check for HBASE-4510
+    if (fs instanceof DistributedFileSystem) {
+      FsPermission rootPerm = fs.getFileStatus(rootDir).getPermission();
+      try {
+        // Should be harmless to set back the path we retrieved.
+        // The first check server-side is the safemode, so if
+        // other exceptions are spewed out, we're not interested.
+        fs.setPermission(rootDir, rootPerm);
+      } catch (SafeModeException e) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
    * Check whether dfs is in safemode. 
-   * @param conf 
-   * @return true if dfs is in safemode.
-   * @throws IOException
+   * @param conf Configuration to use
+   * @throws IOException if dfs is in safemode
    */
   public static void checkDfsSafeMode(final Configuration conf) 
   throws IOException {
-    boolean isInSafeMode = false;
+    Path rootDir = getRootDir(conf);
     FileSystem fs = FileSystem.get(conf);
-    if (fs instanceof DistributedFileSystem) {
-      DistributedFileSystem dfs = (DistributedFileSystem)fs;
-      // Check whether dfs is on safemode.
-      isInSafeMode = dfs.setSafeMode(FSConstants.SafeModeAction.SAFEMODE_GET);
-    }
-    if (isInSafeMode) {
+    if (isInSafeMode(fs, rootDir)) {
       throw new IOException("File system is in safemode, it can't be written now");
     }
   }
@@ -435,11 +452,10 @@ public abstract class FSUtils {
   public static void waitOnSafeMode(final Configuration conf,
     final long wait)
   throws IOException {
+    Path rootDir = getRootDir(conf);
     FileSystem fs = FileSystem.get(conf);
-    if (!(fs instanceof DistributedFileSystem)) return;
-    DistributedFileSystem dfs = (DistributedFileSystem)fs;
     // Make sure dfs is not in safe mode
-    while (dfs.setSafeMode(FSConstants.SafeModeAction.SAFEMODE_GET)) {
+    while (isInSafeMode(fs, rootDir)) {
       LOG.info("Waiting for dfs to exit safe mode...");
       try {
         Thread.sleep(wait);
@@ -508,7 +524,7 @@ public abstract class FSUtils {
   /**
    * Compute HDFS blocks distribution of a given file, or a portion of the file
    * @param fs file system
-   * @param FileStatus file status of the file
+   * @param status file status of the file
    * @param start start position of the portion
    * @param length length of the portion 
    * @return The HDFS blocks distribution
@@ -1034,51 +1050,62 @@ public abstract class FSUtils {
 
   /**
    * Called when we are creating a table to write out the tables' descriptor.
-   * 
    * @param fs
    * @param hTableDescriptor
    * @param tableDir
+   * @param forceCreation True if we are to force creation
    * @throws IOException
    */
   private static void writeTableDescriptor(FileSystem fs,
       HTableDescriptor hTableDescriptor, Path tableDir, boolean forceCreation)
-      throws IOException {
+  throws IOException {
     // Create in tmpdir and then move into place in case we crash after
     // create but before close. If we don't successfully close the file,
     // subsequent region reopens will fail the below because create is
     // registered in NN.
     Path tableInfoPath = new Path(tableDir, HConstants.TABLEINFO_NAME);
     Path tmpPath = new Path(new Path(tableDir, ".tmp"),
-        HConstants.TABLEINFO_NAME);
+      HConstants.TABLEINFO_NAME + "." + System.currentTimeMillis());
     LOG.info("TableInfoPath = " + tableInfoPath + " tmpPath = " + tmpPath);
     try {
       writeHTD(fs, tmpPath, hTableDescriptor);
     } catch (IOException e) {
       LOG.error("Unable to write the tabledescriptor in the path" + tmpPath
           + ".", e);
+      fs.delete(tmpPath, true);
       throw e;
     }
-    if (forceCreation) {
-      if (!fs.delete(tableInfoPath, false)) {
-        String errMsg = "Unable to delete " + tableInfoPath
-            + " while forcefully writing the table descriptor.";
+    // TODO: The below is less than ideal and likely error prone.  There is a
+    // better rename in hadoops after 0.20 that takes rename options (this has
+    // its own issues according to mighty Todd in that old readers may fail
+    // as we cross the renme transition) but until then, we have this
+    // forceCreation flag which does a delete and then we rename so there is a
+    // hole.  Need to fix.
+    try {
+      if (forceCreation) {
+        if (fs.exists(tableInfoPath) && !fs.delete(tableInfoPath, false)) {
+          String errMsg = "Unable to delete " + tableInfoPath
+              + " while forcefully writing the table descriptor.";
+          LOG.error(errMsg);
+          throw new IOException(errMsg);
+        }
+      }
+      if (!fs.rename(tmpPath, tableInfoPath)) {
+        String errMsg = "Unable to rename " + tmpPath + " to " + tableInfoPath;
         LOG.error(errMsg);
         throw new IOException(errMsg);
+      } else {
+        LOG.info("TableDescriptor stored. TableInfoPath = " + tableInfoPath);
       }
-    }
-    if (!fs.rename(tmpPath, tableInfoPath)) {
-      String errMsg = "Unable to rename " + tmpPath + " to " + tableInfoPath;
-      LOG.error(errMsg);
-      throw new IOException(errMsg);
-    } else {
-      LOG.info("TableDescriptor stored. TableInfoPath = " + tableInfoPath);
+    } finally {
+      fs.delete(tmpPath, true);
     }
   }
 
   /**
    * Update table descriptor
    * @param fs
-   * @param conf
+   * @param rootdir
    * @param hTableDescriptor
    * @throws IOException
    */
@@ -1087,9 +1114,9 @@ public abstract class FSUtils {
   throws IOException {
     Path tableInfoPath =
       getTableInfoPath(rootdir, hTableDescriptor.getNameAsString());
-    writeHTD(fs, tableInfoPath, hTableDescriptor);
-    LOG.info("updateHTableDescriptor. Updated tableinfo in HDFS under " +
-      tableInfoPath + " For HTD => " + hTableDescriptor.toString());
+    writeTableDescriptor(fs, hTableDescriptor, tableInfoPath.getParent(), true);
+    LOG.info("Updated tableinfo=" + tableInfoPath + " to " +
+      hTableDescriptor.toString());
   }
 
   private static void writeHTD(final FileSystem fs, final Path p,

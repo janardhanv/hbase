@@ -51,6 +51,7 @@ import org.apache.hadoop.hbase.HRegionInfo;
 import org.apache.hadoop.hbase.HTableDescriptor;
 import org.apache.hadoop.hbase.KeyValue;
 import org.apache.hadoop.hbase.client.Get;
+import org.apache.hadoop.hbase.io.hfile.CacheConfig;
 import org.apache.hadoop.hbase.monitoring.MonitoredTask;
 import org.apache.hadoop.hbase.regionserver.wal.HLog;
 import org.apache.hadoop.hbase.security.User;
@@ -91,7 +92,9 @@ public class TestStore extends TestCase {
   long id = System.currentTimeMillis();
   Get get = new Get(row);
 
-  private static final String DIR = HBaseTestingUtility.getTestDir() + "/TestStore/";
+  private HBaseTestingUtility TEST_UTIL = new HBaseTestingUtility();
+  private final String DIR = TEST_UTIL.getDataTestDir("TestStore").toString();
+
 
   /**
    * Setup
@@ -209,7 +212,7 @@ public class TestStore extends TestCase {
     Configuration c = HBaseConfiguration.create();
     FileSystem fs = FileSystem.get(c);
     StoreFile.Writer w = StoreFile.createWriter(fs, storedir,
-        StoreFile.DEFAULT_BLOCKSIZE_SMALL, c);
+        StoreFile.DEFAULT_BLOCKSIZE_SMALL, c, new CacheConfig(c));
     w.appendMetadata(seqid + 1, false);
     w.close();
     this.store.close();
@@ -615,7 +618,7 @@ public class TestStore extends TestCase {
     StoreFlusher storeFlusher = store.getStoreFlusher(id);
     storeFlusher.prepare();
     storeFlusher.flushCache(Mockito.mock(MonitoredTask.class));
-    storeFlusher.commit();
+    storeFlusher.commit(Mockito.mock(MonitoredTask.class));
   }
 
 
