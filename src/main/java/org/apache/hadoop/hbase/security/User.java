@@ -147,6 +147,10 @@ public abstract class User {
    * @return
    */
   public static User create(UserGroupInformation ugi) {
+    if (ugi == null) {
+      return null;
+    }
+
     if (IS_SECURE_HADOOP) {
       return new SecureHadoopUser(ugi);
     }
