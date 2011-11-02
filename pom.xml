@@ -268,7 +268,18 @@
         <enabled>false</enabled>
       </snapshots>
     </repository>
-
+    <!-- snapshot builds of Hadoop and ZooKeeper for testing -->
+    <repository>
+      <id>ghelmling.testing</id>
+      <name>Gary Helmling test repo</name>
+      <url>http://people.apache.org/~garyh/mvn/</url>
+      <snapshots>
+        <enabled>true</enabled>
+      </snapshots>
+      <releases>
+        <enabled>true</enabled>
+      </releases>
+    </repository>
   </repositories>
 
   <build>
